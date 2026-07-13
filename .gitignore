@@ -1,0 +1,35 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+edge-node
+
+# Go workspace
+go.work
+go.work.sum
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Temp
+/tmp/
+
+# OpenCode internal state (plans, drafts, evidence, boulder)
+.omo/
+
+# Private keys / identity
+*.key
+/data/
+/identity/

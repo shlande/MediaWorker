@@ -1,0 +1,59 @@
+# Prometheus alert rules for MediaWorker distribution layer (§13.2).
+# Collects alerts for cache health, backhaul, L4 node availability,
+# scheduler connectivity, peer score anomalies, and latency.
+groups:
+  - name: cloud_dash_critical
+    rules:
+      - alert: HighBackhaulFailureRate
+        expr: |
+          sum(rate(access_backhaul_success_total[5m])) /
+          sum(rate(access_backhaul_request_total[5m])) < 0.95
+        for: 3m
+        annotations:
+          summary: "网盘回源成功率 < 95%（当前 {{ $value | humanizePercentage }}）"
+
+      - alert: LowCacheHitRate
+        expr: |
+          sum(rate(edge_cache_hit_total{cache_type="warm"}[15m])) /
+          sum(rate(edge_cache_request_total{cache_type="warm"}[15m])) < 0.60
+        for: 10m
+        annotations:
+          summary: "温缓存命中率 < 60%，回源压力过大"
+
+      - alert: L4NodeDown
+        expr: up{job="l4-node"} == 0
+        for: 1m
+        annotations:
+          summary: "L4 节点实例 {{ $labels.instance }} 宕机"
+
+      - alert: RegionalL4AllDown
+        expr: |
+          count by (region) (up{job="l4-node"} == 0) ==
+          count by (region) (up{job="l4-node"})
+        for: 1m
+        annotations:
+          summary: "区域 {{ $labels.region }} 所有 L4 节点不可达，需人工介入"
+
+      - alert: SchedulerPartition
+        expr: |
+          count(edge_jwt_refresh_success_total[5m]) == 0
+          and on() (time() - edge_jwt_refresh_last_success_timestamp > 300)
+        for: 2m
+        annotations:
+          summary: "JWT 续签连续 5min 失败，调度层可能不可达，节点已进入 PeerStore 缓存降级模式"
+
+      - alert: PeerScoreGraylist
+        expr: |
+          count(edge_peer_score < -10) by (region) > 5
+        for: 5m
+        annotations:
+          summary: "区域 {{ $labels.region }} 有 >5 个节点评分低于 GraylistThreshold，疑似协同攻击或网络异常"
+
+      - alert: HighTTFB
+        expr: |
+          histogram_quantile(0.95,
+            sum(rate(edge_ttfb_seconds_bucket[5m])) by (le)
+          ) > 3
+        for: 5m
+        annotations:
+          summary: "首帧延迟 P95 > 3s（当前 {{ $value }}s）"

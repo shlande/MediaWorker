@@ -1,0 +1,285 @@
+package libp2phost
+
+import (
+	"context"
+	"crypto/rand"
+	"io"
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/network"
+	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/protocol"
+
+	"github.com/shlande/mediaworker/internal/types"
+)
+
+// testProtocol is the stream protocol ID used in tests.
+const testProtocol = protocol.ID("/mediaworker/test/1.0.0")
+
+// genTestPSK returns a fresh 32-byte PSK for tests.
+func genTestPSK(t *testing.T) types.PSK {
+	t.Helper()
+	psk := make([]byte, 32)
+	if _, err := rand.Read(psk); err != nil {
+		t.Fatalf("generate PSK: %v", err)
+	}
+	return types.PSK(psk)
+}
+
+// hostAddr returns the first listen address of the host as a full p2p multiaddr
+// string suitable for peer.AddrInfoFromString.
+func hostAddr(t *testing.T, h interface{ ID() peer.ID } ) string {
+	t.Helper()
+	// Use ID() + loopback for test connection; tests run on localhost.
+	return "/ip4/127.0.0.1/tcp/0/p2p/" + h.ID().String()
+}
+
+// ─── Identity tests ──────────────────────────────────────────────────────────
+
+func TestLoadOrGenerateIdentity_NewKey(t *testing.T) {
+	// Given: a temp file path that does not exist
+	tmpDir := t.TempDir()
+	keyPath := filepath.Join(tmpDir, "ed25519.key")
+
+	// When: we call LoadOrGenerateIdentity for the first time
+	id, err := LoadOrGenerateIdentity(keyPath)
+
+	// Then: it succeeds and returns a valid identity
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if id.PeerID == "" {
+		t.Fatal("peer ID is empty")
+	}
+	if id.PrivKey == nil {
+		t.Fatal("private key is nil")
+	}
+
+	// Then: the key file exists with 0600 permissions
+	fi, err := os.Stat(keyPath)
+	if err != nil {
+		t.Fatalf("key file not created: %v", err)
+	}
+	if fi.Mode().Perm() != 0600 {
+		t.Fatalf("key file has permissions %o, want 0600", fi.Mode().Perm())
+	}
+}
+
+func TestLoadOrGenerateIdentity_ExistingKey(t *testing.T) {
+	// Given: an identity already written to disk
+	tmpDir := t.TempDir()
+	keyPath := filepath.Join(tmpDir, "ed25519.key")
+
+	first, err := LoadOrGenerateIdentity(keyPath)
+	if err != nil {
+		t.Fatalf("first load: %v", err)
+	}
+
+	// When: we load it again from the same path
+	second, err := LoadOrGenerateIdentity(keyPath)
+
+	// Then: it succeeds and returns the same PeerId
+	if err != nil {
+		t.Fatalf("second load: %v", err)
+	}
+	if second.PeerID != first.PeerID {
+		t.Fatalf("peer ID changed: %s → %s", first.PeerID, second.PeerID)
+	}
+
+	// Then: the raw keys are equal (byte-for-byte comparison)
+	firstRaw, err := crypto.MarshalPrivateKey(first.PrivKey)
+	if err != nil {
+		t.Fatalf("marshal first key: %v", err)
+	}
+	secondRaw, err := crypto.MarshalPrivateKey(second.PrivKey)
+	if err != nil {
+		t.Fatalf("marshal second key: %v", err)
+	}
+	if string(firstRaw) != string(secondRaw) {
+		t.Fatal("private key bytes differ between loads")
+	}
+}
+
+// ─── Host construction ───────────────────────────────────────────────────────
+
+func TestNewEdgeHost_PSKConnect(t *testing.T) {
+	// Given: two hosts with the same PSK
+	psk := genTestPSK(t)
+	id1 := genIdentity(t)
+	id2 := genIdentity(t)
+
+	h1, err := NewEdgeHost(id1, []string{"/ip4/127.0.0.1/tcp/0"}, psk, nil)
+	if err != nil {
+		t.Fatalf("create host1: %v", err)
+	}
+	defer h1.Close()
+
+	h2, err := NewEdgeHost(id2, []string{"/ip4/127.0.0.1/tcp/0"}, psk, nil)
+	if err != nil {
+		t.Fatalf("create host2: %v", err)
+	}
+	defer h2.Close()
+
+	// When: host2 connects to host1
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	pi := peer.AddrInfo{
+		ID:    h1.ID(),
+		Addrs: h1.Addrs(),
+	}
+	if err := h2.Connect(ctx, pi); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	// Then: the connection succeeds and is visible
+	if len(h2.Network().ConnsToPeer(h1.ID())) == 0 {
+		t.Fatal("no connections to host1")
+	}
+}
+
+func TestNewEdgeHost_NoPSKRejected(t *testing.T) {
+	// The PSK handshake rejection is a known limitation in test:
+	// PSK mode rejects at the transport level, and the dialer will
+	// see a timeout or connection reset. We set a short timeout
+	// and assert that the connection does NOT succeed.
+	t.Setenv("LIBP2P_FORCE_PNET", "1")
+
+	psk := genTestPSK(t)
+	id1 := genIdentity(t)
+	id2 := genIdentity(t)
+
+	// Host1 uses PSK.
+	h1, err := NewEdgeHost(id1, []string{"/ip4/127.0.0.1/tcp/0"}, psk, nil)
+	if err != nil {
+		t.Fatalf("create host1: %v", err)
+	}
+	defer h1.Close()
+
+	// Host2 does NOT use PSK.
+	h2, err := NewEdgeHost(id2, []string{"/ip4/127.0.0.1/tcp/0"}, nil, nil)
+	if err != nil {
+		t.Fatalf("create host2: %v", err)
+	}
+	defer h2.Close()
+
+	// When: host2 (no PSK) tries to connect to host1 (PSK)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	pi := peer.AddrInfo{
+		ID:    h1.ID(),
+		Addrs: h1.Addrs(),
+	}
+	err = h2.Connect(ctx, pi)
+
+	// Then: the connection must fail (PSK mismatch)
+	if err == nil {
+		t.Fatal("expected connection to be rejected due to PSK mismatch")
+	}
+}
+
+func TestNewEdgeHost_Stream(t *testing.T) {
+	// Given: two hosts with the same PSK
+	psk := genTestPSK(t)
+	id1 := genIdentity(t)
+	id2 := genIdentity(t)
+
+	h1, err := NewEdgeHost(id1, []string{"/ip4/127.0.0.1/tcp/0"}, psk, nil)
+	if err != nil {
+		t.Fatalf("create host1: %v", err)
+	}
+	defer h1.Close()
+
+	h2, err := NewEdgeHost(id2, []string{"/ip4/127.0.0.1/tcp/0"}, psk, nil)
+	if err != nil {
+		t.Fatalf("create host2: %v", err)
+	}
+	defer h2.Close()
+
+	// Given: host1 registers a stream handler that echoes messages
+	done := make(chan struct{})
+	h1.SetStreamHandler(testProtocol, func(s network.Stream) {
+		defer close(done)
+		defer s.Close()
+		buf := make([]byte, 1024)
+		n, err := s.Read(buf)
+		if err != nil {
+			t.Logf("handler read error: %v", err)
+			return
+		}
+		// Echo back.
+		if _, err := s.Write(buf[:n]); err != nil {
+			t.Logf("handler write error: %v", err)
+		}
+	})
+
+	// When: host2 connects to host1 and opens a stream
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	pi := peer.AddrInfo{
+		ID:    h1.ID(),
+		Addrs: h1.Addrs(),
+	}
+	if err := h2.Connect(ctx, pi); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	s, err := h2.NewStream(ctx, h1.ID(), testProtocol)
+	if err != nil {
+		t.Fatalf("new stream: %v", err)
+	}
+	defer s.Close()
+
+	// When: host2 writes a message
+	msg := []byte("hello edge")
+	if _, err := s.Write(msg); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	// Close write side to signal EOF.
+	if c, ok := s.(interface{ CloseWrite() error }); ok {
+		_ = c.CloseWrite()
+	}
+
+	// Then: host2 reads the echoed message
+	buf := make([]byte, 1024)
+	n, err := s.Read(buf)
+	if err != nil && err != io.EOF {
+		t.Fatalf("read: %v", err)
+	}
+
+	select {
+	case <-done:
+		// handler completed
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for stream handler")
+	}
+
+	if string(buf[:n]) != string(msg) {
+		t.Fatalf("echo mismatch: got %q, want %q", buf[:n], msg)
+	}
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────────────
+
+// genIdentity creates an in-memory NodeIdentity for tests (no disk write).
+func genIdentity(t *testing.T) *NodeIdentity {
+	t.Helper()
+	priv, _, err := crypto.GenerateEd25519Key(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	pid, err := peer.IDFromPrivateKey(priv)
+	if err != nil {
+		t.Fatalf("derive peer id: %v", err)
+	}
+	return &NodeIdentity{
+		PrivKey: priv,
+		PeerID:  types.PeerId(pid.String()),
+	}
+}

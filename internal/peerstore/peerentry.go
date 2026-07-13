@@ -1,0 +1,203 @@
+// Package peerstore provides persistent peer metadata storage (BadgerDB).
+package peerstore
+
+import (
+	"encoding/json"
+	"fmt"
+	"sync"
+	"time"
+
+	"github.com/dgraph-io/badger/v4"
+	"github.com/libp2p/go-libp2p/core/peer"
+
+	"github.com/shlande/mediaworker/internal/types"
+)
+
+const (
+	// GraylistThreshold is the GossipSub score below which a peer is rejected
+	// by ConnectionGater and excluded from the hash ring.
+	//
+	// Must be ≤ PublishThreshold per pubsub library constraint.
+	GraylistThreshold = -20.0
+
+	// keyPrefix is the BadgerDB key prefix for PeerStoreEntry records.
+	keyPrefix = "p:"
+)
+
+// PeerEntryStore is an application-level persistent store for PeerStoreEntry records.
+// It is NOT a libp2p peerstore.Peerstore implementation — it is a distribution-domain
+// store queried by ConnectionGater, HashRing, and GossipSub.
+type PeerEntryStore struct {
+	db      *badger.DB
+	index   sync.Map // map[string]*types.PeerStoreEntry (key = PeerId string)
+	dbPath  string
+}
+
+// NewPeerEntryStore opens (or creates) a BadgerDB at dbPath and returns a
+// PeerEntryStore with an empty in-memory index. Callers must call Restore()
+// to rebuild the index from persisted data, or Close() to release resources.
+func NewPeerEntryStore(dbPath string) (*PeerEntryStore, error) {
+	opts := badger.DefaultOptions(dbPath).
+		WithLoggingLevel(badger.ERROR).
+		WithNumVersionsToKeep(1).
+		WithSyncWrites(true)
+
+	db, err := badger.Open(opts)
+	if err != nil {
+		return nil, fmt.Errorf("peerentry open badger: %w", err)
+	}
+
+	return &PeerEntryStore{
+		db:     db,
+		dbPath: dbPath,
+	}, nil
+}
+
+// makeKey returns the BadgerDB key for a given PeerId.
+func makeKey(peerID types.PeerId) []byte {
+	return []byte(keyPrefix + string(peerID))
+}
+
+// Put writes an entry to BadgerDB and updates the in-memory index atomically.
+func (s *PeerEntryStore) Put(peerID types.PeerId, entry types.PeerStoreEntry) error {
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("peerentry marshal: %w", err)
+	}
+
+	key := makeKey(peerID)
+	if err := s.db.Update(func(txn *badger.Txn) error {
+		return txn.Set(key, data)
+	}); err != nil {
+		return fmt.Errorf("peerentry put: %w", err)
+	}
+
+	s.index.Store(string(peerID), &entry)
+	return nil
+}
+
+// Get reads an entry from the in-memory index (fast path, no DB read).
+func (s *PeerEntryStore) Get(peerID types.PeerId) (types.PeerStoreEntry, bool) {
+	val, ok := s.index.Load(string(peerID))
+	if !ok {
+		return types.PeerStoreEntry{}, false
+	}
+	entry, ok := val.(*types.PeerStoreEntry)
+	if !ok {
+		return types.PeerStoreEntry{}, false
+	}
+	return *entry, true
+}
+
+// Delete removes an entry from BadgerDB and the in-memory index.
+func (s *PeerEntryStore) Delete(peerID types.PeerId) error {
+	key := makeKey(peerID)
+	if err := s.db.Update(func(txn *badger.Txn) error {
+		return txn.Delete(key)
+	}); err != nil {
+		return fmt.Errorf("peerentry delete: %w", err)
+	}
+
+	s.index.Delete(string(peerID))
+	return nil
+}
+
+// ActivePeers returns all entries that are healthy: not Stale AND Score >= GraylistThreshold.
+func (s *PeerEntryStore) ActivePeers() []types.PeerStoreEntry {
+	var result []types.PeerStoreEntry
+	s.index.Range(func(_, val any) bool {
+		entry, ok := val.(*types.PeerStoreEntry)
+		if !ok {
+			return true
+		}
+		if !entry.Stale && entry.Score >= GraylistThreshold {
+			result = append(result, *entry)
+		}
+		return true
+	})
+	return result
+}
+
+// MarkStale sets Stale=true on the entry for the given peer, persisting to
+// BadgerDB and updating the in-memory index.
+func (s *PeerEntryStore) MarkStale(peerID types.PeerId) error {
+	key := makeKey(peerID)
+
+	return s.db.Update(func(txn *badger.Txn) error {
+		item, err := txn.Get(key)
+		if err != nil {
+			return fmt.Errorf("peerentry markstale get: %w", err)
+		}
+
+		var entry types.PeerStoreEntry
+		if err := item.Value(func(val []byte) error {
+			return json.Unmarshal(val, &entry)
+		}); err != nil {
+			return fmt.Errorf("peerentry markstale unmarshal: %w", err)
+		}
+
+		entry.Stale = true
+
+		data, err := json.Marshal(entry)
+		if err != nil {
+			return fmt.Errorf("peerentry markstale marshal: %w", err)
+		}
+
+		if err := txn.Set(key, data); err != nil {
+			return fmt.Errorf("peerentry markstale set: %w", err)
+		}
+
+		// Update in-memory after successful write.
+		s.index.Store(string(peerID), &entry)
+		return nil
+	})
+}
+
+// Restore rebuilds the in-memory sync.Map index by iterating all BadgerDB
+// entries with the "p:" prefix.
+func (s *PeerEntryStore) Restore() error {
+	return s.db.View(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.Prefix = []byte(keyPrefix)
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		for it.Rewind(); it.Valid(); it.Next() {
+			item := it.Item()
+			if err := item.Value(func(val []byte) error {
+				var entry types.PeerStoreEntry
+				if err := json.Unmarshal(val, &entry); err != nil {
+					return fmt.Errorf("restore unmarshal key %q: %w", item.Key(), err)
+				}
+				s.index.Store(string(entry.PeerID), &entry)
+				return nil
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// Close releases the BadgerDB handle. The in-memory index is discarded.
+func (s *PeerEntryStore) Close() error {
+	if err := s.db.Close(); err != nil {
+		return fmt.Errorf("peerentry close: %w", err)
+	}
+	return nil
+}
+
+// PeerIdFromPeerID converts a libp2p peer.ID to a domain PeerId.
+func PeerIdFromPeerID(p peer.ID) types.PeerId {
+	return types.PeerId(p.String())
+}
+
+// PeerStoreEntryFromDiscovery creates a PeerStoreEntry from a discovered peer
+// with minimal metadata (no JWT yet — assigned after JWT handshake in a later task).
+func PeerStoreEntryFromDiscovery(p peer.ID, addrs []string) types.PeerStoreEntry {
+	return types.PeerStoreEntry{
+		PeerID:   PeerIdFromPeerID(p),
+		Addrs:    addrs,
+		LastSeen: time.Now().Unix(),
+	}
+}
