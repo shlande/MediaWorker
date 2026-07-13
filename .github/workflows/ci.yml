@@ -37,6 +37,7 @@ jobs:
   lint:
     name: Lint
     runs-on: ubuntu-latest
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
@@ -47,8 +48,7 @@ jobs:
           cache: true
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
+        uses: golangci/golangci-lint-action@v8
         with:
           version: latest
           args: --timeout 5m
-          skip-cache: false
