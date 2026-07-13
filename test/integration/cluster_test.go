@@ -865,10 +865,14 @@ func TestIntegration_Pin(t *testing.T) {
 	// Manually apply the pin on node A.
 	nodeA.pinStore.ApplyPin("pin-blob-1", "init", 100)
 
-	// Wait a bit for async fetch.
-	time.Sleep(500 * time.Millisecond)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if nodeA.pinStore.IsReady("pin-blob-1") {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 
-	// Verify pinned and ready.
 	if !nodeA.pinStore.IsPinned("pin-blob-1") {
 		t.Fatal("expected pin-blob-1 to be pinned")
 	}

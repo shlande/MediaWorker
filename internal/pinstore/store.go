@@ -13,6 +13,7 @@ import (
 	"log"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -38,7 +39,7 @@ type PinEntry struct {
 	BlobType string    `json:"blob_type"`
 	Size     int64     `json:"size"`
 	PinnedAt time.Time `json:"pinned_at"`
-	Ready    bool      `json:"ready"`
+	Ready    atomic.Bool `json:"-"`
 }
 
 // PinDelta records an incremental pin/unpin operation for logging/audit.
@@ -106,16 +107,37 @@ func makePinKey(blobHash string) []byte {
 	return []byte(keyPrefix + blobHash)
 }
 
+type pinEntryJSON struct {
+	BlobHash string    `json:"blob_hash"`
+	BlobType string    `json:"blob_type"`
+	Size     int64     `json:"size"`
+	PinnedAt time.Time `json:"pinned_at"`
+	Ready    bool      `json:"ready"`
+}
+
 func encodePinEntry(entry *PinEntry) ([]byte, error) {
-	return json.Marshal(entry)
+	return json.Marshal(pinEntryJSON{
+		BlobHash: entry.BlobHash,
+		BlobType: entry.BlobType,
+		Size:     entry.Size,
+		PinnedAt: entry.PinnedAt,
+		Ready:    entry.Ready.Load(),
+	})
 }
 
 func decodePinEntry(data []byte) (*PinEntry, error) {
-	var entry PinEntry
-	if err := json.Unmarshal(data, &entry); err != nil {
+	var j pinEntryJSON
+	if err := json.Unmarshal(data, &j); err != nil {
 		return nil, fmt.Errorf("pinstore decode pin entry: %w", err)
 	}
-	return &entry, nil
+	entry := &PinEntry{
+		BlobHash: j.BlobHash,
+		BlobType: j.BlobType,
+		Size:     j.Size,
+		PinnedAt: j.PinnedAt,
+	}
+	entry.Ready.Store(j.Ready)
+	return entry, nil
 }
 
 // dbUpdate runs fn inside a BadgerDB Update transaction.
@@ -145,7 +167,6 @@ func (ps *PinStore) ApplyPin(blobHash string, blobType string, size int64) {
 		BlobType: blobType,
 		Size:     size,
 		PinnedAt: time.Now(),
-		Ready:    false,
 	}
 
 	// 1. Persist to BadgerDB.
@@ -212,7 +233,7 @@ func (ps *PinStore) IsReady(blobHash string) bool {
 		return false
 	}
 	entry, ok := val.(*PinEntry)
-	if !ok || !entry.Ready {
+	if !ok || !entry.Ready.Load() {
 		return false
 	}
 	return ps.storage.Has(blobHash)
@@ -248,7 +269,7 @@ func (ps *PinStore) fetchPinnedBlob(blobHash string) {
 	if !ok {
 		return
 	}
-	entry.Ready = true
+	entry.Ready.Store(true)
 
 	data, err = encodePinEntry(entry)
 	if err != nil {

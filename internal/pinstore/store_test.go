@@ -38,7 +38,10 @@ func (fh *fetchHelper) Fetch(hash string) ([]byte, error) {
 // writing to storage and setting Ready.
 func waitFetch(fh *fetchHelper) {
 	<-fh.done
-	time.Sleep(50 * time.Millisecond)
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
 }
 
 // ─── Tests ───
