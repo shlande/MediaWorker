@@ -24,17 +24,18 @@ import (
 	kaddht "github.com/libp2p/go-libp2p-kad-dht"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 
-	"github.com/shlande/mediaworker/internal/backhaul"
-	"github.com/shlande/mediaworker/internal/cache"
-	"github.com/shlande/mediaworker/internal/dht"
-	"github.com/shlande/mediaworker/internal/gossippop"
-	"github.com/shlande/mediaworker/internal/hashring"
-	"github.com/shlande/mediaworker/internal/icp"
-	"github.com/shlande/mediaworker/internal/jwt"
-	"github.com/shlande/mediaworker/internal/libp2phost"
-	"github.com/shlande/mediaworker/internal/peerstore"
-	"github.com/shlande/mediaworker/internal/pinstore"
-	"github.com/shlande/mediaworker/internal/pinstrategy"
+	"github.com/shlande/mediaworker/internal/controlplane/pinstrategy"
+	"github.com/shlande/mediaworker/internal/node/backhaul"
+	"github.com/shlande/mediaworker/internal/node/cache"
+	"github.com/shlande/mediaworker/internal/node/dht"
+	"github.com/shlande/mediaworker/internal/node/gossippop"
+	"github.com/shlande/mediaworker/internal/node/hashring"
+	"github.com/shlande/mediaworker/internal/node/icp"
+	"github.com/shlande/mediaworker/internal/node/jwt"
+	"github.com/shlande/mediaworker/internal/node/libp2phost"
+	"github.com/shlande/mediaworker/internal/node/peerstore"
+	"github.com/shlande/mediaworker/internal/node/pinstore"
+	sharedid "github.com/shlande/mediaworker/internal/shared/identity"
 	"github.com/shlande/mediaworker/internal/types"
 )
 
@@ -54,10 +55,10 @@ func genTestPSK(t *testing.T) types.PSK {
 
 // genTestIdentity creates a NodeIdentity with a fresh Ed25519 key written to
 // a temp file. The file is cleaned up with t.Cleanup.
-func genTestIdentity(t *testing.T) *libp2phost.NodeIdentity {
+func genTestIdentity(t *testing.T) *sharedid.NodeIdentity {
 	t.Helper()
 	keyFile := t.TempDir() + "/ed25519.key"
-	id, err := libp2phost.LoadOrGenerateIdentity(keyFile)
+	id, err := sharedid.LoadOrGenerateIdentity(keyFile)
 	if err != nil {
 		t.Fatalf("gen identity: %v", err)
 	}
@@ -66,7 +67,7 @@ func genTestIdentity(t *testing.T) *libp2phost.NodeIdentity {
 
 // clusterNode wraps all per-node components needed for integration tests.
 type clusterNode struct {
-	identity     *libp2phost.NodeIdentity
+	identity     *sharedid.NodeIdentity
 	host         host.Host
 	peerStore    *peerstore.PeerEntryStore
 	jwtVerifier  *jwt.JWTVerifier

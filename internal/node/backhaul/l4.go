@@ -1,0 +1,54 @@
+package backhaul
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+
+	"github.com/shlande/mediaworker/internal/node/cache"
+)
+
+func (bm *BackhaulManager) HandleBlobL4(ctx context.Context, w io.Writer, blobHash string) error {
+	if data, ok := bm.cache.Get(blobHash); ok {
+		_, err := w.Write(data)
+		return err
+	}
+
+	if bm.icpFetcher != nil {
+		reader, ok, err := bm.icpFetcher.FetchFromPeer(ctx, blobHash)
+		if err == nil && ok {
+			rc := reader.(io.ReadCloser)
+			defer rc.Close()
+			if wc, isCacheWriter := bm.cache.(CacheWriter); isCacheWriter {
+				return streamThrough(w, rc, wc, blobHash)
+			}
+			_, copyErr := io.Copy(w, rc)
+			return copyErr
+		}
+	}
+
+	result, err, _ := bm.sfGroup.Do(blobHash, func() (any, error) {
+		stream, fetchErr := bm.dataPlane.FetchBlobLocal(ctx, blobHash)
+		if fetchErr != nil {
+			return nil, fetchErr
+		}
+		if wc, isCacheWriter := bm.cache.(CacheWriter); isCacheWriter {
+			return drainAndCache(stream, stream, wc, blobHash)
+		}
+		defer stream.Close()
+		var buf bytes.Buffer
+		if _, copyErr := io.Copy(&buf, stream); copyErr != nil {
+			return nil, copyErr
+		}
+		return buf.Bytes(), nil
+	})
+	if err != nil {
+		return fmt.Errorf("blob not found: %w", err)
+	}
+
+	_, writeErr := w.Write(result.([]byte))
+	return writeErr
+}
+
+var _ CacheWriter = (*cache.WarmCache)(nil)
