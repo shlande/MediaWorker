@@ -1,0 +1,45 @@
+# syntax=docker/dockerfile:1
+
+# ─── Build stage ────────────────────────────────────────────────────────────
+FROM golang:1.25-alpine AS builder
+
+RUN apk add --no-cache git ca-certificates
+
+WORKDIR /src
+
+# Cache module downloads — copy only manifest files first.
+COPY go.mod go.sum ./
+RUN go mod download
+
+# Copy the rest of the source.
+COPY . .
+
+# Build the control-plane binary.
+# CGO disabled for static linking; stripped for smaller image.
+RUN CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-s -w -X main.version=${VERSION:-dev}" \
+    -o /out/control-plane \
+    ./cmd/control-plane
+
+# ─── Runtime stage ──────────────────────────────────────────────────────────
+FROM alpine:3.20
+
+RUN apk add --no-cache ca-certificates tzdata && \
+    addgroup -S app && adduser -S app -G app
+
+# Copy the binary.
+COPY --from=builder /out/control-plane /usr/local/bin/control-plane
+
+# Copy default config (can be overridden via volume / env).
+COPY configs/control-plane.yaml /etc/mediaworker/control-plane.yaml
+
+# Data directory for whitelist DB, identity keys.
+RUN mkdir -p /data && chown app:app /data
+VOLUME ["/data"]
+
+USER app
+
+EXPOSE 8443 9001
+
+ENTRYPOINT ["control-plane"]
+CMD ["-config", "/etc/mediaworker/control-plane.yaml"]

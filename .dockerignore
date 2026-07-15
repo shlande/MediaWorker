@@ -1,0 +1,42 @@
+# Build artifacts
+control-plane
+edge-node
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+
+# Go workspace
+go.work
+go.work.sum
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Temp
+/tmp/
+
+# OpenCode internal state
+.omo/
+
+# Private keys / identity
+*.key
+/data/
+/identity/
+
+# Docker build context should not include these
+.git
+.github
+docs
+testdata
