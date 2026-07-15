@@ -2,11 +2,13 @@
 *.exe
 *.exe~
 *.dll
-*.so
 *.dylib
 *.test
 *.out
-edge-node
+/edge-node
+/control-plane
+
+# Docker
 
 # Go workspace
 go.work
