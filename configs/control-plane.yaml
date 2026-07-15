@@ -1,0 +1,46 @@
+# control-plane.yaml -- MediaWorker 控制面配置示例
+#
+# 控制面独立于边缘节点运行，提供 JWT 签发、DHT 引导、Pin 编排、
+# SyncBroadcaster 指令广播及元数据查询等核心服务。
+# 详见 docs/distribution/network.md §5 "路由策略与控制面职责"
+
+# JWT 签发 HTTP 服务
+jwt_http:
+  listen: ":8443"                  # HTTP 监听地址 (独立端口, 不与 DHT 复用)
+  read_timeout: "10s"              # 读超时
+  write_timeout: "10s"             # 写超时
+
+# L4 白名单存储 (BadgerDB)
+l4_whitelist:
+  db_path: "/data/controlplane/l4-whitelist.db"
+
+# Pin 编排器
+pin_orchestrator:
+  rebalance_interval: "10m"        # 重平衡计算周期
+  top_contents_limit: 5000         # top-N 热门内容数量
+
+# DHT 引导节点 (控制面运行 3-5 个 bootstrap 实例)
+dht_bootstrap:
+  listen_addrs:
+    - "/ip4/0.0.0.0/tcp/9001"
+    - "/ip4/0.0.0.0/udp/9001/quic"
+  namespace: "edge"                # 私有 DHT 命名空间 (与节点一致)
+  advertise_ttl: "15m"
+  advertise_interval: "5m"
+  bootstrap_peers: []              # 联邦 bootstrap: 填入其他控制面 bootstrap 地址
+
+# SyncBroadcaster 指令广播通道 (GossipSub)
+sync_broadcaster:
+  protocol_id: "/mediaworker/sync/0.1.0"
+  send_timeout: "30s"
+
+# 元数据库 (PostgreSQL)
+metadata:
+  pg_dsn: "postgres://user:password@localhost:5432/mediaworker?sslmode=disable"
+  popularity_query_interval: "10m"
+
+# 控制面 Ed25519 身份密钥 (JWT 签名用 PEM PKCS#8 格式; libp2p 用 protobuf 格式)
+# 两种格式互不兼容，必须分开存放。
+identity:
+  priv_key_path: "/data/controlplane/ed25519-jwt.key"
+  libp2p_priv_key_path: "/data/controlplane/ed25519-libp2p.key"

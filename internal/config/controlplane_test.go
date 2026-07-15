@@ -1,0 +1,322 @@
+package config
+
+import (
+	"crypto/ed25519"
+	"os"
+	"path/filepath"
+	"testing"
+)
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+func writeTempControlPlaneYAML(t *testing.T, content string) string {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "control-plane.yaml")
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write temp control-plane config: %v", err)
+	}
+	return path
+}
+
+// ---------------------------------------------------------------------------
+// Happy path: full config
+// ---------------------------------------------------------------------------
+
+const validControlPlaneYAML = `
+jwt_http:
+  listen: ":8443"
+  read_timeout: "10s"
+  write_timeout: "10s"
+l4_whitelist:
+  db_path: "/data/l4-whitelist.db"
+pin_orchestrator:
+  rebalance_interval: "10m"
+  top_contents_limit: 5000
+dht_bootstrap:
+  listen_addrs:
+    - "/ip4/0.0.0.0/tcp/9001"
+  namespace: "edge"
+  advertise_ttl: "15m"
+  advertise_interval: "5m"
+  bootstrap_peers:
+    - "/dnsaddr/bootstrap-01.example.com/tcp/9001/p2p/QmPeer"
+sync_broadcaster:
+  protocol_id: "/mediaworker/sync/0.1.0"
+  send_timeout: "30s"
+metadata:
+  pg_dsn: "postgres://user:pass@localhost:5432/mw?sslmode=disable"
+  popularity_query_interval: "10m"
+identity:
+  priv_key_path: "/data/controlplane/ed25519-jwt.key"
+  libp2p_priv_key_path: "/data/controlplane/ed25519-libp2p.key"
+`
+
+func TestLoadControlPlaneConfig_Valid(t *testing.T) {
+	path := writeTempControlPlaneYAML(t, validControlPlaneYAML)
+
+	cfg, err := LoadControlPlaneConfig(path)
+	if err != nil {
+		t.Fatalf("LoadControlPlaneConfig failed: %v", err)
+	}
+
+	// JWT HTTP
+	if cfg.JWT.Listen != ":8443" {
+		t.Errorf("JWT.Listen = %q, want %q", cfg.JWT.Listen, ":8443")
+	}
+	if cfg.JWT.ReadTimeout != "10s" {
+		t.Errorf("JWT.ReadTimeout = %q, want %q", cfg.JWT.ReadTimeout, "10s")
+	}
+	if cfg.JWT.WriteTimeout != "10s" {
+		t.Errorf("JWT.WriteTimeout = %q, want %q", cfg.JWT.WriteTimeout, "10s")
+	}
+
+	// L4 whitelist
+	if cfg.L4Whitelist.DBPath != "/data/l4-whitelist.db" {
+		t.Errorf("L4Whitelist.DBPath = %q", cfg.L4Whitelist.DBPath)
+	}
+
+	// Pin orchestrator
+	if cfg.PinOrchestrator.RebalanceInterval != "10m" {
+		t.Errorf("PinOrchestrator.RebalanceInterval = %q", cfg.PinOrchestrator.RebalanceInterval)
+	}
+	if cfg.PinOrchestrator.TopContentsLimit != 5000 {
+		t.Errorf("PinOrchestrator.TopContentsLimit = %d", cfg.PinOrchestrator.TopContentsLimit)
+	}
+
+	// DHT bootstrap
+	if len(cfg.DHTBootstrap.ListenAddrs) != 1 {
+		t.Errorf("DHTBootstrap.ListenAddrs = %d, want 1", len(cfg.DHTBootstrap.ListenAddrs))
+	}
+	if cfg.DHTBootstrap.Namespace != "edge" {
+		t.Errorf("DHTBootstrap.Namespace = %q", cfg.DHTBootstrap.Namespace)
+	}
+	if cfg.DHTBootstrap.AdvertiseTTL != "15m" {
+		t.Errorf("DHTBootstrap.AdvertiseTTL = %q", cfg.DHTBootstrap.AdvertiseTTL)
+	}
+	if cfg.DHTBootstrap.AdvertiseInterval != "5m" {
+		t.Errorf("DHTBootstrap.AdvertiseInterval = %q", cfg.DHTBootstrap.AdvertiseInterval)
+	}
+	if len(cfg.DHTBootstrap.BootstrapPeers) != 1 {
+		t.Errorf("DHTBootstrap.BootstrapPeers = %d, want 1", len(cfg.DHTBootstrap.BootstrapPeers))
+	}
+
+	// Sync broadcaster
+	if cfg.SyncBroadcaster.ProtocolID != "/mediaworker/sync/0.1.0" {
+		t.Errorf("SyncBroadcaster.ProtocolID = %q", cfg.SyncBroadcaster.ProtocolID)
+	}
+	if cfg.SyncBroadcaster.SendTimeout != "30s" {
+		t.Errorf("SyncBroadcaster.SendTimeout = %q", cfg.SyncBroadcaster.SendTimeout)
+	}
+
+	// Metadata
+	if cfg.Metadata.PGDSN != "postgres://user:pass@localhost:5432/mw?sslmode=disable" {
+		t.Errorf("Metadata.PGDSN = %q", cfg.Metadata.PGDSN)
+	}
+	if cfg.Metadata.PopularityQueryInterval != "10m" {
+		t.Errorf("Metadata.PopularityQueryInterval = %q", cfg.Metadata.PopularityQueryInterval)
+	}
+
+	// Identity
+	if cfg.Identity.PrivKeyPath != "/data/controlplane/ed25519-jwt.key" {
+		t.Errorf("Identity.PrivKeyPath = %q", cfg.Identity.PrivKeyPath)
+	}
+	if cfg.Identity.Libp2pPrivKeyPath != "/data/controlplane/ed25519-libp2p.key" {
+		t.Errorf("Identity.Libp2pPrivKeyPath = %q", cfg.Identity.Libp2pPrivKeyPath)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Failure: missing required field
+// ---------------------------------------------------------------------------
+
+func TestLoadControlPlaneConfig_MissingJWTListen(t *testing.T) {
+	const yaml = `
+dht_bootstrap:
+  namespace: "edge"
+metadata:
+  pg_dsn: "postgres://localhost/mw"
+identity:
+  priv_key_path: "/key"
+  libp2p_priv_key_path: "/key2"
+`
+	path := writeTempControlPlaneYAML(t, yaml)
+	_, err := LoadControlPlaneConfig(path)
+	if err == nil {
+		t.Fatal("expected error for missing jwt_http.listen, got nil")
+	}
+}
+
+func TestLoadControlPlaneConfig_MissingDHTNamespace(t *testing.T) {
+	const yaml = `
+jwt_http:
+  listen: ":8443"
+dht_bootstrap:
+  namespace: ""
+metadata:
+  pg_dsn: "postgres://localhost/mw"
+identity:
+  priv_key_path: "/key"
+  libp2p_priv_key_path: "/key2"
+`
+	path := writeTempControlPlaneYAML(t, yaml)
+	_, err := LoadControlPlaneConfig(path)
+	if err == nil {
+		t.Fatal("expected error for missing dht_bootstrap.namespace, got nil")
+	}
+}
+
+func TestLoadControlPlaneConfig_MissingPGDSN(t *testing.T) {
+	const yaml = `
+jwt_http:
+  listen: ":8443"
+dht_bootstrap:
+  namespace: "edge"
+metadata:
+  pg_dsn: ""
+identity:
+  priv_key_path: "/key"
+  libp2p_priv_key_path: "/key2"
+`
+	path := writeTempControlPlaneYAML(t, yaml)
+	_, err := LoadControlPlaneConfig(path)
+	if err == nil {
+		t.Fatal("expected error for missing metadata.pg_dsn, got nil")
+	}
+}
+
+func TestLoadControlPlaneConfig_MissingPrivKey(t *testing.T) {
+	const yaml = `
+jwt_http:
+  listen: ":8443"
+dht_bootstrap:
+  namespace: "edge"
+metadata:
+  pg_dsn: "postgres://localhost/mw"
+identity:
+  priv_key_path: ""
+  libp2p_priv_key_path: "/key2"
+`
+	path := writeTempControlPlaneYAML(t, yaml)
+	_, err := LoadControlPlaneConfig(path)
+	if err == nil {
+		t.Fatal("expected error for missing identity.priv_key_path, got nil")
+	}
+}
+
+func TestLoadControlPlaneConfig_MissingLibp2pPrivKey(t *testing.T) {
+	const yaml = `
+jwt_http:
+  listen: ":8443"
+dht_bootstrap:
+  namespace: "edge"
+metadata:
+  pg_dsn: "postgres://localhost/mw"
+identity:
+  priv_key_path: "/key"
+  libp2p_priv_key_path: ""
+`
+	path := writeTempControlPlaneYAML(t, yaml)
+	_, err := LoadControlPlaneConfig(path)
+	if err == nil {
+		t.Fatal("expected error for missing identity.libp2p_priv_key_path, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Failure: nonexistent file
+// ---------------------------------------------------------------------------
+
+func TestLoadControlPlaneConfig_NonexistentFile(t *testing.T) {
+	_, err := LoadControlPlaneConfig("/nonexistent/control-plane.yaml")
+	if err == nil {
+		t.Fatal("expected error for nonexistent file, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Failure: invalid YAML
+// ---------------------------------------------------------------------------
+
+func TestLoadControlPlaneConfig_InvalidYAML(t *testing.T) {
+	path := writeTempControlPlaneYAML(t, `jwt_http: { listen: ":8443" `) // unbalanced brace
+	_, err := LoadControlPlaneConfig(path)
+	if err == nil {
+		t.Fatal("expected error for invalid YAML, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Identity helpers
+// ---------------------------------------------------------------------------
+
+func TestLoadOrGenerateControlPlaneKey_GenerateAndLoad(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ed25519.key")
+
+	// First call generates a new key.
+	key1, err := LoadOrGenerateControlPlaneKey(path)
+	if err != nil {
+		t.Fatalf("LoadOrGenerateControlPlaneKey (generate) failed: %v", err)
+	}
+	if len(key1) != ed25519.PrivateKeySize {
+		t.Errorf("private key length = %d, want %d", len(key1), ed25519.PrivateKeySize)
+	}
+
+	// Verify the file was created.
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		t.Fatal("key file was not created")
+	}
+
+	// Second call loads existing key.
+	key2, err := LoadOrGenerateControlPlaneKey(path)
+	if err != nil {
+		t.Fatalf("LoadOrGenerateControlPlaneKey (load) failed: %v", err)
+	}
+	if len(key2) != ed25519.PrivateKeySize {
+		t.Errorf("loaded key length = %d, want %d", len(key2), ed25519.PrivateKeySize)
+	}
+
+	// Keys must be identical (same seed).
+	if !key1.Equal(key2) {
+		t.Error("loaded key differs from generated key")
+	}
+}
+
+func TestSaveControlPlaneKey_RoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "test.key")
+
+	_, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatalf("GenerateKey: %v", err)
+	}
+
+	if err := SaveControlPlaneKey(path, priv); err != nil {
+		t.Fatalf("SaveControlPlaneKey: %v", err)
+	}
+
+	loaded, err := LoadOrGenerateControlPlaneKey(path)
+	if err != nil {
+		t.Fatalf("LoadOrGenerateControlPlaneKey: %v", err)
+	}
+
+	if !priv.Equal(loaded) {
+		t.Error("loaded key does not match saved key")
+	}
+}
+
+func TestLoadOrGenerateControlPlaneKey_InvalidFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "bad.key")
+	if err := os.WriteFile(path, []byte("not a pem key"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := LoadOrGenerateControlPlaneKey(path)
+	if err == nil {
+		t.Fatal("expected error for invalid key file, got nil")
+	}
+}
