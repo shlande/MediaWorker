@@ -32,20 +32,28 @@ type WireMessage struct {
 // plane. The node-side handler decodes the payload into types.PinPlan.
 type OnPinPlan func(plan types.PinPlan)
 
+// OnEvent is the callback invoked when a generic event (not a PinPlan) is
+// received from the control plane. The payload is the raw WireMessage payload.
+type OnEvent func(event types.Event)
+
 // Client is the node-side handler for the /edge/control/1.0.0 stream protocol.
 // It registers a stream handler that receives PinPlan events and provides a
 // SendToControlPlane method for pushing NodeStatusReport back to the CPS.
 type Client struct {
 	host    host.Host
 	onPlan  OnPinPlan
+	onEvent OnEvent
 }
 
 // NewClient creates a node-side control-channel client and registers the
 // /edge/control/1.0.0 stream handler on the given host.
-func NewClient(h host.Host, onPlan OnPinPlan) *Client {
+// onPlan is called for PIN_PLAN_UPDATE events; onEvent is called for all
+// other recognized events. Either may be nil to skip that dispatch.
+func NewClient(h host.Host, onPlan OnPinPlan, onEvent OnEvent) *Client {
 	c := &Client{
-		host:   h,
-		onPlan: onPlan,
+		host:    h,
+		onPlan:  onPlan,
+		onEvent: onEvent,
 	}
 	h.SetStreamHandler(ControlProtocol, c.handleStream)
 	return c
@@ -122,5 +130,13 @@ func (c *Client) handleStream(stream network.Stream) {
 			return
 		}
 		c.onPlan(plan)
+		return
+	}
+
+	if c.onEvent != nil {
+		c.onEvent(types.Event{
+			Type:    msg.Type,
+			Payload: []byte(msg.Payload),
+		})
 	}
 }

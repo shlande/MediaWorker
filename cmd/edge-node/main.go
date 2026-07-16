@@ -314,7 +314,7 @@ func main() {
 	// -------------------------------------------------------------------
 	_ = nodesync.NewClient(h, func(plan types.PinPlan) {
 		nodepinstrategy.HandlePinPlan(plan, pinStore)
-	})
+	}, nil)
 	logger.Info("syncbroadcaster client registered",
 		"protocol", string(nodesync.ControlProtocol),
 	)

@@ -71,7 +71,7 @@ func TestForwardChannel_PinPlanUpdate(t *testing.T) {
 
 	_ = sbnode.NewClient(nodeHost, func(plan types.PinPlan) {
 		received <- plan
-	})
+	}, nil)
 
 	broadcaster := sb.New(cpHost)
 
@@ -116,7 +116,7 @@ func TestReverseChannel_NodeStatusReport(t *testing.T) {
 	broadcaster := sb.New(cpHost)
 	subCh := broadcaster.Subscribe("NODE_STATUS_REPORT")
 
-	nodeClient := sbnode.NewClient(nodeHost, nil)
+	nodeClient := sbnode.NewClient(nodeHost, nil, nil)
 
 	report := types.NodeStatusReport{
 		NodeID:  "node-X",

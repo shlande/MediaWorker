@@ -245,6 +245,16 @@ type BlobLocation struct {
 	ContentID string `json:"content_id,omitempty"`
 }
 
+const (
+	EventCredentialUpdate   = "CREDENTIAL_UPDATE"
+	EventHealthChange       = "HEALTH_CHANGE"
+	EventBan                = "BAN"
+	EventUnban              = "UNBAN"
+	EventNewSegmentLocation = "NEW_SEGMENT_LOCATION"
+	EventQuotaUpdate        = "QUOTA_UPDATE"
+	EventQuotaBorrow        = "QUOTA_BORROW"
+)
+
 // Event is a generic event with a type tag and opaque payload (for SyncBroadcasterClient).
 type Event struct {
 	Type    string `json:"type"`
