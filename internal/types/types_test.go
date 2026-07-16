@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
+	"time"
 )
 
 // roundtrip marshals v to JSON, unmarshals into a new T, and asserts equality.
@@ -254,4 +255,155 @@ func TestEvent_roundtrip(t *testing.T) {
 		Type:    "content_ingested",
 		Payload: []byte(`{"content_id":"cont_002"}`),
 	})
+}
+
+func TestVendor_constants(t *testing.T) {
+	if Vendor115 != "115" {
+		t.Fatalf("Vendor115 = %q, want %q", Vendor115, "115")
+	}
+	if VendorBaidu != "baidu" {
+		t.Fatalf("VendorBaidu = %q, want %q", VendorBaidu, "baidu")
+	}
+	if VendorQuark != "quark" {
+		t.Fatalf("VendorQuark = %q, want %q", VendorQuark, "quark")
+	}
+	if VendorOneDrive != "onedrive" {
+		t.Fatalf("VendorOneDrive = %q, want %q", VendorOneDrive, "onedrive")
+	}
+	if VendorAliyundrive != "aliyundrive" {
+		t.Fatalf("VendorAliyundrive = %q, want %q", VendorAliyundrive, "aliyundrive")
+	}
+}
+
+func TestCredential_roundtrip(t *testing.T) {
+	roundtrip(t, Credential{
+		Cookies:      map[string]string{"cookie1": "val1"},
+		AccessToken:  "access_abc",
+		RefreshToken: "refresh_xyz",
+		TokenExpire:  time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC),
+	})
+}
+
+func TestDownloadLink_roundtrip(t *testing.T) {
+	roundtrip(t, DownloadLink{
+		URL:      "https://example.com/file",
+		ExpireAt: time.Date(2026, 7, 17, 13, 0, 0, 0, time.UTC),
+		IPBound:  true,
+		Headers:  map[string]string{"User-Agent": "test"},
+	})
+}
+
+func TestHealthState_roundtrip(t *testing.T) {
+	roundtrip(t, HealthState{
+		State:     "healthy",
+		LastCheck: time.Date(2026, 7, 17, 12, 0, 0, 0, time.UTC),
+		Latency:   150 * time.Millisecond,
+		ErrorMsg:  "",
+	})
+}
+
+func TestRateLimitConfig_roundtrip(t *testing.T) {
+	roundtrip(t, RateLimitConfig{
+		QPS:             1.0,
+		Burst:           2,
+		ConcurrentLimit: 5,
+	})
+}
+
+func TestFileInfo_roundtrip(t *testing.T) {
+	roundtrip(t, FileInfo{
+		ID:       "file_001",
+		Name:     "video.mp4",
+		Size:     1048576,
+		IsDir:    false,
+		Modified: time.Date(2026, 7, 17, 10, 0, 0, 0, time.UTC),
+		Hash:     "sha256:abc123",
+	})
+}
+
+func TestVendorProfile_roundtrip(t *testing.T) {
+	roundtrip(t, VendorProfile{
+		Vendor:        Vendor115,
+		Weight:        3.0,
+		BaseLatencyMs: 100,
+		BandwidthMbps: 50,
+	})
+}
+
+func TestBanSignalError_Error(t *testing.T) {
+	err := &BanSignalError{Code: 403, Msg: "rate limited"}
+	want := "ban signal: 403 rate limited"
+	if got := err.Error(); got != want {
+		t.Fatalf("BanSignalError.Error() = %q, want %q", got, want)
+	}
+}
+
+func TestBlobLocation_WithContentID(t *testing.T) {
+	loc := BlobLocation{
+		BlobHash:  "blob_with_cid",
+		Vendor:    "115",
+		AccountID: "acct_001",
+		FileID:    "file_001",
+		ContentID: "cont_001",
+	}
+	data, err := json.Marshal(loc)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	var got BlobLocation
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if got.ContentID != "cont_001" {
+		t.Fatalf("ContentID = %q, want %q", got.ContentID, "cont_001")
+	}
+}
+
+func TestBlobLocation_OldJSONWithoutContentID(t *testing.T) {
+	// Old JSON without "content_id" field — must deserialize with ContentID==""
+	oldJSON := `{"blob_hash":"old_blob","vendor":"115","account_id":"acct_001","file_id":"file_001"}`
+	var loc BlobLocation
+	if err := json.Unmarshal([]byte(oldJSON), &loc); err != nil {
+		t.Fatalf("json.Unmarshal old JSON: %v", err)
+	}
+	if loc.BlobHash != "old_blob" {
+		t.Fatalf("BlobHash = %q, want %q", loc.BlobHash, "old_blob")
+	}
+	if loc.ContentID != "" {
+		t.Fatalf("ContentID should be empty for old JSON, got %q", loc.ContentID)
+	}
+}
+
+func TestBlobLocation_roundtrip_with_old_fields(t *testing.T) {
+	// Ensure existing fields still roundtrip correctly without ContentID set
+	roundtrip(t, BlobLocation{
+		BlobHash:  "existing_blob",
+		Vendor:    "baidu",
+		AccountID: "acct_002",
+		FileID:    "file_002",
+		// ContentID intentionally empty
+	})
+}
+
+func TestBanSignalError_implements_error(t *testing.T) {
+	var err error = &BanSignalError{Code: 429, Msg: "too many requests"}
+	if err.Error() != "ban signal: 429 too many requests" {
+		t.Fatalf("unexpected error: %s", err.Error())
+	}
+}
+
+func TestVendor_roundtrip(t *testing.T) {
+	// Vendor is a string type — verify JSON marshal/unmarshal
+	data, err := json.Marshal(Vendor115)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var got Vendor
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if got != Vendor115 {
+		t.Fatalf("Vendor roundtrip: want %q, got %q", Vendor115, got)
+	}
 }

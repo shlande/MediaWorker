@@ -1,6 +1,11 @@
 // Package types defines domain types shared across MediaWorker distribution packages.
 package types
 
+import (
+	"fmt"
+	"time"
+)
+
 // ─── 节点身份 (libp2p PeerId 绑定) ───
 
 // PeerId is a node's cryptographic identity derived from an Ed25519 public key's multihash.
@@ -75,6 +80,79 @@ type PeerStoreEntry struct {
 	LastSeen     int64            `json:"last_seen"`
 	Score        float64          `json:"score"`
 	Stale        bool             `json:"stale"`
+}
+
+// ─── 存储域类型 ───
+
+// Vendor is a cloud drive vendor identifier.
+type Vendor string
+
+const (
+	Vendor115         Vendor = "115"
+	VendorBaidu       Vendor = "baidu"
+	VendorQuark       Vendor = "quark"
+	VendorOneDrive    Vendor = "onedrive"
+	VendorAliyundrive Vendor = "aliyundrive"
+)
+
+// Credential holds authentication information for a cloud drive account.
+type Credential struct {
+	Cookies      map[string]string `json:"cookies"`
+	AccessToken  string            `json:"access_token"`
+	RefreshToken string            `json:"refresh_token"`
+	TokenExpire  time.Time         `json:"token_expire"`
+}
+
+// DownloadLink represents a temporary download URL for a cloud drive file.
+type DownloadLink struct {
+	URL      string            `json:"url"`
+	ExpireAt time.Time         `json:"expire_at"`
+	IPBound  bool              `json:"ip_bound"`
+	Headers  map[string]string `json:"headers"`
+}
+
+// HealthState describes the health status of a cloud drive account.
+type HealthState struct {
+	State     string        `json:"state"`
+	LastCheck time.Time     `json:"last_check"`
+	Latency   time.Duration `json:"latency"`
+	ErrorMsg  string        `json:"error_msg"`
+}
+
+// RateLimitConfig defines rate-limiting parameters for a cloud drive account.
+type RateLimitConfig struct {
+	QPS             float64 `json:"qps"`
+	Burst           int     `json:"burst"`
+	ConcurrentLimit int     `json:"concurrent_limit"`
+}
+
+// FileInfo represents metadata for a single file on a cloud drive.
+type FileInfo struct {
+	ID       string    `json:"id"`
+	Name     string    `json:"name"`
+	Size     int64     `json:"size"`
+	IsDir    bool      `json:"is_dir"`
+	Modified time.Time `json:"modified"`
+	Hash     string    `json:"hash"`
+}
+
+// VendorProfile is an operator-configurable capability profile for a cloud drive vendor.
+type VendorProfile struct {
+	Vendor        Vendor  `json:"vendor"`
+	Weight        float64 `json:"weight"`
+	BaseLatencyMs int     `json:"base_latency_ms"`
+	BandwidthMbps int     `json:"bandwidth_mbps"`
+}
+
+// BanSignalError is a typed error representing a vendor ban or throttling signal.
+type BanSignalError struct {
+	Code int
+	Msg  string
+}
+
+// Error implements the error interface for BanSignalError.
+func (e *BanSignalError) Error() string {
+	return fmt.Sprintf("ban signal: %d %s", e.Code, e.Msg)
 }
 
 // ─── 来自 ingest 域的类型 ───
@@ -164,6 +242,7 @@ type BlobLocation struct {
 	Vendor    string `json:"vendor"`
 	AccountID string `json:"account_id"`
 	FileID    string `json:"file_id"`
+	ContentID string `json:"content_id,omitempty"`
 }
 
 // Event is a generic event with a type tag and opaque payload (for SyncBroadcasterClient).
