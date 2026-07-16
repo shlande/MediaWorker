@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/netip"
 	"time"
 
@@ -34,10 +35,8 @@ type EdgeConnectionGater struct {
 	peerStore   *peerstore.PeerEntryStore
 	jwtVerifier *jwt.JWTVerifier
 	ipLimiter   *rate.Limiter
+	logger      *slog.Logger
 
-	// cidrRanges is an optional set of allowed CIDR prefixes.
-	// When non-empty, only connections from IPs within these ranges are accepted.
-	// An empty slice means no CIDR filtering.
 	cidrRanges []netip.Prefix
 }
 
@@ -58,6 +57,7 @@ func NewEdgeConnectionGater(
 		jwtVerifier: jwtVerifier,
 		ipLimiter:   rate.NewLimiter(ipRate, ipBurst),
 		cidrRanges:  cidrRanges,
+		logger:      slog.Default().With("component", "conn_gater"),
 	}
 }
 
@@ -80,20 +80,21 @@ func (g *EdgeConnectionGater) InterceptAddrDial(_ peer.ID, _ multiaddr.Multiaddr
 func (g *EdgeConnectionGater) InterceptAccept(addrs network.ConnMultiaddrs) bool {
 	remoteIP := extractIP(addrs)
 	if remoteIP == "" {
-		// Cannot extract IP — reject conservatively.
+		g.logger.Debug("accept rejected: cannot extract remote IP")
 		return false
 	}
 
-	// CIDR allowlist check (optional).
 	if len(g.cidrRanges) > 0 && !ipInCIDRRanges(remoteIP, g.cidrRanges) {
+		g.logger.Debug("accept rejected: IP not in CIDR allowlist", "ip", remoteIP)
 		return false
 	}
 
-	// Per-IP rate limiting.
 	if !g.ipLimiter.Allow() {
+		g.logger.Debug("accept rejected: IP rate limited", "ip", remoteIP)
 		return false
 	}
 
+	g.logger.Debug("accept allowed", "ip", remoteIP)
 	return true
 }
 
@@ -104,20 +105,22 @@ func (g *EdgeConnectionGater) InterceptAccept(addrs network.ConnMultiaddrs) bool
 func (g *EdgeConnectionGater) InterceptSecured(_ network.Direction, p peer.ID, _ network.ConnMultiaddrs) bool {
 	entry, ok := g.peerStore.Get(types.PeerId(p.String()))
 	if !ok {
-		// Unknown peer — allow. Will require JWT via /edge/auth/1.0.0.
+		g.logger.Debug("secured allowed: unknown peer (JWT required via auth stream)", "peer", p)
 		return true
 	}
 
 	if entry.Stale {
-		// JWT expired and not refreshed.
+		g.logger.Debug("secured rejected: peer marked stale", "peer", p)
 		return false
 	}
 
 	if entry.Score < peerstore.GraylistThreshold {
-		// Malicious or severely degraded peer.
+		g.logger.Debug("secured rejected: peer score below graylist threshold",
+			"peer", p, "score", entry.Score, "threshold", peerstore.GraylistThreshold)
 		return false
 	}
 
+	g.logger.Debug("secured allowed", "peer", p, "score", entry.Score)
 	return true
 }
 
@@ -129,17 +132,19 @@ func (g *EdgeConnectionGater) InterceptUpgraded(conn network.Conn) (bool, contro
 	entry, ok := g.peerStore.Get(types.PeerId(p.String()))
 
 	if !ok {
-		// Unknown peer — allow. Will require JWT via /edge/auth/1.0.0.
+		g.logger.Debug("upgraded allowed: unknown peer", "peer", p)
 		return true, 0
 	}
 
 	now := time.Now().Unix()
 	if entry.JWTExp < now {
-		// JWT expired with no refresh — mark stale and reject.
-		_ = g.peerStore.MarkStale(types.PeerId(p.String()))
+		g.logger.Warn("upgraded rejected: JWT expired, marking peer stale",
+			"peer", p, "jwt_exp", entry.JWTExp, "now", now)
+		_ = g.peerStore.MarkStale(types.PeerId(p.String()), "jwt_expired_intercept_upgraded")
 		return false, control.DisconnectReason(0)
 	}
 
+	g.logger.Debug("upgraded allowed", "peer", p, "jwt_exp", entry.JWTExp)
 	return true, 0
 }
 
@@ -149,9 +154,11 @@ func (g *EdgeConnectionGater) InterceptUpgraded(conn network.Conn) (bool, contro
 // and writes the peer into PeerEntryStore with an initial neutral score.
 func HandleAuth(stream network.Stream, gater *EdgeConnectionGater) error {
 	defer stream.Close()
+	logger := gater.logger.With("peer", stream.Conn().RemotePeer())
 
 	line, err := bufio.NewReader(stream).ReadString('\n')
 	if err != nil && err != io.EOF {
+		logger.Debug("auth handler: read failed", "err", err)
 		return fmt.Errorf("auth handler: read: %w", err)
 	}
 
@@ -162,16 +169,20 @@ func HandleAuth(stream network.Stream, gater *EdgeConnectionGater) error {
 
 	payload, err := gater.jwtVerifier.Verify(jwtStr)
 	if err != nil {
+		logger.Debug("auth handler: JWT verification failed", "err", err)
 		return fmt.Errorf("auth handler: verify JWT: %w", err)
 	}
 
 	remotePeerID := types.PeerId(stream.Conn().RemotePeer().String())
 	if payload.PeerID != remotePeerID {
+		logger.Debug("auth handler: peer ID mismatch",
+			"expected", remotePeerID, "got", payload.PeerID)
 		return fmt.Errorf("auth handler: %w", sjwt.ErrPeerIDMismatch)
 	}
 
 	now := time.Now().Unix()
 	if payload.Exp < now {
+		logger.Debug("auth handler: JWT expired", "exp", payload.Exp, "now", now)
 		return fmt.Errorf("auth handler: %w", sjwt.ErrJWTExpired)
 	}
 
@@ -181,14 +192,16 @@ func HandleAuth(stream network.Stream, gater *EdgeConnectionGater) error {
 		Capabilities: payload.Capabilities,
 		JWTExp:       payload.Exp,
 		LastSeen:     now,
-		Score:        0, // Initial neutral score.
+		Score:        0,
 		Stale:        false,
 	}
 
 	if err := gater.peerStore.Put(remotePeerID, entry); err != nil {
+		logger.Debug("auth handler: peerstore put failed", "err", err)
 		return fmt.Errorf("auth handler: put peer store: %w", err)
 	}
 
+	logger.Info("auth handler: peer authenticated successfully", "jwt_exp", payload.Exp)
 	return nil
 }
 

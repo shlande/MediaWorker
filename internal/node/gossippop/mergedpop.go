@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -150,6 +151,7 @@ func PublishPopularity(
 	peerID types.PeerId,
 	privKey ed25519.PrivateKey,
 ) {
+	logger := slog.Default().With("component", "gossippop_publisher", "peer_id", peerID)
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -160,7 +162,8 @@ func PublishPopularity(
 		case <-ticker.C:
 			snapshot := localPop.Snapshot()
 			if len(snapshot) == 0 {
-				continue // nothing to publish
+				logger.Debug("skipping publish: empty snapshot")
+				continue
 			}
 
 			update := PopularityUpdate{
@@ -171,15 +174,22 @@ func PublishPopularity(
 
 			payload, err := update.payloadForSigning()
 			if err != nil {
+				logger.Debug("skipping publish: payload signing failed", "err", err)
 				continue
 			}
 			update.Sig = ed25519.Sign(privKey, payload)
 
 			data, err := json.Marshal(update)
 			if err != nil {
+				logger.Debug("skipping publish: marshal failed", "err", err)
 				continue
 			}
-			topic.Publish(ctx, data) // failure is silent
+
+			if err := topic.Publish(ctx, data); err != nil {
+				logger.Debug("publish failed", "err", err, "blobs", len(snapshot))
+			} else {
+				logger.Debug("published popularity update", "blobs", len(snapshot))
+			}
 		}
 	}
 }
@@ -198,22 +208,29 @@ func HandlePopularityMessage(
 		}
 	},
 ) {
+	logger := slog.Default().With("component", "gossippop_receiver", "from", msg.ReceivedFrom.ShortString())
+
 	var update PopularityUpdate
 	if err := json.Unmarshal(msg.Data, &update); err != nil {
+		logger.Debug("dropped message: unmarshal failed", "err", err, "bytes", len(msg.Data))
 		return
 	}
 
 	sourceScore := scorer.GetScore(types.PeerId(msg.ReceivedFrom.String()))
 
-	// Extract Ed25519 public key from the publisher's peer.ID.
-	// In tests this comes from the peerstore via the host.
 	pubKey := h.Peerstore().PubKey(msg.ReceivedFrom)
 	if pubKey == nil {
+		logger.Debug("dropped message: no public key for peer")
 		return
 	}
 
-	// Ignore return error; invalid sigs are handled inside OnPopularityUpdate.
-	_ = mp.OnPopularityUpdate(&update, sourceScore, pubKey)
+	if err := mp.OnPopularityUpdate(&update, sourceScore, pubKey); err != nil {
+		logger.Debug("dropped popularity update",
+			"err", err, "source_score", sourceScore, "blobs", len(update.Counts))
+	} else {
+		logger.Debug("merged popularity update",
+			"source_score", sourceScore, "blobs", len(update.Counts))
+	}
 }
 
 // ─── Errors ───

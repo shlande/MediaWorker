@@ -191,6 +191,7 @@ func (b *BootstrapHost) heartbeatLoop(ctx context.Context) {
 	ticker := time.NewTicker(b.advertiseIntv)
 	defer ticker.Stop()
 
+	advertisedOnce := false
 	for {
 		select {
 		case <-ctx.Done():
@@ -201,10 +202,18 @@ func (b *BootstrapHost) heartbeatLoop(ctx context.Context) {
 				b.logger.Error("heartbeat re-advertise failed", "err", err)
 				continue
 			}
-			b.logger.Debug("heartbeat re-advertised",
-				"namespace", b.namespace,
-				"effective_ttl", ttl,
-			)
+			if !advertisedOnce {
+				b.logger.Info("advertised in DHT namespace (heartbeat)",
+					"namespace", b.namespace,
+					"effective_ttl", ttl,
+				)
+				advertisedOnce = true
+			} else {
+				b.logger.Debug("heartbeat re-advertised",
+					"namespace", b.namespace,
+					"effective_ttl", ttl,
+				)
+			}
 		}
 	}
 }

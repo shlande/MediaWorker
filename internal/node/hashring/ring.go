@@ -8,7 +8,9 @@ package hashring
 
 import (
 	"context"
+	"fmt"
 	"hash/crc32"
+	"log/slog"
 	"sort"
 	"strconv"
 	"sync"
@@ -83,6 +85,7 @@ type HashRing struct {
 	rebuildCount     atomic.Int64
 	peerJoinTime     sync.Map // map[types.PeerId]time.Time
 	heartbeatTracker sync.Map // map[types.PeerId]int
+	logger           *slog.Logger
 
 	// Configurable durations (exposed for testing)
 	newPeerBuf    time.Duration
@@ -127,6 +130,7 @@ func NewHashRing(self types.PeerId, store *peerstore.PeerEntryStore, replicas in
 		debounceWait:  time.Second,
 		maxWaitDur:    5 * time.Second,
 		missThreshold: 3,
+		logger:        slog.Default().With("component", "hashring"),
 	}
 	for _, o := range opts {
 		o(h)
@@ -167,23 +171,35 @@ func (h *HashRing) RebuildHashRing() {
 	now := time.Now()
 
 	newRing := newConsistentMap(h.replicas)
+	included := 0
+	excludedNoICP := 0
+	excludedNewPeer := 0
 	for _, p := range peers {
 		if !p.Capabilities.PeerICP {
+			excludedNoICP++
 			continue
 		}
-		// 30s new-peer buffer: exclude peers that joined too recently
 		if jt, ok := h.peerJoinTime.Load(p.PeerID); ok {
 			if joinTime, ok2 := jt.(time.Time); ok2 {
 				if now.Sub(joinTime) < h.newPeerBuf {
+					excludedNewPeer++
+					h.logger.Debug("peer excluded from ring (new-peer buffer)",
+						"peer", p.PeerID, "joined_ago", now.Sub(joinTime).String(), "buffer", h.newPeerBuf.String())
 					continue
 				}
 			}
 		}
 		newRing.add(string(p.PeerID))
+		included++
 	}
 	newRing.buildKeys()
 
 	h.Replace(newRing)
+	h.logger.Info("hash ring rebuilt",
+		"included", included,
+		"excluded_no_icp", excludedNoICP,
+		"excluded_new_peer", excludedNewPeer,
+	)
 }
 
 // RebuildCount returns the number of times RebuildHashRing has been called.
@@ -222,7 +238,12 @@ func (h *HashRing) OnHeartbeatMiss(peerID types.PeerId) {
 	count := val.(int) + 1
 	h.heartbeatTracker.Store(peerID, count)
 	if count >= h.missThreshold {
-		h.entryStore.MarkStale(peerID)
+		h.logger.Warn("peer evicted from ring (heartbeat miss threshold reached)",
+			"peer", peerID, "misses", count, "threshold", h.missThreshold)
+		h.entryStore.MarkStale(peerID, fmt.Sprintf("heartbeat_miss_threshold_reached=%d", count))
+	} else {
+		h.logger.Debug("peer heartbeat miss recorded",
+			"peer", peerID, "misses", count, "threshold", h.missThreshold)
 	}
 }
 

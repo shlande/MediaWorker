@@ -175,7 +175,7 @@ func TestPeerEntryStore_MarkStale(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	if err := store.MarkStale("peer1"); err != nil {
+	if err := store.MarkStale("peer1", "test"); err != nil {
 		t.Fatalf("MarkStale: %v", err)
 	}
 

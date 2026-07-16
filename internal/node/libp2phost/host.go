@@ -4,14 +4,17 @@ package libp2phost
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/connmgr"
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/pnet"
 	"github.com/libp2p/go-libp2p/p2p/host/peerstore/pstoremem"
 	circuit "github.com/libp2p/go-libp2p/p2p/protocol/circuitv2/relay"
+	"github.com/multiformats/go-multiaddr"
 
 	"github.com/shlande/mediaworker/internal/shared/identity"
 	"github.com/shlande/mediaworker/internal/types"
@@ -86,6 +89,8 @@ func NewEdgeHost(
 		return nil, fmt.Errorf("create libp2p host: %w", err)
 	}
 
+	registerConnNotifee(h)
+
 	return h, nil
 }
 
@@ -99,3 +104,34 @@ func peerSourceFunc(_ context.Context, _ int) <-chan peer.AddrInfo {
 	close(ch)
 	return ch
 }
+
+// registerConnNotifee wires a network.Notifee that logs peer connect/disconnect
+// events at Info level. This is the primary signal for diagnosing peer mesh
+// formation — when two edge nodes discover each other via DHT, a Connected
+// event fires here.
+func registerConnNotifee(h host.Host) {
+	logger := slog.Default().With("component", "libp2p_host", "self", h.ID().ShortString())
+	h.Network().Notify(&connNotifee{logger: logger})
+}
+
+type connNotifee struct {
+	logger *slog.Logger
+}
+
+func (n *connNotifee) Connected(_ network.Network, conn network.Conn) {
+	remote := conn.RemotePeer()
+	dir := "inbound"
+	if conn.Stat().Direction == network.DirOutbound {
+		dir = "outbound"
+	}
+	n.logger.Info("peer connected", "peer", remote.ShortString(), "direction", dir)
+}
+
+func (n *connNotifee) Disconnected(_ network.Network, conn network.Conn) {
+	remote := conn.RemotePeer()
+	n.logger.Info("peer disconnected", "peer", remote.ShortString())
+}
+
+func (n *connNotifee) ListenOpen(_ network.Network, _ multiaddr.Multiaddr)    {}
+func (n *connNotifee) ListenClose(_ network.Network, _ multiaddr.Multiaddr)   {}
+func (n *connNotifee) Listen(_ network.Network, _ multiaddr.Multiaddr)        {}

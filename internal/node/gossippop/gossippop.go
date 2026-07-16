@@ -30,6 +30,7 @@ package gossippop
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/host"
@@ -97,6 +98,7 @@ func JoinTopic(ctx context.Context, ps *pubsub.PubSub, topicName string) (*pubsu
 	if err != nil {
 		return nil, fmt.Errorf("join topic %q: %w", topicName, err)
 	}
+	slog.Default().With("component", "gossippop").Info("joined gossipsub topic", "topic", topicName)
 	return topic, nil
 }
 

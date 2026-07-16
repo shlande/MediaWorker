@@ -1,6 +1,7 @@
 package gossippop
 
 import (
+	"log/slog"
 	"sync"
 
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -46,13 +47,15 @@ const (
 // at +10), negative events decrease it. Peers dropping below GraylistThreshold
 // are marked as graylisted.
 type PeerScorer struct {
-	scores    sync.Map // map[types.PeerId]float64
+	scores     sync.Map // map[types.PeerId]float64
 	graylisted sync.Map // map[types.PeerId]struct{}
+	logger     *slog.Logger
 }
 
-// NewPeerScorer returns an initialised PeerScorer.
 func NewPeerScorer() *PeerScorer {
-	return &PeerScorer{}
+	return &PeerScorer{
+		logger: slog.Default().With("component", "peer_scorer"),
+	}
 }
 
 // AppSpecificScore is the GossipSub callback that returns the stored score for
@@ -91,10 +94,16 @@ func (s *PeerScorer) RecordBandwidthContributed(p types.PeerId, bytes int64) {
 
 // RecordMisbehavior penalizes the peer by 5.0 points. If the resulting score
 // falls to or below GraylistThreshold, the peer is graylisted.
-func (s *PeerScorer) RecordMisbehavior(p types.PeerId, _ MisbehaviorKind) {
+func (s *PeerScorer) RecordMisbehavior(p types.PeerId, kind MisbehaviorKind) {
 	s.adjust(p, -5.0)
-	if s.current(p) <= GraylistThreshold {
+	newScore := s.current(p)
+	if newScore <= GraylistThreshold {
 		s.markGraylisted(p)
+		s.logger.Warn("peer graylisted due to misbehavior",
+			"peer", p, "kind", kind, "score", newScore, "threshold", GraylistThreshold)
+	} else {
+		s.logger.Debug("peer penalized for misbehavior",
+			"peer", p, "kind", kind, "score", newScore)
 	}
 }
 

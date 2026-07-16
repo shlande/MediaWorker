@@ -111,13 +111,16 @@ func (d *EdgeDiscovery) Start(ctx context.Context) error {
 			for _, a := range p.Addrs {
 				addrs = append(addrs, a.String())
 			}
+			isNew := !d.peerEntryStore.Has(peerstore.PeerIdFromPeerID(p.ID))
 			if err := d.peerEntryStore.Put(
 				peerstore.PeerIdFromPeerID(p.ID),
 				peerstore.PeerStoreEntryFromDiscovery(p.ID, addrs),
 			); err != nil {
 				d.logger.Warn("failed to store discovered peer", "peer", p.ID, "err", err)
+			} else if isNew {
+				d.logger.Info("discovered new peer via DHT", "peer", p.ID, "addrs", addrs)
 			} else {
-				d.logger.Debug("discovered peer", "peer", p.ID, "addrs", addrs)
+				d.logger.Debug("refreshed known peer via DHT", "peer", p.ID, "addrs", addrs)
 			}
 		}
 	}
@@ -139,6 +142,7 @@ func (d *EdgeDiscovery) heartbeatLoop(ctx context.Context) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
+	advertisedOnce := false
 	for {
 		select {
 		case <-ctx.Done():
@@ -149,10 +153,18 @@ func (d *EdgeDiscovery) heartbeatLoop(ctx context.Context) {
 				d.logger.Error("heartbeat re-advertise failed", "err", err)
 				continue
 			}
-			d.logger.Debug("heartbeat re-advertised",
-				"namespace", d.namespace,
-				"effective_ttl", ttl,
-			)
+			if !advertisedOnce {
+				d.logger.Info("advertised in DHT namespace",
+					"namespace", d.namespace,
+					"effective_ttl", ttl,
+				)
+				advertisedOnce = true
+			} else {
+				d.logger.Debug("heartbeat re-advertised",
+					"namespace", d.namespace,
+					"effective_ttl", ttl,
+				)
+			}
 		}
 	}
 }
@@ -185,11 +197,16 @@ func (d *EdgeDiscovery) discoverLoop(ctx context.Context) {
 				for _, a := range p.Addrs {
 					addrs = append(addrs, a.String())
 				}
+				isNew := !d.peerEntryStore.Has(peerstore.PeerIdFromPeerID(p.ID))
 				if err := d.peerEntryStore.Put(
 					peerstore.PeerIdFromPeerID(p.ID),
 					peerstore.PeerStoreEntryFromDiscovery(p.ID, addrs),
 				); err != nil {
 					d.logger.Warn("discover loop: failed to store peer", "peer", p.ID, "err", err)
+				} else if isNew {
+					d.logger.Info("discovered new peer via DHT", "peer", p.ID, "addrs", addrs)
+				} else {
+					d.logger.Debug("refreshed known peer via DHT", "peer", p.ID, "addrs", addrs)
 				}
 			}
 		}

@@ -993,7 +993,7 @@ func TestIntegration_Degraded(t *testing.T) {
 	ringA.RebuildHashRing()
 
 	// Mark B as stale (simulating JWT expiry).
-	if err := nodeA.peerStore.MarkStale(pidB); err != nil {
+	if err := nodeA.peerStore.MarkStale(pidB, "test_jwt_expiry"); err != nil {
 		t.Fatalf("mark stale: %v", err)
 	}
 

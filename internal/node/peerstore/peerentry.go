@@ -4,6 +4,7 @@ package peerstore
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -31,6 +32,7 @@ type PeerEntryStore struct {
 	db      *badger.DB
 	index   sync.Map // map[string]*types.PeerStoreEntry (key = PeerId string)
 	dbPath  string
+	logger  *slog.Logger
 }
 
 // NewPeerEntryStore opens (or creates) a BadgerDB at dbPath and returns a
@@ -50,6 +52,7 @@ func NewPeerEntryStore(dbPath string) (*PeerEntryStore, error) {
 	return &PeerEntryStore{
 		db:     db,
 		dbPath: dbPath,
+		logger: slog.Default().With("component", "peerstore"),
 	}, nil
 }
 
@@ -72,7 +75,11 @@ func (s *PeerEntryStore) Put(peerID types.PeerId, entry types.PeerStoreEntry) er
 		return fmt.Errorf("peerentry put: %w", err)
 	}
 
+	_, existedBefore := s.index.Load(string(peerID))
 	s.index.Store(string(peerID), &entry)
+	if !existedBefore {
+		s.logger.Debug("peer added to store", "peer", peerID, "addrs", entry.Addrs)
+	}
 	return nil
 }
 
@@ -89,6 +96,12 @@ func (s *PeerEntryStore) Get(peerID types.PeerId) (types.PeerStoreEntry, bool) {
 	return *entry, true
 }
 
+// Has reports whether an entry exists for the given peer.
+func (s *PeerEntryStore) Has(peerID types.PeerId) bool {
+	_, ok := s.index.Load(string(peerID))
+	return ok
+}
+
 // Delete removes an entry from BadgerDB and the in-memory index.
 func (s *PeerEntryStore) Delete(peerID types.PeerId) error {
 	key := makeKey(peerID)
@@ -98,7 +111,11 @@ func (s *PeerEntryStore) Delete(peerID types.PeerId) error {
 		return fmt.Errorf("peerentry delete: %w", err)
 	}
 
+	_, existed := s.index.Load(string(peerID))
 	s.index.Delete(string(peerID))
+	if existed {
+		s.logger.Debug("peer removed from store", "peer", peerID)
+	}
 	return nil
 }
 
@@ -120,7 +137,7 @@ func (s *PeerEntryStore) ActivePeers() []types.PeerStoreEntry {
 
 // MarkStale sets Stale=true on the entry for the given peer, persisting to
 // BadgerDB and updating the in-memory index.
-func (s *PeerEntryStore) MarkStale(peerID types.PeerId) error {
+func (s *PeerEntryStore) MarkStale(peerID types.PeerId, reason string) error {
 	key := makeKey(peerID)
 
 	return s.db.Update(func(txn *badger.Txn) error {
@@ -147,8 +164,8 @@ func (s *PeerEntryStore) MarkStale(peerID types.PeerId) error {
 			return fmt.Errorf("peerentry markstale set: %w", err)
 		}
 
-		// Update in-memory after successful write.
 		s.index.Store(string(peerID), &entry)
+		s.logger.Warn("peer marked stale", "peer", peerID, "reason", reason)
 		return nil
 	})
 }
