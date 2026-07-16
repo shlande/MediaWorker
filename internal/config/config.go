@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/shlande/mediaworker/internal/types"
 	"gopkg.in/yaml.v3"
 )
 
@@ -131,11 +132,17 @@ type CacheConfig struct {
 // Access layer (data plane & fetch segment)
 // ---------------------------------------------------------------------------
 
-// AccessConfig groups data-plane and fetch-segment configuration.
+// AccessConfig groups data-plane and fetch-segment configuration, plus
+// multi-account pool settings (vendor profiles, rate limits, health check,
+// cloud account credentials).
 type AccessConfig struct {
 	DataPlane           DataPlaneConfig           `yaml:"data_plane"`
 	FetchSegmentServer  FetchSegmentServerConfig  `yaml:"fetch_segment_server"`
 	FetchSegmentClient  FetchSegmentClientConfig  `yaml:"fetch_segment_client"`
+	VendorProfiles      map[string]VendorProfileConfig `yaml:"vendor_profiles"`
+	RateLimits          map[string]RateLimitConfigYAML `yaml:"rate_limits"`
+	HealthCheck         HealthCheckConfig              `yaml:"health_check"`
+	CloudAccounts       []CloudAccountConfig           `yaml:"cloud_accounts"`
 }
 
 // DataPlaneConfig controls the local data-plane (driver backends for L4 nodes).
@@ -160,6 +167,49 @@ type FetchSegmentServerConfig struct {
 // FetchSegmentClientConfig controls fetching segments from sibling peers.
 type FetchSegmentClientConfig struct {
 	Enabled bool `yaml:"enabled"`
+}
+
+// ---------------------------------------------------------------------------
+// Vendor profiles, rate limits, health check & cloud accounts
+// ---------------------------------------------------------------------------
+
+// VendorProfileConfig is the YAML representation of a vendor capability profile.
+// Weight, BaseLatencyMs and BandwidthMbps are used by the AccountPool selection
+// logic to score and rank candidates for read/upload.
+type VendorProfileConfig struct {
+	Weight        float64 `yaml:"weight"`
+	BaseLatencyMs int     `yaml:"base_latency_ms"`
+	BandwidthMbps int     `yaml:"bandwidth_mbps"`
+}
+
+// RateLimitConfigYAML is the YAML representation of per-vendor rate-limit
+// parameters. QPS is the steady-state tokens/second; Burst is the token-bucket
+// capacity; Concurrent is the maximum number of in-flight download connections.
+type RateLimitConfigYAML struct {
+	QPS        float64 `yaml:"qps"`        // tokens per second
+	Burst      int     `yaml:"burst"`      // token bucket burst capacity
+	Concurrent int     `yaml:"concurrent"` // max concurrent connections
+}
+
+// HealthCheckConfig controls the interval at which the account-pool health
+// check worker probes each cloud-drive account.
+type HealthCheckConfig struct {
+	Interval string `yaml:"interval"` // e.g. "30s"
+}
+
+// CloudAccountConfig represents a single cloud-drive account in the node's
+// local configuration. Credentials (ClientSecret, RefreshToken) are stored
+// in plain-text YAML; production deployments should source these from a
+// secrets vault injected at deploy time.
+type CloudAccountConfig struct {
+	Vendor       string `yaml:"vendor"`
+	AccountID    string `yaml:"account_id"`
+	ClientID     string `yaml:"client_id"`
+	ClientSecret string `yaml:"client_secret"`
+	RefreshToken string `yaml:"refresh_token"`
+	RedirectURI  string `yaml:"redirect_uri"`
+	Region       string `yaml:"region"`
+	Enabled      bool   `yaml:"enabled"`
 }
 
 // ---------------------------------------------------------------------------
@@ -204,4 +254,41 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	return &cfg, nil
+}
+
+// LoadVendorProfiles reads a YAML file at path, unmarshals the top-level
+// vendor_profiles key, and returns a map keyed by types.Vendor.  If a vendor
+// key in the YAML is not a known types.Vendor constant it is silently skipped.
+// When the YAML file does not exist or the key is absent, nil is returned
+// (allowing callers to fall back to built-in defaults).
+func LoadVendorProfiles(path string) (map[types.Vendor]types.VendorProfile, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil //nolint:nilnil — caller falls back to defaults
+		}
+		return nil, fmt.Errorf("read vendor_profiles file: %w", err)
+	}
+
+	var raw struct {
+		VendorProfiles map[string]VendorProfileConfig `yaml:"vendor_profiles"`
+	}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil, fmt.Errorf("parse vendor_profiles: %w", err)
+	}
+	if raw.VendorProfiles == nil {
+		return nil, nil
+	}
+
+	out := make(map[types.Vendor]types.VendorProfile, len(raw.VendorProfiles))
+	for vendorStr, vpc := range raw.VendorProfiles {
+		v := types.Vendor(vendorStr)
+		out[v] = types.VendorProfile{
+			Vendor:        v,
+			Weight:        vpc.Weight,
+			BaseLatencyMs: vpc.BaseLatencyMs,
+			BandwidthMbps: vpc.BandwidthMbps,
+		}
+	}
+	return out, nil
 }

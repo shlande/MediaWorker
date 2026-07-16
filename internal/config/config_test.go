@@ -75,6 +75,37 @@ access_layer:
     rate_limit_local: true
   fetch_segment_server:
     enabled: true
+  vendor_profiles:
+    "115":       { weight: 3.0, base_latency_ms: 100, bandwidth_mbps: 50 }
+    baidu:       { weight: 2.0, base_latency_ms: 200, bandwidth_mbps: 80 }
+    quark:       { weight: 1.0, base_latency_ms: 300, bandwidth_mbps: 30 }
+    onedrive:    { weight: 2.0, base_latency_ms: 80,  bandwidth_mbps: 40 }
+    aliyundrive: { weight: 2.5, base_latency_ms: 90,  bandwidth_mbps: 40 }
+  rate_limits:
+    "115":       { qps: 1.0,  burst: 2,  concurrent: 5  }
+    baidu:       { qps: 2.0,  burst: 4,  concurrent: 8  }
+    quark:       { qps: 0.5,  burst: 1,  concurrent: 5  }
+    onedrive:    { qps: 10.0, burst: 20, concurrent: 16 }
+    aliyundrive: { qps: 5.0,  burst: 10, concurrent: 10 }
+  health_check:
+    interval: "30s"
+  cloud_accounts:
+    - vendor: baidu
+      account_id: "baidu_acct_01"
+      client_id: "baidu_client_id_sample"
+      client_secret: "baidu_client_secret_sample"
+      refresh_token: "baidu_refresh_token_sample"
+      redirect_uri: "http://localhost:8080/auth/callback/baidu"
+      region: "cn"
+      enabled: true
+    - vendor: onedrive
+      account_id: "onedrive_acct_01"
+      client_id: "onedrive_client_id_sample"
+      client_secret: "onedrive_client_secret_sample"
+      refresh_token: "onedrive_refresh_token_sample"
+      redirect_uri: "http://localhost:8080/auth/callback/onedrive"
+      region: "global"
+      enabled: true
 hash_ring:
   replicas: 150
 `
@@ -250,8 +281,199 @@ func TestLoadConfig_EdgeNode(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// Failure: missing required field
+// Extended config: vendor_profiles, rate_limits, health_check, cloud_accounts
 // ---------------------------------------------------------------------------
+
+func TestLoadConfig_VendorProfiles(t *testing.T) {
+	path := writeTempYAML(t, l4ConfigYAML)
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	// Verify all 5 vendor profiles loaded
+	const vendCount = 5
+	if len(cfg.Access.VendorProfiles) != vendCount {
+		t.Fatalf("VendorProfiles count = %d, want %d", len(cfg.Access.VendorProfiles), vendCount)
+	}
+
+	tests := []struct {
+		vendor    string
+		wantW     float64
+		wantLat   int
+		wantBW    int
+	}{
+		{"115",       3.0, 100, 50},
+		{"baidu",     2.0, 200, 80},
+		{"quark",     1.0, 300, 30},
+		{"onedrive",  2.0,  80, 40},
+		{"aliyundrive", 2.5, 90, 40},
+	}
+
+	for _, tt := range tests {
+		p, ok := cfg.Access.VendorProfiles[tt.vendor]
+		if !ok {
+			t.Errorf("VendorProfiles[%q] missing", tt.vendor)
+			continue
+		}
+		if p.Weight != tt.wantW {
+			t.Errorf("VendorProfiles[%q].Weight = %v, want %v", tt.vendor, p.Weight, tt.wantW)
+		}
+		if p.BaseLatencyMs != tt.wantLat {
+			t.Errorf("VendorProfiles[%q].BaseLatencyMs = %d, want %d", tt.vendor, p.BaseLatencyMs, tt.wantLat)
+		}
+		if p.BandwidthMbps != tt.wantBW {
+			t.Errorf("VendorProfiles[%q].BandwidthMbps = %d, want %d", tt.vendor, p.BandwidthMbps, tt.wantBW)
+		}
+	}
+}
+
+func TestLoadConfig_RateLimits(t *testing.T) {
+	path := writeTempYAML(t, l4ConfigYAML)
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	const vendCount = 5
+	if len(cfg.Access.RateLimits) != vendCount {
+		t.Fatalf("RateLimits count = %d, want %d", len(cfg.Access.RateLimits), vendCount)
+	}
+
+	tests := []struct {
+		vendor string
+		wantQPS float64
+		wantBurst int
+		wantConcurrent int
+	}{
+		{"115",      1.0,  2,  5},
+		{"baidu",    2.0,  4,  8},
+		{"quark",    0.5,  1,  5},
+		{"onedrive", 10.0, 20, 16},
+		{"aliyundrive", 5.0, 10, 10},
+	}
+
+	for _, tt := range tests {
+		r, ok := cfg.Access.RateLimits[tt.vendor]
+		if !ok {
+			t.Errorf("RateLimits[%q] missing", tt.vendor)
+			continue
+		}
+		if r.QPS != tt.wantQPS {
+			t.Errorf("RateLimits[%q].QPS = %v, want %v", tt.vendor, r.QPS, tt.wantQPS)
+		}
+		if r.Burst != tt.wantBurst {
+			t.Errorf("RateLimits[%q].Burst = %d, want %d", tt.vendor, r.Burst, tt.wantBurst)
+		}
+		if r.Concurrent != tt.wantConcurrent {
+			t.Errorf("RateLimits[%q].Concurrent = %d, want %d", tt.vendor, r.Concurrent, tt.wantConcurrent)
+		}
+	}
+}
+
+func TestLoadConfig_HealthCheck(t *testing.T) {
+	path := writeTempYAML(t, l4ConfigYAML)
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	if cfg.Access.HealthCheck.Interval != "30s" {
+		t.Errorf("HealthCheck.Interval = %q, want %q", cfg.Access.HealthCheck.Interval, "30s")
+	}
+}
+
+func TestLoadConfig_CloudAccounts(t *testing.T) {
+	path := writeTempYAML(t, l4ConfigYAML)
+
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+
+	const acctCount = 2
+	if len(cfg.Access.CloudAccounts) != acctCount {
+		t.Fatalf("CloudAccounts count = %d, want %d", len(cfg.Access.CloudAccounts), acctCount)
+	}
+
+	// baidu account
+	if cfg.Access.CloudAccounts[0].Vendor != "baidu" {
+		t.Errorf("CloudAccounts[0].Vendor = %q, want %q", cfg.Access.CloudAccounts[0].Vendor, "baidu")
+	}
+	if cfg.Access.CloudAccounts[0].AccountID != "baidu_acct_01" {
+		t.Errorf("CloudAccounts[0].AccountID = %q", cfg.Access.CloudAccounts[0].AccountID)
+	}
+	if !cfg.Access.CloudAccounts[0].Enabled {
+		t.Error("CloudAccounts[0].Enabled expected true")
+	}
+
+	// onedrive account
+	if cfg.Access.CloudAccounts[1].Vendor != "onedrive" {
+		t.Errorf("CloudAccounts[1].Vendor = %q, want %q", cfg.Access.CloudAccounts[1].Vendor, "onedrive")
+	}
+	if cfg.Access.CloudAccounts[1].Region != "global" {
+		t.Errorf("CloudAccounts[1].Region = %q", cfg.Access.CloudAccounts[1].Region)
+	}
+}
+
+func TestLoadVendorProfiles_FromStandaloneFile(t *testing.T) {
+	// LoadVendorProfiles reads a standalone YAML file whose top-level key
+	// is vendor_profiles.  This test provides exactly that shape.
+	const vendorProfilesYAML = `vendor_profiles:
+  "115":       { weight: 3.0, base_latency_ms: 100, bandwidth_mbps: 50 }
+  baidu:       { weight: 2.0, base_latency_ms: 200, bandwidth_mbps: 80 }
+  quark:       { weight: 1.0, base_latency_ms: 300, bandwidth_mbps: 30 }
+  onedrive:    { weight: 2.0, base_latency_ms: 80,  bandwidth_mbps: 40 }
+  aliyundrive: { weight: 2.5, base_latency_ms: 90,  bandwidth_mbps: 40 }
+`
+	path := writeTempYAML(t, vendorProfilesYAML)
+
+	profiles, err := LoadVendorProfiles(path)
+	if err != nil {
+		t.Fatalf("LoadVendorProfiles failed: %v", err)
+	}
+
+	const vendCount = 5
+	if len(profiles) != vendCount {
+		t.Fatalf("VendorProfiles count = %d, want %d", len(profiles), vendCount)
+	}
+
+	v115 := profiles["115"]
+	if v115.Weight != 3.0 {
+		t.Errorf("115 Weight = %v, want 3.0", v115.Weight)
+	}
+	if v115.BaseLatencyMs != 100 {
+		t.Errorf("115 BaseLatencyMs = %d, want 100", v115.BaseLatencyMs)
+	}
+	if v115.BandwidthMbps != 50 {
+		t.Errorf("115 BandwidthMbps = %d, want 50", v115.BandwidthMbps)
+	}
+}
+
+func TestLoadVendorProfiles_MissingFile(t *testing.T) {
+	profiles, err := LoadVendorProfiles("/nonexistent/path/vendor_profiles.yaml")
+	if err != nil {
+		t.Fatalf("LoadVendorProfiles for missing file: %v", err)
+	}
+	if profiles != nil {
+		t.Fatal("expected nil profiles for missing file")
+	}
+}
+
+func TestLoadVendorProfiles_MissingKey(t *testing.T) {
+	const yaml = `other_key: true`
+	path := writeTempYAML(t, yaml)
+	profiles, err := LoadVendorProfiles(path)
+	if err != nil {
+		t.Fatalf("LoadVendorProfiles: %v", err)
+	}
+	if profiles != nil {
+		t.Fatal("expected nil when vendor_profiles key absent")
+	}
+}
 
 func TestLoadConfig_MissingPrivKey(t *testing.T) {
 	const yaml = `
