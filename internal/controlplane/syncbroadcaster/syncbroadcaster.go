@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"sync/atomic"
 
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
@@ -40,6 +41,167 @@ type SyncBroadcaster struct {
 
 	mu   sync.RWMutex
 	subs map[string][]chan types.Event // eventType → subscribers
+
+	snapshotStore *SnapshotStore
+}
+
+// RingBuffer is a fixed-capacity (1000) circular buffer of Events. It stores
+// the most recent events for replay to reconnecting peers (missing fewer than
+// 1000 events can skip the full snapshot).
+type RingBuffer struct {
+	mu    sync.Mutex
+	buf   [1000]Event
+	head  int // next write position
+	count int // number of buffered events
+}
+
+// Event is a single entry in the ring buffer, carrying a monotonically
+// increasing sequence number, a type label, and the raw payload bytes.
+type Event struct {
+	Seq     uint64 `json:"seq"`
+	Type    string `json:"type"`
+	Payload []byte `json:"payload"`
+}
+
+// Push appends an event to the ring buffer. When the buffer is full the
+// oldest event is silently overwritten.
+func (rb *RingBuffer) Push(evt Event) {
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
+
+	rb.buf[rb.head] = evt
+	rb.head = (rb.head + 1) % len(rb.buf)
+	if rb.count < len(rb.buf) {
+		rb.count++
+	}
+}
+
+// Since returns all buffered events with Seq > lastSeq, in ascending seq
+// order. If lastSeq is zero it returns every buffered event.
+func (rb *RingBuffer) Since(lastSeq uint64) []Event {
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
+
+	if rb.count == 0 {
+		return nil
+	}
+
+	// Determine the oldest seq in the buffer.
+	tail := (rb.head - rb.count + len(rb.buf)) % len(rb.buf)
+	oldestSeq := rb.buf[tail].Seq
+
+	// When lastSeq is 0 (new peer with no history) we always return
+	// everything. Non-zero lastSeq must not be older than oldestSeq-1,
+	// otherwise the caller has missed events that are already overwritten.
+	if lastSeq != 0 && lastSeq < oldestSeq-1 {
+		return nil
+	}
+	// Caller is ahead of or exactly at the newest event.
+	newestSeq := oldestSeq + uint64(rb.count) - 1
+	if lastSeq >= newestSeq {
+		return nil
+	}
+
+	start := tail
+	if lastSeq >= oldestSeq {
+		// skip events the caller has already seen
+		skip := lastSeq - oldestSeq + 1
+		start = (tail + int(skip)) % len(rb.buf)
+	}
+
+	n := rb.count - int(start-tail+len(rb.buf))%len(rb.buf)
+	if n <= 0 {
+		return nil
+	}
+
+	result := make([]Event, 0, n)
+	for i := 0; i < n; i++ {
+		idx := (start + i) % len(rb.buf)
+		result = append(result, rb.buf[idx])
+	}
+	return result
+}
+
+// NextSeq returns the next unused sequence number (current high-water mark + 1).
+// Push uses this to assign seq numbers; callers that want to pre-allocate or
+// check progress can also call it.
+func (rb *RingBuffer) NextSeq() uint64 {
+	rb.mu.Lock()
+	defer rb.mu.Unlock()
+
+	if rb.count == 0 {
+		return 1
+	}
+	lastIdx := (rb.head - 1 + len(rb.buf)) % len(rb.buf)
+	return rb.buf[lastIdx].Seq + 1
+}
+
+// SnapshotStore holds the latest full snapshot (opaque byte slice) together
+// with a ring buffer of incremental events. Peers connect, fetch the snapshot,
+// and then consume events via the ring buffer.
+type SnapshotStore struct {
+	mu       sync.RWMutex
+	snapshot []byte
+	events   *RingBuffer
+	seq      atomic.Uint64
+}
+
+// NewSnapshotStore creates a SnapshotStore with a default ring-buffer capacity
+// of 1000 events.
+func NewSnapshotStore() *SnapshotStore {
+	return &SnapshotStore{
+		events: &RingBuffer{},
+	}
+}
+
+// SetSnapshot stores a new full snapshot. It also assigns a fresh seq number
+// — any subsequent GetSnapshot call will return data + seq.
+func (ss *SnapshotStore) SetSnapshot(data []byte) {
+	ss.mu.Lock()
+	defer ss.mu.Unlock()
+
+	ss.snapshot = cloneBytes(data)
+	ss.seq.Add(1) // new snapshot bumps seq
+}
+
+// GetSnapshot returns the newest snapshot and its associated seq number. If
+// no snapshot has ever been stored it returns nil, 0, nil.
+func (ss *SnapshotStore) GetSnapshot(lastSeq uint64) ([]byte, uint64, error) {
+	ss.mu.RLock()
+	defer ss.mu.RUnlock()
+
+	if ss.snapshot == nil {
+		return nil, 0, nil
+	}
+	return cloneBytes(ss.snapshot), ss.seq.Load(), nil
+}
+
+// PushEvent appends an incremental event to the ring buffer, assigns it the
+// next seq number, and returns that seq. The snapshot itself is unchanged.
+func (ss *SnapshotStore) PushEvent(eventType string, payload []byte) uint64 {
+	seq := ss.events.NextSeq()
+	evt := Event{
+		Seq:     seq,
+		Type:    eventType,
+		Payload: cloneBytes(payload),
+	}
+	ss.events.Push(evt)
+	return seq
+}
+
+// SnapshotEvents returns all events since lastSeq. This is the reconnect path.
+func (ss *SnapshotStore) SnapshotEvents(lastSeq uint64) []Event {
+	return ss.events.Since(lastSeq)
+}
+
+// cloneBytes is a small helper that makes an independent copy of a byte slice.
+func cloneBytes(src []byte) []byte {
+	if src == nil {
+		return nil
+	}
+	dst := make([]byte, len(src))
+	copy(dst, src)
+	return dst
 }
 
 // New creates a SyncBroadcaster and registers the /edge/control/1.0.0 stream
@@ -104,6 +266,55 @@ func (sb *SyncBroadcaster) Unsubscribe(eventType string) {
 	}
 }
 
+// ─── Broadcast & Snapshot ──────────────────────────────────────────────────
+
+// Broadcast sends a WireMessage to every connected peer. payload is
+// JSON-marshalled and wrapped in a WireMessage{Type: eventType} before sending.
+// If there are no connected peers it returns nil (not an error).
+func (sb *SyncBroadcaster) Broadcast(eventType string, payload any) error {
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("syncbroadcaster Broadcast: marshal payload: %w", err)
+	}
+
+	msg := WireMessage{
+		Type:    eventType,
+		Payload: json.RawMessage(payloadBytes),
+	}
+
+	peers := sb.host.Network().Peers()
+	if len(peers) == 0 {
+		return nil
+	}
+
+	ctx := context.Background()
+	for _, peer := range peers {
+		err := sb.sendWireMessage(ctx, peer, msg)
+		if err != nil {
+			// Log and continue — don't let one peer failure block the rest.
+			_ = err
+		}
+	}
+	return nil
+}
+
+// GetSnapshot returns the latest snapshot from the attached SnapshotStore (if
+// set) together with its current sequence number. If no SnapshotStore is
+// configured or no snapshot has ever been stored it returns nil, 0, nil.
+func (sb *SyncBroadcaster) GetSnapshot(lastSeq uint64) ([]byte, uint64, error) {
+	if sb.snapshotStore == nil {
+		return nil, 0, nil
+	}
+	return sb.snapshotStore.GetSnapshot(lastSeq)
+}
+
+// SetSnapshotStore attaches a SnapshotStore instance. After this call,
+// Broadcast events will be recorded in the store, and GetSnapshot will
+// return the latest snapshot.
+func (sb *SyncBroadcaster) SetSnapshotStore(ss *SnapshotStore) {
+	sb.snapshotStore = ss
+}
+
 // ─── Stream handler (reverse direction) ──────────────────────────────────────
 
 // handleStream reads a varint-prefixed JSON WireMessage from an incoming
@@ -111,7 +322,7 @@ func (sb *SyncBroadcaster) Unsubscribe(eventType string) {
 func (sb *SyncBroadcaster) handleStream(stream network.Stream) {
 	defer stream.Close()
 
-	msg, err := readWireMessage(stream)
+	msg, err := ReadWireMessage(stream)
 	if err != nil {
 		stream.Reset()
 		return
@@ -180,8 +391,8 @@ func writeWireMessage(w io.Writer, msg WireMessage) error {
 	return nil
 }
 
-// readWireMessage reads a varint-prefixed JSON WireMessage from the stream.
-func readWireMessage(r io.Reader) (WireMessage, error) {
+// ReadWireMessage reads a varint-prefixed JSON WireMessage from the stream.
+func ReadWireMessage(r io.Reader) (WireMessage, error) {
 	br := bufio.NewReader(r)
 
 	length, err := binary.ReadUvarint(br)

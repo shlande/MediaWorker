@@ -326,5 +326,17 @@ func (ap *AccountPool) MarkBanned(key string) {
 	}
 }
 
+// SnapshotAccounts returns a snapshot of all accounts in the pool.
+// The caller receives a shallow copy safe for read-only use without holding the lock.
+func (ap *AccountPool) SnapshotAccounts() []*Account {
+	ap.mu.RLock()
+	defer ap.mu.RUnlock()
+	result := make([]*Account, 0, len(ap.accounts))
+	for _, a := range ap.accounts {
+		result = append(result, a)
+	}
+	return result
+}
+
 // compile-time interface checks
 var _ Limiter = (*rate.Limiter)(nil)
