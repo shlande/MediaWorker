@@ -1,0 +1,27 @@
+groups:
+  - name: cloud_dash_critical
+    rules:
+      # 回源成功率骤降
+      - alert: HighBackhaulFailureRate
+        expr: |
+          sum(rate(storage_access_backhaul_success_total[5m])) /
+          sum(rate(storage_access_backhaul_request_total[5m])) < 0.95
+        for: 3m
+        annotations:
+          summary: "网盘回源成功率 < 95%（当前 {{ $value | humanizePercentage }}）"
+
+      # 账号大规模 ban
+      - alert: MassAccountBan
+        expr: count(storage_account_health_state{state="banned"}) / count(storage_account_health_state) > 0.5
+        for: 5m
+        annotations:
+          summary: "超过 50% 账号被封（{{ $value | humanizePercentage }}），需要人工介入"
+
+      # 某厂商全部账号不可用
+      - alert: VendorAllDown
+        expr: |
+          count by (vendor) (storage_account_health_state{state!="healthy"}) ==
+          count by (vendor) (storage_account_health_state)
+        for: 2m
+        annotations:
+          summary: "厂商 {{ $labels.vendor }} 所有账号不可用"
