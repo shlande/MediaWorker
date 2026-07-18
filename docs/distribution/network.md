@@ -991,6 +991,36 @@ blob_location
 - 两者不冲突：gossip 是"快但局部"，PG 是"慢但全局"
 - 两者都属于分发域，存储域不参与热度数据的读写
 
+### 4.5 热度信任模型现状
+
+`HandlePopularityMessage`（`internal/node/gossippop/mergedpop.go`）是 GossipSub 热度消息的入口。社区节点不可信，恶意节点可虚报任意 blob 的高热度诱导其他节点缓存垃圾或驱逐热门内容。当前实现采用**四层防御 + 一个不变式**，按顺序执行：
+
+| 层 | 防御 | 实现位置 | 失败处置 |
+|----|------|----------|----------|
+| 1. **信任守卫**（T19） | 拒绝 stale / 未知 peer 的热度 | `HandlePopularityMessage` 入口，`PeerEntryLookup.StaleOrUnknown` | `slog.Debug` + 丢弃 |
+| 2. **签名验证** | Ed25519 验签（防篡改 / 重放） | `OnPopularityUpdate:86-93` | `errInvalidSig` + 丢弃 |
+| 3. **GraylistThreshold 地板** | 评分 ≤ -20.0 的灰名单 peer 不采信 | `OnPopularityUpdate:96` | `errScoreTooLow` + 丢弃 |
+| 4. **MinTrustedWeight 输出门** | `TotalWeight < 5.0` 的条目不进入 `Snapshot` / `getVideoPopularity` | `Snapshot:149` / `getVideoPopularity:129` | 静默过滤（不进入逐出排序） |
+| 5. **零注入不变式** | 增量加权平均公式天然免疫 `sourceScore=0` 注入（分子分母同加 0） | `OnPopularityUpdate:110-114` | 无需显式处置，公式自守恒 |
+
+**第 1 层信任守卫的判定来源**：`PeerEntryLookup` 接口由 `cmd/edge-node/main.go` 的 `peerEntryLookupAdapter` 适配 `*peerstore.PeerEntryStore`。判定逻辑：
+
+- `Get(peerID)` 返回 `!ok` → 未知 peer（从未通过 JWT 验证写入 PeerEntryStore）→ 丢弃
+- `entry.Stale == true` → JWT 过期 / 被驱逐的 peer → 丢弃
+- 其余 → 进入后续防御层
+
+**当前消费范围（重要边界）**：
+
+gossip 热度目前**只驱动本地缓存逐出**（`warmCache.SetPopSource` → `cache.Evict`），**不参与 pin 决策**。Pin 决策由控制面 `PinOrchestrator` 基于 PG `content_popularity`（小时级、content 维度）做出。这是有意的安全边界：
+
+- 即使四层防御全部被绕过（极端假设），恶意热度也只能影响单个节点的本地缓存逐出顺序，不能诱导其他节点 pin 垃圾内容
+- 全局 pin 决策的输入源（PG `content_popularity`）由控制面汇聚，社区节点无法直接写入
+
+**未覆盖的场景**（已知限制，留待未来工作）：
+
+- 多 peer 协同投毒（sybil + 短时间内多 peer 上报同一 blob 高热度）可通过第 4 层 `MinTrustedWeight` 门，但需要 ≥ 11 个独立 ICP 成功（11 × 0.5 = 5.5）才能突破。GossipSub 的 `IPColocationFactor` 评分会惩罚同 IP 多 PeerId，提高了 sybil 成本
+- 热度真实性仲裁（"上报热度与多数节点偏差 > 5x"）目前由 `PeerScorer.RecordMisbehavior(MisbehaviorPoisonedHeat)` 触发，但仲裁逻辑（对账）尚未实现——`MisbehaviorPoisonedHeat` 仅作为分类常量存在
+
 ---
 
 

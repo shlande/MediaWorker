@@ -1,0 +1,114 @@
+=== T19 Evidence — gossip 信任守卫 ===
+Date: 2026-07-18T19:27:53Z
+
+## Build
+go build ./internal/node/gossippop/... ./cmd/edge-node/...
+EXIT=0
+
+## Vet (changed packages)
+go vet ./internal/node/gossippop/...
+EXIT=0
+
+## Test (race) — gossippop
+go test -race -v ./internal/node/gossippop/... 2>&1
+=== RUN   TestLocalPopularity_HitSnapshot
+--- PASS: TestLocalPopularity_HitSnapshot (0.00s)
+=== RUN   TestLocalPopularity_SnapshotEmpty
+--- PASS: TestLocalPopularity_SnapshotEmpty (0.00s)
+=== RUN   TestPeerScorer_ICPSuccess
+--- PASS: TestPeerScorer_ICPSuccess (0.00s)
+=== RUN   TestPeerScorer_ICPTimeout
+--- PASS: TestPeerScorer_ICPTimeout (0.00s)
+=== RUN   TestPeerScorer_Misbehavior
+2026/07/19 03:27:58 WARN peer graylisted due to misbehavior component=peer_scorer peer=peerC kind=1 score=-20 threshold=-20
+--- PASS: TestPeerScorer_Misbehavior (0.00s)
+=== RUN   TestPeerScorer_BandwidthContributed
+--- PASS: TestPeerScorer_BandwidthContributed (0.00s)
+=== RUN   TestMergedPopularity_WeightedMerge
+--- PASS: TestMergedPopularity_WeightedMerge (0.01s)
+=== RUN   TestMergedPopularity_LowScoreDropped
+--- PASS: TestMergedPopularity_LowScoreDropped (0.00s)
+=== RUN   TestMergedPopularity_BelowMinTrustedWeight
+--- PASS: TestMergedPopularity_BelowMinTrustedWeight (0.00s)
+=== RUN   TestGossipSub_2NodePopularitySync
+2026/07/19 03:27:58 INFO NAT traversal option enabled component=libp2p_host option=autonat source=default
+2026/07/19 03:27:58 INFO NAT traversal option enabled component=libp2p_host option=auto_relay source=default peer_source="empty (TODO: wire PeerEntryStore)"
+2026/07/19 03:27:58 INFO NAT traversal option enabled component=libp2p_host option=dcutr source=default
+2026/07/19 03:27:58 INFO NAT traversal option enabled component=libp2p_host option=autonat source=default
+2026/07/19 03:27:58 INFO NAT traversal option enabled component=libp2p_host option=auto_relay source=default peer_source="empty (TODO: wire PeerEntryStore)"
+2026/07/19 03:27:58 INFO NAT traversal option enabled component=libp2p_host option=dcutr source=default
+2026/07/19 03:27:58 INFO peer connected component=libp2p_host self="<peer.ID 12*SRYMwu>" peer="<peer.ID 12*gTQMCS>" direction=outbound
+2026/07/19 03:27:58 INFO peer connected component=libp2p_host self="<peer.ID 12*gTQMCS>" peer="<peer.ID 12*SRYMwu>" direction=inbound
+2026/07/19 03:28:00 INFO peer disconnected component=libp2p_host self="<peer.ID 12*gTQMCS>" peer="<peer.ID 12*SRYMwu>"
+2026/07/19 03:28:00 INFO peer disconnected component=libp2p_host self="<peer.ID 12*SRYMwu>" peer="<peer.ID 12*gTQMCS>"
+--- PASS: TestGossipSub_2NodePopularitySync (2.05s)
+=== RUN   TestGossipSub_3NodePoisoningDefense
+2026/07/19 03:28:00 INFO NAT traversal option enabled component=libp2p_host option=autonat source=default
+2026/07/19 03:28:00 INFO NAT traversal option enabled component=libp2p_host option=auto_relay source=default peer_source="empty (TODO: wire PeerEntryStore)"
+2026/07/19 03:28:00 INFO NAT traversal option enabled component=libp2p_host option=dcutr source=default
+2026/07/19 03:28:00 INFO NAT traversal option enabled component=libp2p_host option=autonat source=default
+2026/07/19 03:28:00 INFO NAT traversal option enabled component=libp2p_host option=auto_relay source=default peer_source="empty (TODO: wire PeerEntryStore)"
+2026/07/19 03:28:00 INFO NAT traversal option enabled component=libp2p_host option=dcutr source=default
+2026/07/19 03:28:00 INFO NAT traversal option enabled component=libp2p_host option=autonat source=default
+2026/07/19 03:28:00 INFO NAT traversal option enabled component=libp2p_host option=auto_relay source=default peer_source="empty (TODO: wire PeerEntryStore)"
+2026/07/19 03:28:00 INFO NAT traversal option enabled component=libp2p_host option=dcutr source=default
+2026/07/19 03:28:00 INFO peer connected component=libp2p_host self="<peer.ID 12*kP2beP>" peer="<peer.ID 12*GNnzEA>" direction=outbound
+2026/07/19 03:28:00 INFO peer connected component=libp2p_host self="<peer.ID 12*GNnzEA>" peer="<peer.ID 12*kP2beP>" direction=inbound
+2026/07/19 03:28:00 INFO peer connected component=libp2p_host self="<peer.ID 12*kP2beP>" peer="<peer.ID 12*4Ph6DH>" direction=outbound
+2026/07/19 03:28:00 INFO peer connected component=libp2p_host self="<peer.ID 12*4Ph6DH>" peer="<peer.ID 12*kP2beP>" direction=inbound
+2026/07/19 03:28:00 INFO peer connected component=libp2p_host self="<peer.ID 12*GNnzEA>" peer="<peer.ID 12*4Ph6DH>" direction=outbound
+2026/07/19 03:28:00 INFO peer connected component=libp2p_host self="<peer.ID 12*4Ph6DH>" peer="<peer.ID 12*GNnzEA>" direction=inbound
+2026/07/19 03:28:00 WARN peer graylisted due to misbehavior component=peer_scorer peer=12D3KooWBdmpyLnNmhgVv6mxwhvGjKGZRCEKDKDUKLwyT54Ph6DH kind=0 score=-20 threshold=-20
+    gossippop_test.go:506: update 0 from 12D3KooWBdmpyLnNmhgVv6mxwhvGjKGZRCEKDKDUKLwyT54Ph6DH rejected: gossippop: score_too_low
+    gossippop_test.go:508: update 1 from 12D3KooWJfGnU19MiEe8m2ENFsvE84z2j9SUZUqWgjGjGFkP2beP accepted, counts=map[blob1:10]
+2026/07/19 03:28:02 INFO peer disconnected component=libp2p_host self="<peer.ID 12*kP2beP>" peer="<peer.ID 12*4Ph6DH>"
+2026/07/19 03:28:02 INFO peer disconnected component=libp2p_host self="<peer.ID 12*GNnzEA>" peer="<peer.ID 12*4Ph6DH>"
+2026/07/19 03:28:02 INFO peer disconnected component=libp2p_host self="<peer.ID 12*4Ph6DH>" peer="<peer.ID 12*kP2beP>"
+2026/07/19 03:28:02 INFO peer disconnected component=libp2p_host self="<peer.ID 12*4Ph6DH>" peer="<peer.ID 12*GNnzEA>"
+2026/07/19 03:28:02 INFO peer disconnected component=libp2p_host self="<peer.ID 12*GNnzEA>" peer="<peer.ID 12*kP2beP>"
+2026/07/19 03:28:02 INFO peer disconnected component=libp2p_host self="<peer.ID 12*kP2beP>" peer="<peer.ID 12*GNnzEA>"
+--- PASS: TestGossipSub_3NodePoisoningDefense (2.08s)
+=== RUN   TestHandlePopularityMessage_StalePeerDiscarded
+--- PASS: TestHandlePopularityMessage_StalePeerDiscarded (0.00s)
+=== RUN   TestHandlePopularityMessage_UnknownPeerDiscarded
+--- PASS: TestHandlePopularityMessage_UnknownPeerDiscarded (0.00s)
+=== RUN   TestHandlePopularityMessage_NormalPeerMerges
+--- PASS: TestHandlePopularityMessage_NormalPeerMerges (0.00s)
+=== RUN   TestHandlePopularityMessage_ForgedSignatureDiscarded
+--- PASS: TestHandlePopularityMessage_ForgedSignatureDiscarded (0.00s)
+=== RUN   TestHandlePopularityMessage_GraylistedPeerDiscarded
+2026/07/19 03:28:02 WARN peer graylisted due to misbehavior component=peer_scorer peer=5HroGF51Hv2MLBARGrfwEJb79 kind=0 score=-20 threshold=-20
+2026/07/19 03:28:02 WARN peer graylisted due to misbehavior component=peer_scorer peer=5HroGF51Hv2MLBARGrfwEJb79 kind=0 score=-25 threshold=-20
+--- PASS: TestHandlePopularityMessage_GraylistedPeerDiscarded (0.00s)
+=== RUN   TestHandlePopularityMessage_LowScoreDoesNotBreachMinTrustedWeight
+--- PASS: TestHandlePopularityMessage_LowScoreDoesNotBreachMinTrustedWeight (0.00s)
+=== RUN   TestHandlePopularityMessage_NilLookupSkipsGuard
+--- PASS: TestHandlePopularityMessage_NilLookupSkipsGuard (0.00s)
+=== RUN   TestMergedPopularity_Snapshot_ThresholdFilter
+--- PASS: TestMergedPopularity_Snapshot_ThresholdFilter (0.00s)
+=== RUN   TestMergedPopularity_Snapshot_Empty
+--- PASS: TestMergedPopularity_Snapshot_Empty (0.00s)
+=== RUN   TestMergedPopularity_Snapshot_IndependentCopy
+--- PASS: TestMergedPopularity_Snapshot_IndependentCopy (0.00s)
+=== RUN   TestMergedPopularity_Snapshot_ConcurrentWithUpdate
+--- PASS: TestMergedPopularity_Snapshot_ConcurrentWithUpdate (0.00s)
+=== RUN   TestGossipSub_Snapshot_PropagatesAcrossHosts
+2026/07/19 03:28:02 INFO NAT traversal option enabled component=libp2p_host option=autonat source=default
+2026/07/19 03:28:02 INFO NAT traversal option enabled component=libp2p_host option=auto_relay source=default peer_source="empty (TODO: wire PeerEntryStore)"
+2026/07/19 03:28:02 INFO NAT traversal option enabled component=libp2p_host option=dcutr source=default
+2026/07/19 03:28:02 INFO NAT traversal option enabled component=libp2p_host option=autonat source=default
+2026/07/19 03:28:02 INFO NAT traversal option enabled component=libp2p_host option=auto_relay source=default peer_source="empty (TODO: wire PeerEntryStore)"
+2026/07/19 03:28:02 INFO NAT traversal option enabled component=libp2p_host option=dcutr source=default
+2026/07/19 03:28:02 INFO peer connected component=libp2p_host self="<peer.ID 12*GWwT9N>" peer="<peer.ID 12*mmacwx>" direction=outbound
+2026/07/19 03:28:02 INFO peer connected component=libp2p_host self="<peer.ID 12*mmacwx>" peer="<peer.ID 12*GWwT9N>" direction=inbound
+2026/07/19 03:28:04 INFO peer disconnected component=libp2p_host self="<peer.ID 12*mmacwx>" peer="<peer.ID 12*GWwT9N>"
+2026/07/19 03:28:04 INFO peer disconnected component=libp2p_host self="<peer.ID 12*GWwT9N>" peer="<peer.ID 12*mmacwx>"
+--- PASS: TestGossipSub_Snapshot_PropagatesAcrossHosts (2.05s)
+PASS
+ok  	github.com/shlande/mediaworker/internal/node/gossippop	7.609s
+EXIT=0
+
+## Test (race) — cmd/edge-node (call site regression)
+go test -race ./cmd/edge-node/... 2>&1
+ok  	github.com/shlande/mediaworker/cmd/edge-node	(cached)
+EXIT=0
