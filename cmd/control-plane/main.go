@@ -14,13 +14,13 @@ import (
 	"time"
 
 	"github.com/shlande/mediaworker/internal/config"
+	cpmetrics "github.com/shlande/mediaworker/internal/controlplane/metrics"
 	cpdht "github.com/shlande/mediaworker/internal/controlplane/dhtbootstrap"
 	cpjwt "github.com/shlande/mediaworker/internal/controlplane/jwt"
 	"github.com/shlande/mediaworker/internal/controlplane/locationsvc"
 	"github.com/shlande/mediaworker/internal/storage/metadata"
 	"github.com/shlande/mediaworker/internal/controlplane/pinstrategy"
 	"github.com/shlande/mediaworker/internal/controlplane/syncbroadcaster"
-	"github.com/shlande/mediaworker/internal/node/monitor"
 	"github.com/shlande/mediaworker/internal/shared/identity"
 	"github.com/shlande/mediaworker/internal/types"
 )
@@ -66,7 +66,7 @@ func run(configPath string) error {
 	// 4b. Metrics (T20). Constructed once per process and shared across the
 	// JWT HTTP server, PinOrchestrator, and SyncBroadcaster subscribe loop.
 	// Mounted on the JWT HTTP server's mux (no separate port — plan line 275).
-	metrics := monitor.NewMetrics()
+	metrics := cpmetrics.NewMetrics()
 
 	// 5. JWT service + HTTP server.
 	jwtSvc := cpjwt.NewJWTService(privKey, ps, rateLimiter, auditLog, cfg.JWTPolicy)

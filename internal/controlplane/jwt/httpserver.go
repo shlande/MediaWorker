@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/shlande/mediaworker/internal/node/monitor"
+	cpmetrics "github.com/shlande/mediaworker/internal/controlplane/metrics"
 	sjwt "github.com/shlande/mediaworker/internal/shared/jwt"
 	"github.com/shlande/mediaworker/internal/types"
 )
@@ -23,7 +23,7 @@ type JWTHTTPServer struct {
 	service         *JWTService
 	locationHandler http.Handler
 	metricsHandler  http.Handler
-	metrics         *monitor.Metrics
+	metrics         *cpmetrics.Metrics
 }
 
 // NewJWTHTTPServer creates a JWTHTTPServer backed by the given JWTService.
@@ -44,7 +44,7 @@ func (s *JWTHTTPServer) RegisterLocationHandler(h http.Handler) {
 // Pass the same Metrics instance that is wired into the PinOrchestrator so
 // the /metrics scrape reflects counters incremented across the CP. If never
 // called, /metrics is not mounted.
-func (s *JWTHTTPServer) RegisterMetricsHandler(metrics *monitor.Metrics) {
+func (s *JWTHTTPServer) RegisterMetricsHandler(metrics *cpmetrics.Metrics) {
 	s.metrics = metrics
 	if metrics != nil {
 		s.metricsHandler = metrics.HTTPHandler()
@@ -128,7 +128,7 @@ func (s *JWTHTTPServer) handleJWTRequest(w http.ResponseWriter, req *http.Reques
 	if err := json.NewDecoder(req.Body).Decode(&jwtReq); err != nil {
 		writeHTTPError(w, http.StatusBadRequest, "invalid JSON body")
 		if s.metrics != nil {
-			s.metrics.RecordCPJWTIssued(monitor.CPJWTOutcomeInternalError)
+			s.metrics.RecordCPJWTIssued(cpmetrics.CPJWTOutcomeInternalError)
 		}
 		return
 	}
@@ -140,13 +140,13 @@ func (s *JWTHTTPServer) handleJWTRequest(w http.ResponseWriter, req *http.Reques
 		if s.metrics != nil {
 			switch {
 			case errors.Is(err, sjwt.ErrInvalidPeerID):
-				s.metrics.RecordCPJWTIssued(monitor.CPJWTOutcomeInvalidPeerID)
+				s.metrics.RecordCPJWTIssued(cpmetrics.CPJWTOutcomeInvalidPeerID)
 			case errors.Is(err, sjwt.ErrInvalidSignature):
-				s.metrics.RecordCPJWTIssued(monitor.CPJWTOutcomeInvalidSig)
+				s.metrics.RecordCPJWTIssued(cpmetrics.CPJWTOutcomeInvalidSig)
 			case errors.Is(err, sjwt.ErrRateLimited):
-				s.metrics.RecordCPJWTIssued(monitor.CPJWTOutcomeRateLimited)
+				s.metrics.RecordCPJWTIssued(cpmetrics.CPJWTOutcomeRateLimited)
 			default:
-				s.metrics.RecordCPJWTIssued(monitor.CPJWTOutcomeInternalError)
+				s.metrics.RecordCPJWTIssued(cpmetrics.CPJWTOutcomeInternalError)
 			}
 		}
 		switch {
@@ -163,7 +163,7 @@ func (s *JWTHTTPServer) handleJWTRequest(w http.ResponseWriter, req *http.Reques
 	}
 
 	if s.metrics != nil {
-		s.metrics.RecordCPJWTIssued(monitor.CPJWTOutcomeSuccess)
+		s.metrics.RecordCPJWTIssued(cpmetrics.CPJWTOutcomeSuccess)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/golang-lru/v2"
-	"github.com/shlande/mediaworker/internal/node/monitor"
+	cpmetrics "github.com/shlande/mediaworker/internal/controlplane/metrics"
 	"github.com/shlande/mediaworker/internal/storage/metadata"
 	"github.com/shlande/mediaworker/internal/types"
 )
@@ -59,7 +59,7 @@ type PinOrchestrator struct {
 
 	// metrics (T20, optional) — when set, sendNodePinPlan increments
 	// cp_pin_plan_dispatched_total.
-	metrics *monitor.Metrics
+	metrics *cpmetrics.Metrics
 
 	seq atomic.Uint64
 }
@@ -97,7 +97,7 @@ func (po *PinOrchestrator) RegisterStrategy(contentType string, strategy PinStra
 // SetMetrics wires a Metrics instance for PinPlan dispatch instrumentation
 // (T20). Optional — a nil receiver (the zero value) disables instrumentation.
 // Idempotent.
-func (po *PinOrchestrator) SetMetrics(m *monitor.Metrics) {
+func (po *PinOrchestrator) SetMetrics(m *cpmetrics.Metrics) {
 	po.metrics = m
 }
 

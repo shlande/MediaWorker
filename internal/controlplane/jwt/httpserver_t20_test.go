@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/shlande/mediaworker/internal/config"
+	cpmetrics "github.com/shlande/mediaworker/internal/controlplane/metrics"
 	"github.com/shlande/mediaworker/internal/controlplane/jwt"
-	"github.com/shlande/mediaworker/internal/node/monitor"
 	sjwt "github.com/shlande/mediaworker/internal/shared/jwt"
 	"github.com/shlande/mediaworker/internal/types"
 )
@@ -39,7 +39,7 @@ func TestRegisterMetricsHandler_MountsAndGetMetrics(t *testing.T) {
 
 	server := jwt.NewJWTHTTPServer(jwt.NewJWTService(privKey, whitelist, rateLimiter, auditLog, defaultTestPolicyT20()))
 
-	metrics := monitor.NewMetrics()
+	metrics := cpmetrics.NewMetrics()
 	server.RegisterMetricsHandler(metrics)
 
 	listenAddr := pickFreeAddrT20(t)
