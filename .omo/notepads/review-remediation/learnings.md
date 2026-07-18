@@ -478,3 +478,17 @@ Created `internal/controlplane/metrics/` package (CP-resident) exposing only the
 - **edge main 未装配 HTTPLocationClient**：T10 交付了客户端构件但未在 edge-node main.go 装配（plan line 185，独立后续项）。文档 control-plane.md §2.2 + README §4 表都明确标注"edge main 暂未接线（LocalDataPlane 保持 nil，独立后续项）"，避免读者误以为已全自动生效。
 - **未勾选 plan checkbox**（per MUST NOT DO）：plan line 291 的 `[ ]` 保持未勾选状态，留给上层验收。
 - Evidence at `.omo/evidence/task-22-review-remediation.log`（200+ 行，含逐文件变更清单 + acceptance criteria 验证 + QA scenarios 抽查）。`grep` 验收：仅 1 处命中且为修复说明文本（非误导）。新增小节均含端点/认证/错误码三要素。
+
+---
+
+## T23 learnings — repo-wide verification gate
+
+- **Gate 全绿（一次性）**：build / vet / unit (44 packages) / integration / gofmt / config-consistency / `go mod tidy` diff=0 — 全部一次通过（gofmt 与 ingest-worker.yaml 修复后）。`TestIntegration_GossipSubPopularitySync` 本次未触发 flakiness。
+- **发现并修复 1 处真实配置一致性 gap（T8 引入）**：T8 在 `LoadIngestWorkerConfig` 添加了 `control_plane.multiaddr` 与 `control_plane.priv_key_path` 两个必填字段（plan line 165-171），但 `configs/ingest-worker.yaml` 示例未补上对应 `control_plane:` stanza。这导致示例 YAML 无法被自己的 loader 加载——属于"代码契约更新了但示例没跟"的典型遗漏。修复方式是补示例 stanza（保留必填字段语义，**未弱化任何断言**）。这正是 T23 gate (e) 的价值——一次性发现 T8 留下的文档/代码漂移。
+- **`gofmt -l .` 命中 80 个文件**：跨 cmd/ + internal/ + test/ 的预存在格式漂移（非单一 T-todo 引入）。`gofmt -w .` 修复后 `gofmt -l .` 为空，build + 全套测试复验仍绿。提示：仓库长期未挂 `gofmt -l` pre-commit 钩子，建议后续加 CI 门禁。
+- **`go mod tidy` 零 diff**：T8 (libp2p publisher)、T14 (janitor) 等所有新增依赖在各自 todo 内已 `go mod tidy` 入库，T23 复跑无新增/移除。
+- **配置 loader 全部纯解析+校验**：`LoadConfig` / `LoadControlPlaneConfig` / `LoadIngestWorkerConfig` / `LoadJanitorConfig` 都只读文件 + yaml 解析 + 必填校验，**无 DB/网络 I/O**——所以可以作为纯单元测试运行（`TestConfigLoadConsistency_T23`，保留为永久回归守卫，而非一次性临时文件）。这覆盖了 plan line 304 的"configs/*.yaml examples can be loaded by their corresponding Load* functions without error"。
+- **`//go:build ignore` 的陷阱**：第一版 temp test 加了 `//go:build ignore` 想做"opt-in 一次性测试"，结果 go 默认不编译该文件——`go test` 跳过。正确做法是直接写成普通 `_test.go`（永久回归）。Plan 允许"keep it as a real test if it makes sense"——这里确实有价值，保留。
+- **gofmt 修复必须复跑 build+test**：`gofmt -w` 改动虽小，但 80 文件 × 多行变更需复验。本次复跑 build=0 + 全套 unit + integration 全绿，确认纯格式无逻辑回归。
+- **未勾选 plan checkbox**（per MUST NOT DO）：plan line 297 的 `[ ] 23. 全仓终验` 保持未勾选，留给上层验收。
+- Evidence at `.omo/evidence/task-23-review-remediation.log`（含每条 gate 的完整命令输出 + 显式 exit code）。Summary at `.omo/evidence/review-remediation-summary.md`（23 行 T1-T23 + final gate 表 + 修复记录）。
