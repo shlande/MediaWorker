@@ -52,7 +52,10 @@ func run(configPath string) error {
 	// 2. Sweep stale temp workdirs from previous runs.
 	sweepStaleWorkDir(cfg.Ingest.WorkDir)
 
-	// 3. Metadata client (PG).
+	// 3. Check workdir disk space — warn if free < 2x max upload.
+	checkWorkDirDiskSpace(cfg.Ingest.WorkDir, cfg.HTTP.MaxUploadBytes)
+
+	// 4. Metadata client (PG).
 	mc, err := metadata.NewPGMetadataClient(cfg.Metadata.PGDSN)
 	if err != nil {
 		return fmt.Errorf("metadata client: %w", err)
@@ -77,7 +80,7 @@ func run(configPath string) error {
 	// 7. HTTP handler.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ingest/", func(w http.ResponseWriter, r *http.Request) {
-		handleIngest(w, r, pipeline)
+		handleIngest(w, r, pipeline, cfg.HTTP.MaxUploadBytes)
 	})
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
@@ -172,9 +175,28 @@ func sweepStaleWorkDir(workDir string) {
 	}
 }
 
+// checkWorkDirDiskSpace warns if the workdir filesystem has fewer free bytes
+// than 2*maxUploadBytes. It never blocks startup — failures are Warn-only.
+func checkWorkDirDiskSpace(workDir string, maxUploadBytes int64) {
+	var stat syscall.Statfs_t
+	if err := syscall.Statfs(workDir, &stat); err != nil {
+		slog.Warn("disk space check failed", "workdir", workDir, "err", err)
+		return
+	}
+	free := int64(stat.Bavail) * int64(stat.Bsize)
+	threshold := 2 * maxUploadBytes
+	if free < threshold {
+		slog.Warn("low disk space on workdir",
+			"workdir", workDir,
+			"free_bytes", free,
+			"threshold_bytes", threshold,
+		)
+	}
+}
+
 // ─── HTTP handler ──────────────────────────────────────────────────────
 
-func handleIngest(w http.ResponseWriter, r *http.Request, pipeline *ingest.IngestPipeline) {
+func handleIngest(w http.ResponseWriter, r *http.Request, pipeline *ingest.IngestPipeline, maxUploadBytes int64) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -187,8 +209,8 @@ func handleIngest(w http.ResponseWriter, r *http.Request, pipeline *ingest.Inges
 		return
 	}
 
-	// Max upload 10 GB.
-	r.Body = http.MaxBytesReader(w, r.Body, 10<<30)
+	// Max upload size from config.
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
 
 	// Parse multipart form (max 64 MB in memory, rest spills to disk).
 	if err := r.ParseMultipartForm(64 << 20); err != nil {

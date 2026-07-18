@@ -6,6 +6,9 @@
 
 http:
   listen: ":8080"
+  # max_upload_bytes limits the request body size for uploads (default: 10 GiB).
+  # Uncomment to override, e.g. 1 GiB:
+  # max_upload_bytes: 1073741824
 
 metadata:
   pg_dsn: "postgres://mediaworker:mediaworker@pg-mediaworker-rw.mediaworker-test.svc.cluster.local:5432/mediaworker?sslmode=disable"

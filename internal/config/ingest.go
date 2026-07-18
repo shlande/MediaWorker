@@ -21,7 +21,8 @@ type IngestWorkerConfig struct {
 
 // IngestHTTPConfig controls the HTTP server.
 type IngestHTTPConfig struct {
-	Listen string `yaml:"listen"` // e.g. ":8080"
+	Listen         string `yaml:"listen"`          // e.g. ":8080"
+	MaxUploadBytes int64  `yaml:"max_upload_bytes"` // max upload body size (default: 10 GiB)
 }
 
 // IngestMetadataConfig holds the Postgres DSN for the metadata service.
@@ -71,6 +72,9 @@ func LoadIngestWorkerConfig(path string) (*IngestWorkerConfig, error) {
 	}
 	if cfg.Ingest.Redundancy <= 0 {
 		cfg.Ingest.Redundancy = 2
+	}
+	if cfg.HTTP.MaxUploadBytes <= 0 {
+		cfg.HTTP.MaxUploadBytes = 10 << 30
 	}
 
 	return &cfg, nil

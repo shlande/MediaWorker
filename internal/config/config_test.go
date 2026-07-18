@@ -554,3 +554,80 @@ func TestLoadConfig_InvalidYAML(t *testing.T) {
 		t.Fatal("expected error for invalid YAML, got nil")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Ingest-worker config: MaxUploadBytes normalization
+// ---------------------------------------------------------------------------
+
+const ingestWorkerConfigBase = `
+http:
+  listen: ":8080"
+metadata:
+  pg_dsn: "postgres://localhost:5432/test"
+ingest:
+  ffmpeg_path: "/usr/bin/ffmpeg"
+  work_dir: "/tmp/work"
+  redundancy: 2
+`
+
+func TestLoadIngestWorkerConfig_MaxUploadBytes_Explicit(t *testing.T) {
+	path := writeTempYAML(t, `http:
+  listen: ":8080"
+  max_upload_bytes: 1073741824
+metadata:
+  pg_dsn: "postgres://localhost:5432/test"
+ingest:
+  ffmpeg_path: "/usr/bin/ffmpeg"
+  work_dir: "/tmp/work"
+  redundancy: 2
+`)
+	cfg, err := LoadIngestWorkerConfig(path)
+	if err != nil {
+		t.Fatalf("LoadIngestWorkerConfig failed: %v", err)
+	}
+	if cfg.HTTP.MaxUploadBytes != 1073741824 {
+		t.Errorf("MaxUploadBytes = %d, want 1073741824 (1 GiB)", cfg.HTTP.MaxUploadBytes)
+	}
+}
+
+func TestLoadIngestWorkerConfig_MaxUploadBytes_Default(t *testing.T) {
+	path := writeTempYAML(t, ingestWorkerConfigBase)
+	cfg, err := LoadIngestWorkerConfig(path)
+	if err != nil {
+		t.Fatalf("LoadIngestWorkerConfig failed: %v", err)
+	}
+	if cfg.HTTP.MaxUploadBytes != 10<<30 {
+		t.Errorf("MaxUploadBytes = %d, want %d (10 GiB)", cfg.HTTP.MaxUploadBytes, 10<<30)
+	}
+}
+
+func TestLoadIngestWorkerConfig_MaxUploadBytes_ZeroNegative(t *testing.T) {
+	tests := []struct {
+		name    string
+		maxYAML string
+	}{
+		{"zero", `max_upload_bytes: 0`},
+		{"negative", `max_upload_bytes: -1`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTempYAML(t, `http:
+  listen: ":8080"
+  `+tt.maxYAML+`
+metadata:
+  pg_dsn: "postgres://localhost:5432/test"
+ingest:
+  ffmpeg_path: "/usr/bin/ffmpeg"
+  work_dir: "/tmp/work"
+  redundancy: 2
+`)
+			cfg, err := LoadIngestWorkerConfig(path)
+			if err != nil {
+				t.Fatalf("LoadIngestWorkerConfig failed: %v", err)
+			}
+			if cfg.HTTP.MaxUploadBytes != 10<<30 {
+				t.Errorf("MaxUploadBytes = %d, want %d (10 GiB default)", cfg.HTTP.MaxUploadBytes, 10<<30)
+			}
+		})
+	}
+}

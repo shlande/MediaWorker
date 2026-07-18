@@ -24,3 +24,15 @@ Added `JWTPolicyConfig` (TTL/RefreshBeforeSeconds/BandwidthQuotaBytes/DefaultCap
 - The `BandwidthQuota` (50_000_000) and `Exp` (1h) calculations in `service.go` were hardcoded; replaced with `s.policy.BandwidthQuotaBytes` and `s.ttl` (parsed once in constructor). TTL parse failure falls back to 1h (same as legacy).
 - Pre-existing numbered-step docstring comments in `HandleJWTRequest` were preserved (renumbered 1-8 from 1-7) to keep diff reviewable.
 - Evidence file at `.omo/evidence/task-6-review-remediation.log`. All 5 new grant-matrix tests pass; existing regression tests (expired/forged JWT → 403/400) still green.
+
+## T5 - ingest 上传限额配置化 + work_dir 空闲空间启动检查
+### What I did
+Added `MaxUploadBytes int64 yaml:"max_upload_bytes"` to `IngestHTTPConfig` in `internal/config/ingest.go`. Normalize `<=0` to `10<<30` (10 GiB) in `LoadIngestWorkerConfig`. Wired the value through `handleIngest` (added `maxUploadBytes int64` parameter) to replace the hardcoded `10<<30` in `http.MaxBytesReader`. Added `checkWorkDirDiskSpace` function that calls `syscall.Statfs` on `cfg.Ingest.WorkDir` at startup — if free bytes < 2*MaxUploadBytes, emits `slog.Warn` (not fatal, per plan line 139). Added `max_upload_bytes` example (commented out) to `configs/ingest-worker.yaml`. Added 3 test cases: explicit value (1 GiB), missing key (default 10 GiB), and zero/negative (normalized to 10 GiB).
+
+### Gotchas
+- **syscall.Statfs type mismatch**: `stat.Bsize` is `uint32` on macOS (darwin), but `stat.Bavail` is `uint64`. The multiplication `int64(stat.Bavail) * stat.Bsize` fails because Go doesn't allow mixed-type arithmetic. Fixed with explicit `int64()` cast on both operands.
+- **Test YAML indentation**: The `max_upload_bytes` key must be under the `http:` section (2-space indent), not at the root level. Initial test YAML had it at root, causing it to be silently ignored by the YAML parser and the explicit value test to get the default 10 GiB instead of 1 GiB.
+- **handleIngest parameter passing**: The handler function didn't have access to `cfg`. Added `maxUploadBytes int64` parameter to `handleIngest` — minimal change, no need to pass the full config struct through.
+- Statfs failure (e.g., workdir doesn't exist yet) is Warn-only, same as sweepStaleWorkDir pattern.
+- ParseMultipartForm 64MB memory spill unchanged (plan line 140).
+- Evidence file at `.omo/evidence/task-5-review-remediation.log`. All 3 new MaxUploadBytes tests pass; `go build ./cmd/ingest-worker` passes; `go vet` clean.
