@@ -16,6 +16,7 @@ import (
 	"github.com/shlande/mediaworker/internal/config"
 	cpdht "github.com/shlande/mediaworker/internal/controlplane/dhtbootstrap"
 	cpjwt "github.com/shlande/mediaworker/internal/controlplane/jwt"
+	"github.com/shlande/mediaworker/internal/controlplane/locationsvc"
 	"github.com/shlande/mediaworker/internal/storage/metadata"
 	"github.com/shlande/mediaworker/internal/controlplane/pinstrategy"
 	"github.com/shlande/mediaworker/internal/controlplane/syncbroadcaster"
@@ -94,6 +95,17 @@ func run(configPath string) error {
 		slog.Warn("PG metadata client unavailable, PinOrchestrator will use cached state", "err", err)
 		// mc remains nil; NewPinOrchestrator will receive nil MetadataClient.
 	}
+
+	// 10b. Blob-location query API (T9). Mounted on the JWT HTTP server's mux
+	//      so no new listening port is introduced (plan line 176). When PG is
+	//      unavailable (mc == nil) the handler is still registered; it returns
+	//      503 on every authenticated request — edges see a deterministic
+	//      contract instead of a missing route.
+	var mcBlob metadata.BlobStoreClient
+	if mc != nil {
+		mcBlob = mc
+	}
+	httpServer.RegisterLocationHandler(locationsvc.NewHandler(jwtSvc.PubKey(), mcBlob))
 
 	// 11. PinOrchestrator.
 	po := pinstrategy.NewPinOrchestrator(mc, mc, sb)
