@@ -218,8 +218,35 @@ func PublishPopularity(
 
 // ─── Handler (subscriber side) ───
 
+// PeerEntryLookup is the narrow read-only view of a peer entry store that
+// HandlePopularityMessage consults to reject heat from stale or unknown peers.
+//
+// The concrete implementation is *peerstore.PeerEntryStore (Get returns
+// (types.PeerStoreEntry, bool); Stale=true signals JWT-expired or evicted
+// peers). The interface lives here so gossippop does not import
+// internal/node/peerstore — mirroring the inline-interface pattern used by
+// the host adapter parameter below.
+//
+// A nil PeerEntryLookup is treated as "trust everyone": the guard is skipped,
+// preserving backward compatibility for assembly paths without a PeerEntryStore.
+type PeerEntryLookup interface {
+	// StaleOrUnknown reports whether peerID is absent from the local store
+	// (unknown) or marked stale (JWT expired / evicted). Returns true in
+	// either case so the caller can discard the heat update.
+	StaleOrUnknown(peerID types.PeerId) bool
+}
+
 // HandlePopularityMessage decodes an incoming GossipSub message, verifies the
 // signature, checks the source score, and merges into the local view.
+//
+// Defense layers (order matters, all are logged at Debug on rejection):
+//  1. Trust guard: peerEntryStore.StaleOrUnknown → discard heat from stale
+//     or unknown peers (T19). nil peerEntryStore skips this guard.
+//  2. Signature verification (OnPopularityUpdate:86-93).
+//  3. GraylistThreshold floor (OnPopularityUpdate:96).
+//  4. MinTrustedWeight output gate (Snapshot / getVideoPopularity:124-133).
+//  5. Incremental weighted-average is naturally immune to zero-score /
+//     zero-weight injection (OnPopularityUpdate:110-114).
 func HandlePopularityMessage(
 	mp *MergedPopularity,
 	scorer *PeerScorer,
@@ -229,6 +256,7 @@ func HandlePopularityMessage(
 			PubKey(peer.ID) ed25519.PublicKey
 		}
 	},
+	peerEntryStore PeerEntryLookup,
 ) {
 	logger := slog.Default().With("component", "gossippop_receiver", "from", msg.ReceivedFrom.ShortString())
 
@@ -236,6 +264,15 @@ func HandlePopularityMessage(
 	if err := json.Unmarshal(msg.Data, &update); err != nil {
 		logger.Debug("dropped message: unmarshal failed", "err", err, "bytes", len(msg.Data))
 		return
+	}
+
+	// 1. Trust guard: reject heat from stale or unknown peers.
+	if peerEntryStore != nil {
+		if peerEntryStore.StaleOrUnknown(types.PeerId(msg.ReceivedFrom.String())) {
+			logger.Debug("dropped popularity update: peer stale or unknown",
+				"peer", msg.ReceivedFrom.ShortString(), "blobs", len(update.Counts))
+			return
+		}
 	}
 
 	sourceScore := scorer.GetScore(types.PeerId(msg.ReceivedFrom.String()))

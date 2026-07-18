@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/peer"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	pb "github.com/libp2p/go-libp2p-pubsub/pb"
 
 	"github.com/shlande/mediaworker/internal/node/libp2phost"
 	sharedid "github.com/shlande/mediaworker/internal/shared/identity"
@@ -536,4 +538,327 @@ func signUpdate(t *testing.T, peerID types.PeerId, priv ed25519.PrivateKey, coun
 func createUpdate(t *testing.T, peerID types.PeerId, priv ed25519.PrivateKey, counts map[string]int64) *PopularityUpdate {
 	t.Helper()
 	return signUpdate(t, peerID, priv, counts)
+}
+
+// ─── 5. HandlePopularityMessage trust-guard tests (T19) ───
+
+// stubHostAdapter returns a fixed Ed25519 public key for any peer.ID.
+type stubHostAdapter struct {
+	pub ed25519.PublicKey
+}
+
+func (s stubHostAdapter) Peerstore() interface {
+	PubKey(peer.ID) ed25519.PublicKey
+} {
+	return stubPubKeyView{pub: s.pub}
+}
+
+type stubPubKeyView struct {
+	pub ed25519.PublicKey
+}
+
+func (v stubPubKeyView) PubKey(_ peer.ID) ed25519.PublicKey { return v.pub }
+
+// stubPeerEntryLookup is a configurable PeerEntryLookup for testing the
+// stale/unknown guard. Returns the configured stale/unknown verdict per peer.
+type stubPeerEntryLookup struct {
+	known map[types.PeerId]bool // true = known AND not stale; absent = unknown
+}
+
+func (s stubPeerEntryLookup) StaleOrUnknown(peerID types.PeerId) bool {
+	known, ok := s.known[peerID]
+	if !ok {
+		return true // unknown
+	}
+	return !known // known but stale
+}
+
+// makeSignedMessage builds a pubsub.Message carrying a signed PopularityUpdate
+// from srcPeer, signed with priv. The embedded From is also set to srcPeer so
+// signature verification against the source peer's key succeeds.
+func makeSignedMessage(t *testing.T, srcPeer peer.ID, peerID types.PeerId, priv ed25519.PrivateKey, counts map[string]int64) *pubsub.Message {
+	t.Helper()
+	update := signUpdate(t, peerID, priv, counts)
+	data, err := json.Marshal(update)
+	if err != nil {
+		t.Fatalf("marshal update: %v", err)
+	}
+	return &pubsub.Message{
+		Message:      &pb.Message{Data: data, From: []byte(srcPeer)},
+		ReceivedFrom: srcPeer,
+	}
+}
+
+// runHandle wires MergedPopularity + PeerScorer + stub host + stub lookup and
+// invokes HandlePopularityMessage. Returns the MergedPopularity for assertion.
+func runHandle(t *testing.T, scorer *PeerScorer, pub ed25519.PublicKey, lookup PeerEntryLookup, msg *pubsub.Message) *MergedPopularity {
+	t.Helper()
+	mp := NewMergedPopularity()
+	HandlePopularityMessage(mp, scorer, msg, stubHostAdapter{pub: pub}, lookup)
+	return mp
+}
+
+// TestHandlePopularityMessage_StalePeerDiscarded asserts that an update from a
+// peer marked Stale in the PeerEntryStore is discarded — no entry is created.
+func TestHandlePopularityMessage_StalePeerDiscarded(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("gen key: %v", err)
+	}
+
+	srcPeer := peer.ID("stale-peer-id")
+	srcPeerID := types.PeerId(srcPeer.String())
+
+	scorer := NewPeerScorer()
+	preSeedScore(scorer, srcPeerID, 11) // high score — would normally pass
+
+	lookup := stubPeerEntryLookup{known: map[types.PeerId]bool{srcPeerID: false}} // known but Stale=true
+
+	msg := makeSignedMessage(t, srcPeer, srcPeerID, priv, map[string]int64{"blob1": 99999})
+
+	mp := runHandle(t, scorer, pub, lookup, msg)
+
+	if heat := mp.getVideoPopularity("blob1"); heat != 0 {
+		t.Fatalf("stale peer update must be discarded; got heat=%f", heat)
+	}
+	if snap := mp.Snapshot(); len(snap) != 0 {
+		t.Fatalf("stale peer update must not appear in Snapshot; got %v", snap)
+	}
+}
+
+// TestHandlePopularityMessage_UnknownPeerDiscarded asserts that an update from
+// a peer absent from the PeerEntryStore is discarded.
+func TestHandlePopularityMessage_UnknownPeerDiscarded(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("gen key: %v", err)
+	}
+
+	srcPeer := peer.ID("unknown-peer-id")
+	srcPeerID := types.PeerId(srcPeer.String())
+
+	scorer := NewPeerScorer()
+	preSeedScore(scorer, srcPeerID, 11) // high score — would normally pass
+
+	lookup := stubPeerEntryLookup{known: map[types.PeerId]bool{}} // empty → everyone unknown
+
+	msg := makeSignedMessage(t, srcPeer, srcPeerID, priv, map[string]int64{"blob1": 99999})
+
+	mp := runHandle(t, scorer, pub, lookup, msg)
+
+	if heat := mp.getVideoPopularity("blob1"); heat != 0 {
+		t.Fatalf("unknown peer update must be discarded; got heat=%f", heat)
+	}
+	if snap := mp.Snapshot(); len(snap) != 0 {
+		t.Fatalf("unknown peer update must not appear in Snapshot; got %v", snap)
+	}
+}
+
+// TestHandlePopularityMessage_NormalPeerMerges asserts the happy path: when
+// the peer is known and not stale, the update merges into the local view.
+// This guards against the trust guard accidentally over-rejecting.
+func TestHandlePopularityMessage_NormalPeerMerges(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("gen key: %v", err)
+	}
+
+	srcPeer := peer.ID("known-good-peer-id")
+	srcPeerID := types.PeerId(srcPeer.String())
+
+	scorer := NewPeerScorer()
+	preSeedScore(scorer, srcPeerID, 11) // score 5.5 > MinTrustedWeight
+
+	lookup := stubPeerEntryLookup{known: map[types.PeerId]bool{srcPeerID: true}} // known, not stale
+
+	msg := makeSignedMessage(t, srcPeer, srcPeerID, priv, map[string]int64{"blob1": 7})
+
+	mp := runHandle(t, scorer, pub, lookup, msg)
+
+	heat := mp.getVideoPopularity("blob1")
+	if heat != 7.0 {
+		t.Fatalf("normal peer update should merge to heat=7.0 (single source, score>MinTrustedWeight); got %f", heat)
+	}
+}
+
+// TestHandlePopularityMessage_ForgedSignatureDiscarded asserts defense layer 2
+// (signature verification, mergedpop.go:86-93): a forged signature causes the
+// update to be discarded even when the peer is known, not stale, and has a
+// high score.
+func TestHandlePopularityMessage_ForgedSignatureDiscarded(t *testing.T) {
+	goodPub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("gen good key: %v", err)
+	}
+	// Different key used to sign → signature won't verify against goodPub.
+	_, evilPriv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("gen evil key: %v", err)
+	}
+
+	srcPeer := peer.ID("forged-sig-peer-id")
+	srcPeerID := types.PeerId(srcPeer.String())
+
+	scorer := NewPeerScorer()
+	preSeedScore(scorer, srcPeerID, 11)
+
+	lookup := stubPeerEntryLookup{known: map[types.PeerId]bool{srcPeerID: true}}
+
+	// Sign with evilPriv, but the host adapter will return goodPub for verification.
+	update := &PopularityUpdate{
+		PeerID:    srcPeerID,
+		Timestamp: time.Now().Unix(),
+		Counts:    map[string]int64{"blob1": 100},
+	}
+	payload, err := update.payloadForSigning()
+	if err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	update.Sig = ed25519.Sign(evilPriv, payload)
+
+	data, err := json.Marshal(update)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	msg := &pubsub.Message{
+		Message:      &pb.Message{Data: data, From: []byte(srcPeer)},
+		ReceivedFrom: srcPeer,
+	}
+
+	mp := runHandle(t, scorer, goodPub, lookup, msg)
+
+	if heat := mp.getVideoPopularity("blob1"); heat != 0 {
+		t.Fatalf("forged-signature update must be discarded; got heat=%f", heat)
+	}
+}
+
+// TestHandlePopularityMessage_GraylistedPeerDiscarded asserts defense layer 3
+// (GraylistThreshold floor, mergedpop.go:96): an update from a peer whose
+// score is at/below GraylistThreshold is discarded even if known & not stale.
+func TestHandlePopularityMessage_GraylistedPeerDiscarded(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("gen key: %v", err)
+	}
+
+	srcPeer := peer.ID("graylisted-peer-id")
+	srcPeerID := types.PeerId(srcPeer.String())
+
+	scorer := NewPeerScorer()
+	// 5 misbehaviors × -5.0 = -25.0 ≤ GraylistThreshold (-20.0)
+	for i := 0; i < 5; i++ {
+		scorer.RecordMisbehavior(srcPeerID, MisbehaviorInvalidSig)
+	}
+	if !scorer.IsGraylisted(srcPeerID) {
+		t.Fatalf("peer should be graylisted at score %f", scorer.GetScore(srcPeerID))
+	}
+
+	lookup := stubPeerEntryLookup{known: map[types.PeerId]bool{srcPeerID: true}}
+
+	msg := makeSignedMessage(t, srcPeer, srcPeerID, priv, map[string]int64{"blob1": 99999})
+
+	mp := runHandle(t, scorer, pub, lookup, msg)
+
+	if heat := mp.getVideoPopularity("blob1"); heat != 0 {
+		t.Fatalf("graylisted peer update must be discarded; got heat=%f", heat)
+	}
+	if snap := mp.Snapshot(); len(snap) != 0 {
+		t.Fatalf("graylisted peer update must not appear in Snapshot; got %v", snap)
+	}
+}
+
+// TestHandlePopularityMessage_LowScoreDoesNotBreachMinTrustedWeight asserts
+// defense layer 4 (MinTrustedWeight output gate, mergedpop.go:124-133):
+// a single low-score peer's contribution is merged into MergedPopularity but
+// is filtered out of Snapshot() and getVideoPopularity() because
+// TotalWeight < MinTrustedWeight. This is the critical gate that prevents a
+// single malicious peer from poisoning eviction ranking.
+func TestHandlePopularityMessage_LowScoreDoesNotBreachMinTrustedWeight(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("gen key: %v", err)
+	}
+
+	srcPeer := peer.ID("low-score-peer-id")
+	srcPeerID := types.PeerId(srcPeer.String())
+
+	scorer := NewPeerScorer()
+	preSeedScore(scorer, srcPeerID, 3) // score 1.5 > GraylistThreshold but < MinTrustedWeight (5.0)
+
+	lookup := stubPeerEntryLookup{known: map[types.PeerId]bool{srcPeerID: true}}
+
+	msg := makeSignedMessage(t, srcPeer, srcPeerID, priv, map[string]int64{"blob1": 99999})
+
+	mp := runHandle(t, scorer, pub, lookup, msg)
+
+	// The entry exists internally (TotalWeight = 1.5, below MinTrustedWeight=5.0).
+	mp.mu.RLock()
+	entry, ok := mp.entries["blob1"]
+	mp.mu.RUnlock()
+	if !ok {
+		t.Fatal("low-score update should be merged into internal entries (gate is on output, not input)")
+	}
+	if entry.TotalWeight >= MinTrustedWeight {
+		t.Fatalf("TotalWeight=%f must be below MinTrustedWeight=%f to exercise the gate",
+			entry.TotalWeight, MinTrustedWeight)
+	}
+	heatBefore := entry.WeightedHeat
+	weightBefore := entry.TotalWeight
+
+	// But Snapshot filters it out — the eviction PopSource never sees it.
+	if snap := mp.Snapshot(); len(snap) != 0 {
+		t.Fatalf("low-score contribution must NOT breach MinTrustedWeight gate; Snapshot got %v", snap)
+	}
+	// And getVideoPopularity returns 0 (fallback).
+	if heat := mp.getVideoPopularity("blob1"); heat != 0 {
+		t.Fatalf("low-score heat must be gated to 0; got %f", heat)
+	}
+
+	// Defense layer 5 (zero-immunity): a follow-up update from a peer whose
+	// sourceScore=0 (the zero-score/zero-weight injection case the incremental
+	// formula at mergedpop.go:110-114 is naturally immune to) must not change
+	// WeightedHeat OR TotalWeight. Use a separate scorer so the source peer's
+	// score is exactly 0 (RecordICPSuccess was never called for it).
+	zeroScorer := NewPeerScorer() // srcPeerID score == 0
+	msg2 := makeSignedMessage(t, srcPeer, srcPeerID, priv, map[string]int64{"blob1": 99999})
+	HandlePopularityMessage(mp, zeroScorer, msg2, stubHostAdapter{pub: pub}, lookup)
+
+	mp.mu.RLock()
+	entry2 := mp.entries["blob1"]
+	mp.mu.RUnlock()
+	if entry2.WeightedHeat != heatBefore {
+		t.Fatalf("zero-score injection must not change WeightedHeat; before=%f after=%f",
+			heatBefore, entry2.WeightedHeat)
+	}
+	if entry2.TotalWeight != weightBefore {
+		t.Fatalf("zero-score injection must not change TotalWeight; before=%f after=%f",
+			weightBefore, entry2.TotalWeight)
+	}
+}
+
+// TestHandlePopularityMessage_NilLookupSkipsGuard asserts that a nil
+// PeerEntryLookup preserves backward-compatible behaviour: the trust guard is
+// skipped, and existing defenses (signature, graylist, MinTrustedWeight)
+// remain in force.
+func TestHandlePopularityMessage_NilLookupSkipsGuard(t *testing.T) {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("gen key: %v", err)
+	}
+
+	srcPeer := peer.ID("nil-lookup-peer-id")
+	srcPeerID := types.PeerId(srcPeer.String())
+
+	scorer := NewPeerScorer()
+	preSeedScore(scorer, srcPeerID, 11) // > MinTrustedWeight
+
+	msg := makeSignedMessage(t, srcPeer, srcPeerID, priv, map[string]int64{"blob1": 7})
+
+	mp := NewMergedPopularity()
+	HandlePopularityMessage(mp, scorer, msg, stubHostAdapter{pub: pub}, nil)
+
+	heat := mp.getVideoPopularity("blob1")
+	if heat != 7.0 {
+		t.Fatalf("nil lookup should skip guard and merge normally; got heat=%f", heat)
+	}
 }

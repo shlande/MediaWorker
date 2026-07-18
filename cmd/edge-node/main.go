@@ -322,16 +322,9 @@ func main() {
 		logger.Info("warm cache disabled (edge.warm_cache.enabled=false)")
 	}
 
-	// Cold cache: not constructed in main.go (no on-disk store wiring yet),
-	// but we declare the configured state for operator visibility.
-	if cfg.Edge.ColdCache.Enabled {
-		logger.Info("cold cache configured (construction deferred — no on-disk store yet)",
-			"path", cfg.Edge.ColdCache.Path,
-			"max_size_gb", cfg.Edge.ColdCache.SizeGB,
-		)
-	} else {
-		logger.Info("cold cache disabled (edge.cold_cache.enabled=false)")
-	}
+	// Cold cache (edge.cold_cache) was removed in T17 — the on-disk cold-store
+	// was never wired. Operators with stale YAML still load fine: LoadConfig
+	// emits a deprecated-key Warn. No construction step here.
 
 	// -------------------------------------------------------------------
 	// 15. ICP handlers — register stream protocols for sibling cache
@@ -463,7 +456,7 @@ func main() {
 				logger.Debug("popularity sub next error", "err", err)
 				continue
 			}
-			gossippop.HandlePopularityMessage(mergedPop, scorer, msg, hostAdapter)
+			gossippop.HandlePopularityMessage(mergedPop, scorer, msg, hostAdapter, peerEntryLookupAdapter{store: ps})
 		}
 	}()
 
@@ -683,6 +676,22 @@ func (v ed25519PopKeyView) PubKey(id peer.ID) ed25519.PublicKey {
 		return nil
 	}
 	return ed25519.PublicKey(raw)
+}
+
+// peerEntryLookupAdapter adapts *peerstore.PeerEntryStore to the narrow
+// gossippop.PeerEntryLookup interface. HandlePopularityMessage consults it to
+// discard heat from peers that are either absent from the local store
+// (unknown — never JWT-verified) or marked Stale (JWT expired / evicted).
+type peerEntryLookupAdapter struct {
+	store *peerstore.PeerEntryStore
+}
+
+func (a peerEntryLookupAdapter) StaleOrUnknown(peerID types.PeerId) bool {
+	entry, ok := a.store.Get(peerID)
+	if !ok {
+		return true
+	}
+	return entry.Stale
 }
 
 // backhaulWarmCache adapts *cache.WarmCache to backhaul.CacheReader and
