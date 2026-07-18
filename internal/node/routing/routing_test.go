@@ -6,8 +6,10 @@ import (
 	"crypto/rand"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -470,5 +472,68 @@ func TestEdgeRouter_ProxyToPeer(t *testing.T) {
 	}
 	if buf.String() != "hello from primary node!" {
 		t.Errorf("expected 'hello from primary node!', got %q", buf.String())
+	}
+}
+
+// TestEdgeRouter_ProxyFallbackToLocal asserts availability-first behavior:
+// when proxyToPeer fails (target unreachable / no stream handler), the
+// request must fall back to serveAsPrimary on the local node, the bytes
+// from the local backhaul must be served, and a Warn log must be emitted.
+func TestEdgeRouter_ProxyFallbackToLocal(t *testing.T) {
+	psk := genTestPSK(t)
+
+	// Primary node (h1) — deliberately does NOT register ICP handlers,
+	// so any stream h2 opens for /edge/blob/get/1.0.0 will be rejected.
+	h1 := genTestHost(t, psk)
+
+	// Non-primary node (h2) — router will proxy to h1, fail, fall back.
+	h2 := genTestHost(t, psk)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	connectHosts(t, ctx, h1, h2)
+
+	self := types.PeerId(h2.ID())
+	primary := types.PeerId(h1.ID())
+	ring := &mockPrimaryChecker{
+		primaries: map[string]types.PeerId{
+			"blob-fallback": primary,
+		},
+		selfPeer: self,
+	}
+	// Local backhaul has the bytes — fallback path must serve them.
+	localPayload := []byte("served from local fallback path")
+	bh := &mockBackhaul{noL4Data: localPayload}
+	er := NewEdgeRouter(ring, bh, self, false, h2)
+
+	// Capture slog.Warn output to verify the warn was emitted.
+	var logBuf bytes.Buffer
+	prevDefault := slog.Default()
+	defer slog.SetDefault(prevDefault)
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+
+	// Given h1 is primary but has NO ICP stream handler registered
+	// When h2 handles a blob request for blob-fallback
+	var buf bytes.Buffer
+	err := er.HandleBlobRequest(ctx, &buf, "blob-fallback")
+
+	// Then proxyToPeer fails (stream rejected) and serveAsPrimary is called
+	if err != nil {
+		t.Fatalf("expected nil error after fallback, got: %v", err)
+	}
+	if !bytes.Equal(buf.Bytes(), localPayload) {
+		t.Errorf("expected local payload %q, got %q", localPayload, buf.String())
+	}
+	if bh.noL4Called != 1 {
+		t.Errorf("expected 1 local noL4 call after fallback, got %d", bh.noL4Called)
+	}
+
+	// And a Warn log mentioning the fallback was emitted.
+	logOut := logBuf.String()
+	if !strings.Contains(logOut, "proxy to peer failed, falling back to local") {
+		t.Errorf("expected warn log about fallback, got: %q", logOut)
+	}
+	if !strings.Contains(logOut, "blob-fallback") {
+		t.Errorf("expected warn log to include blobHash, got: %q", logOut)
 	}
 }

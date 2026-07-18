@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 
 	"github.com/libp2p/go-libp2p/core/host"
@@ -74,10 +75,23 @@ func NewEdgeRouter(
 // HandleBlobRequest routes a blob request. If this node is not primary
 // for the blob hash, it proxies to the primary via libp2p stream. If it
 // is primary, it serves using the backhaul pipeline.
+//
+// Availability-first: if proxyToPeer fails (peer unreachable, stream
+// error, etc.), the request falls back to serveAsPrimary so the caller
+// still gets bytes if this node happens to have them (warm cache, ICP
+// fetch from siblings, etc.). The failure is logged at Warn level.
 func (er *EdgeRouter) HandleBlobRequest(ctx context.Context, w io.Writer, blobHash string) error {
 	if !er.isPrimaryNode(blobHash) {
 		targetID := er.hashRing.Get(blobHash)
-		return er.proxyToPeer(ctx, w, peer.ID(targetID), blobHash)
+		if err := er.proxyToPeer(ctx, w, peer.ID(targetID), blobHash); err != nil {
+			slog.Warn("proxy to peer failed, falling back to local",
+				"err", err,
+				"blobHash", blobHash,
+				"target", targetID,
+			)
+			return er.serveAsPrimary(ctx, w, blobHash)
+		}
+		return nil
 	}
 	return er.serveAsPrimary(ctx, w, blobHash)
 }

@@ -42,6 +42,7 @@ import (
 	"github.com/shlande/mediaworker/internal/node/peerstore"
 	nodepinstrategy "github.com/shlande/mediaworker/internal/node/pinstrategy"
 	"github.com/shlande/mediaworker/internal/node/pinstore"
+	"github.com/shlande/mediaworker/internal/node/routing"
 	nodesync "github.com/shlande/mediaworker/internal/node/syncbroadcaster"
 	"github.com/shlande/mediaworker/internal/shared/identity"
 	"github.com/shlande/mediaworker/internal/types"
@@ -373,7 +374,16 @@ func main() {
 	}
 
 	// -------------------------------------------------------------------
-	// 21. HTTP server for client blob requests
+	// 21. Edge router — hash-ring routing with proxy fallback
+	// -------------------------------------------------------------------
+	router := routing.NewEdgeRouter(ring, backhaulMgr, nodeIdentity.PeerID, cfg.Access.DataPlane.Enabled, h)
+	logger.Info("edge router created",
+		"self_peer", nodeIdentity.PeerID,
+		"is_l4", cfg.Access.DataPlane.Enabled,
+	)
+
+	// -------------------------------------------------------------------
+	// 22. HTTP server for client blob requests
 	// -------------------------------------------------------------------
 	httpListen := defaultHTTPListen
 	mux := http.NewServeMux()
@@ -383,15 +393,8 @@ func main() {
 		defer reqCancel()
 
 		logger.Info("blob request", "hash", blobHash)
-
-		var writeErr error
-		if cfg.Access.DataPlane.Enabled {
-			writeErr = backhaulMgr.HandleBlobL4(ctx, w, blobHash)
-		} else {
-			writeErr = backhaulMgr.HandleBlobNoL4(ctx, w, blobHash)
-		}
-		if writeErr != nil {
-			logger.Error("blob request failed", "hash", blobHash, "err", writeErr)
+		if err := router.HandleBlobRequest(ctx, w, blobHash); err != nil {
+			logger.Error("blob request failed", "hash", blobHash, "err", err)
 			http.Error(w, "blob not found", http.StatusNotFound)
 		}
 	})
