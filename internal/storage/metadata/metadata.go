@@ -115,6 +115,10 @@ func NewPGMetadataClient(dsn string) (*PGMetadataClient, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("metadata: ping postgres: %w", err)
 	}
+	if err := MigrateAll(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("metadata: run migrations: %w", err)
+	}
 	return &PGMetadataClient{db: db}, nil
 }
 

@@ -1,0 +1,18 @@
+Task 2: Export MigrateAll + auto-run on PGMetadataClient startup
+=================================================================
+Date: 2026-07-19
+
+Changes:
+  - migrate.go:18: migrateAll → MigrateAll (exported)
+  - migrate_test.go:46,90,134,154: 4 call sites migrateAll → MigrateAll
+  - metadata.go:118-123: Insert MigrateAll(db) call after Ping() success
+
+Verification:
+
+$ go build ./...
+  → exit 0, no output
+
+$ go test ./internal/storage/metadata/... -count=1
+  → ok  	github.com/shlande/mediaworker/internal/storage/metadata	0.640s
+
+All gates pass.

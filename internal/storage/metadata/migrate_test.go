@@ -43,8 +43,8 @@ func TestMigrateAll_ExecutesInOrder(t *testing.T) {
 	mock.ExpectExec(`DROP TABLE IF EXISTS blob_index`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
-	if err := migrateAll(db); err != nil {
-		t.Fatalf("migrateAll: %v", err)
+	if err := MigrateAll(db); err != nil {
+		t.Fatalf("MigrateAll: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet expectations: %v", err)
@@ -87,8 +87,8 @@ func TestMigrateAll_WithExistingTables(t *testing.T) {
 	mock.ExpectExec(`DROP TABLE IF EXISTS blob_index`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
-	if err := migrateAll(db); err != nil {
-		t.Fatalf("migrateAll (idempotent): %v", err)
+	if err := MigrateAll(db); err != nil {
+		t.Fatalf("MigrateAll (idempotent): %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet expectations: %v", err)
@@ -131,8 +131,8 @@ func TestMigrateAll_SQLParsesCorrectly(t *testing.T) {
 	mock.ExpectExec(`DROP TABLE IF EXISTS blob_index`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
-	if err := migrateAll(db); err != nil {
-		t.Fatalf("migrateAll: %v", err)
+	if err := MigrateAll(db); err != nil {
+		t.Fatalf("MigrateAll: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet expectations: %v", err)
@@ -151,7 +151,7 @@ func TestMigrateAll_FailsOnBadSQL(t *testing.T) {
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS content`).
 		WillReturnError(sqlmock.ErrCancelled)
 
-	if err := migrateAll(db); err == nil {
-		t.Fatal("expected error from migrateAll, got nil")
+	if err := MigrateAll(db); err == nil {
+		t.Fatal("expected error from MigrateAll, got nil")
 	}
 }

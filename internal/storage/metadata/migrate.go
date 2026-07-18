@@ -12,10 +12,10 @@ import (
 //go:embed migrations/*.sql
 var migrationFS embed.FS
 
-// migrateAll reads all embedded SQL migration files sorted by name and
+// MigrateAll reads all embedded SQL migration files sorted by name and
 // executes each against db. Returns the first error encountered; on error
 // the migration is aborted but already-applied files are not rolled back.
-func migrateAll(db *sql.DB) error {
+func MigrateAll(db *sql.DB) error {
 	entries, err := fs.ReadDir(migrationFS, "migrations")
 	if err != nil {
 		return fmt.Errorf("migrations: read dir: %w", err)
