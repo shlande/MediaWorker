@@ -40,6 +40,11 @@ type ProcessResult struct {
 	Roles        []types.BlobRole
 	TypeMetadata []byte // content-type-specific metadata (MPD XML, EXIF, etc.)
 
+	// WorkDir is the temporary processing directory for this content. The
+	// pipeline calls os.RemoveAll(WorkDir) after Ingest completes (success
+	// or failure). Empty string means no cleanup needed.
+	WorkDir string
+
 	// BlobFiles maps blob_hash → absolute path to the temporary file. These
 	// files are transient — they exist only for the lifetime of the Ingest()
 	// call and MUST NOT be persisted. The pipeline reads from them during

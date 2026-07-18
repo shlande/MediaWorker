@@ -92,6 +92,7 @@ func (d *DashIngester) Process(ctx context.Context, input io.Reader, opts Proces
 		Roles:        roles,
 		TypeMetadata: typeMeta,
 		BlobFiles:    blobFiles,
+		WorkDir:      outDir,
 	}, nil
 }
 

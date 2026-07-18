@@ -450,3 +450,69 @@ func TestIngest_RedundancyNormalizesTo2(t *testing.T) {
 		})
 	}
 }
+
+func TestIngest_WorkDirDeletedOnSuccess(t *testing.T) {
+	workDir := t.TempDir()
+	blobDir := t.TempDir()
+	fileA := mustCreateFile(t, blobDir, "blob_a.m4s", []byte("init"))
+
+	result := &ProcessResult{
+		ContentID:   "cid-workdir",
+		ContentType: "dash_video",
+		Blobs:       []types.BlobDescriptor{simpleBlob("sha256:aaa", "mp4_init_segment", 100)},
+		Roles:       []types.BlobRole{{BlobHash: "sha256:aaa", Role: "init", SortOrder: 0}},
+		BlobFiles:   map[string]string{"sha256:aaa": fileA},
+		WorkDir:     workDir,
+	}
+	// Create a file inside workDir so we can detect it was removed.
+	mustCreateFile(t, workDir, "manifest.mpd", []byte("mpd"))
+
+	backends := []*mockBackendUploader{{backendID: "115:acct_01"}}
+	eventBus := &mockEventPublisher{}
+	p := buildPipeline(t, "dash_video", result, nil, backends, nil, nil, eventBus, 0)
+
+	_, err := p.Ingest(context.Background(), "dash_video", strings.NewReader("x"), ProcessOptions{})
+	if err != nil {
+		t.Fatalf("Ingest failed: %v", err)
+	}
+
+	if _, err := os.Stat(workDir); !os.IsNotExist(err) {
+		t.Fatalf("WorkDir %s should have been deleted; stat err = %v", workDir, err)
+	}
+}
+
+func TestIngest_WorkDirDeletedOnUploadFailure(t *testing.T) {
+	workDir := t.TempDir()
+	blobDir := t.TempDir()
+	fileA := mustCreateFile(t, blobDir, "blob_a.m4s", []byte("init"))
+
+	result := &ProcessResult{
+		ContentID:   "cid-workdir-fail",
+		ContentType: "dash_video",
+		Blobs:       []types.BlobDescriptor{simpleBlob("sha256:aaa", "mp4_init_segment", 100)},
+		Roles:       []types.BlobRole{{BlobHash: "sha256:aaa", Role: "init", SortOrder: 0}},
+		BlobFiles:   map[string]string{"sha256:aaa": fileA},
+		WorkDir:     workDir,
+	}
+	mustCreateFile(t, workDir, "manifest.mpd", []byte("mpd"))
+
+	// All backends fail -> uploadAllBlobs returns error.
+	backends := []*mockBackendUploader{
+		{backendID: "115:fail", err: errors.New("upload fail")},
+	}
+	eventBus := &mockEventPublisher{}
+	p := buildPipeline(t, "dash_video", result, nil, backends, nil, nil, eventBus, 0)
+
+	_, err := p.Ingest(context.Background(), "dash_video", strings.NewReader("x"), ProcessOptions{})
+	if err == nil {
+		t.Fatal("expected error when all backends fail")
+	}
+	if !strings.Contains(err.Error(), "blob upload") {
+		t.Errorf("error = %v, want to contain 'blob upload'", err)
+	}
+
+	// WorkDir must still be cleaned up even on failure.
+	if _, err := os.Stat(workDir); !os.IsNotExist(err) {
+		t.Fatalf("WorkDir %s should have been deleted after upload failure; stat err = %v", workDir, err)
+	}
+}

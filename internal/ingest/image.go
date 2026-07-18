@@ -145,6 +145,7 @@ func (i *ImageIngester) Process(ctx context.Context, input io.Reader, opts Proce
 		Roles:        roles,
 		TypeMetadata: typeMeta,
 		BlobFiles:    blobFiles,
+		WorkDir:      workDir,
 	}, nil
 }
 
