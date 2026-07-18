@@ -25,13 +25,6 @@ import (
 	"github.com/shlande/mediaworker/internal/ingest"
 	"github.com/shlande/mediaworker/internal/ingest/syncpub"
 	"github.com/shlande/mediaworker/internal/storage/accountpool"
-	"github.com/shlande/mediaworker/internal/storage/auth"
-	"github.com/shlande/mediaworker/internal/storage/circuitbreaker"
-	"github.com/shlande/mediaworker/internal/storage/driver"
-	"github.com/shlande/mediaworker/internal/storage/driver/baidu"
-	"github.com/shlande/mediaworker/internal/storage/driver/onedrive"
-	"github.com/shlande/mediaworker/internal/types"
-	"golang.org/x/time/rate"
 )
 
 func main() {
@@ -65,7 +58,7 @@ func run(configPath string) error {
 	defer mc.Close()
 
 	// 3. Build AccountPool from cloud account configs (upload-only, no libp2p/metadata query).
-	pool := buildAccountPool(cfg)
+	pool := accountpool.BuildFromConfig(cfg.Storage.ToAccountPoolConfig(), nil)
 
 	// 4. Build BackendPool adapter.
 	selector := &ingestAccountPoolAdapter{pool: pool}
@@ -308,66 +301,4 @@ func (a *ingestAccountPoolAdapter) SelectKForUpload(ctx context.Context, k int) 
 	}
 	return out, nil
 }
-
-// buildAccountPool creates an AccountPool from cloud-account configuration,
-// creates per-vendor drivers, and adds them to the pool with rate limiters
-// and circuit breakers (same pattern as the edge-node integration tests).
-func buildAccountPool(cfg *config.IngestWorkerConfig) *accountpool.AccountPool {
-	// Ingest worker is upload-only — it does not call GetBlobLocations, so
-	// the BlobLocationClient can be nil.
-	pool := accountpool.NewAccountPool(nil)
-	tokenMgr := auth.NewTokenManager(nil)
-
-	for _, acctCfg := range cfg.Storage.CloudAccounts {
-		if !acctCfg.Enabled {
-			continue
-		}
-		vendor := types.Vendor(acctCfg.Vendor)
-
-		// Create the appropriate driver.
-		var drv driver.Driver
-		switch vendor {
-		case types.VendorBaidu:
-			drv = baidu.NewBaiduDriver(tokenMgr, acctCfg.AccountID, acctCfg.ClientID, acctCfg.ClientSecret, nil)
-		case types.VendorOneDrive:
-			drv = onedrive.NewOneDriveDriver(tokenMgr, acctCfg.AccountID, acctCfg.Region, nil)
-		default:
-			slog.Warn("unknown vendor, skipping", "vendor", acctCfg.Vendor, "account_id", acctCfg.AccountID)
-			continue
-		}
-
-		rateCfg := drv.RateLimitConfig()
-		if override, ok := cfg.Storage.RateLimits[acctCfg.Vendor]; ok {
-			if override.QPS > 0 {
-				rateCfg.QPS = override.QPS
-			}
-			if override.Burst > 0 {
-				rateCfg.Burst = override.Burst
-			}
-			if override.Concurrent > 0 {
-				rateCfg.ConcurrentLimit = override.Concurrent
-			}
-		}
-
-		vendorWeight := 2.0
-		if vp, ok := cfg.Storage.VendorProfiles[acctCfg.Vendor]; ok {
-			vendorWeight = vp.Weight
-		}
-
-		key := string(vendor) + ":" + acctCfg.AccountID
-		acct := &accountpool.Account{
-			Vendor:       vendor,
-			AccountID:    acctCfg.AccountID,
-			Driver:       drv,
-			Limiter:      rate.NewLimiter(rate.Limit(rateCfg.QPS), rateCfg.Burst),
-			CB:           circuitbreaker.New(key, 5, 100*time.Millisecond),
-			VendorWeight: vendorWeight,
-		}
-		acct.Health.Store(types.HealthState{State: "healthy"})
-		pool.AddAccount(acct)
-		slog.Info("account added", "key", key, "vendor", acctCfg.Vendor)
-	}
-	return pool
-}
-
 
