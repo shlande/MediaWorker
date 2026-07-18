@@ -137,6 +137,32 @@ type SweepResult struct {
 // be retried on the next Sweep. After a failed copy, remaining copies of the
 // same blob are NOT attempted in this run (the blob is left intact for retry).
 func (c *Collector) Sweep(ctx context.Context, grace time.Duration, batchLimit int) (SweepResult, error) {
+	return c.sweep(ctx, grace, batchLimit, false)
+}
+
+// SweepWithDryRun is the dry-run-aware variant of Sweep. When dryRun=true,
+// for each candidate blob the collector:
+//   - still performs the TOCTOU re-check (rescue path is real — a rescued
+//     blob's deleted_at is reset to NULL so it stops being a candidate);
+//   - logs `would delete blob=<hash> locations=N backends=[...]` with the
+//     resolved backend_ids (one log line per blob);
+//   - does NOT call Driver.Remove on any copy;
+//   - does NOT issue the single-tx DELETE blob_location + blob.
+//
+// The returned SweepResult counts "Deleted" as the number of blobs that
+// WOULD have been deleted (i.e. had ≥0 locations and passed TOCTOU). This
+// lets operators see how many blobs a real run would reclaim.
+//
+// Plan line 221: "DryRun 语义不得被任何代码路径绕过". This method is the ONLY
+// dry-run entrypoint — Sweep() above ALWAYS deletes (dryRun=false hard-coded).
+// The janitor service MUST route through SweepWithDryRun when DryRun=true and
+// through Sweep when DryRun=false. There is no other code path.
+func (c *Collector) SweepWithDryRun(ctx context.Context, grace time.Duration, batchLimit int, dryRun bool) (SweepResult, error) {
+	return c.sweep(ctx, grace, batchLimit, dryRun)
+}
+
+// sweep is the unified implementation shared by Sweep and SweepWithDryRun.
+func (c *Collector) sweep(ctx context.Context, grace time.Duration, batchLimit int, dryRun bool) (SweepResult, error) {
 	if grace <= 0 {
 		grace = DefaultGrace
 	}
@@ -182,10 +208,10 @@ SELECT blob_hash
 		default:
 		}
 
-		rescued, err := c.processOne(ctx, hash, brokenAccounts)
+		rescued, err := c.processOne(ctx, hash, brokenAccounts, dryRun)
 		if err != nil {
 			result.Failed++
-			c.logger.Error("gc phase 2: process blob failed", "blob_hash", hash, "err", err)
+			c.logger.Error("gc phase 2: process blob failed", "blob_hash", hash, "err", err, "dry_run", dryRun)
 			continue
 		}
 		if rescued {
@@ -195,6 +221,10 @@ SELECT blob_hash
 		result.Deleted++
 	}
 
+	mode := "live"
+	if dryRun {
+		mode = "dry-run"
+	}
 	c.logger.Info("gc phase 2 (sweep)",
 		"rescued", result.Rescued,
 		"deleted", result.Deleted,
@@ -202,6 +232,7 @@ SELECT blob_hash
 		"grace", grace.String(),
 		"batch_limit", batchLimit,
 		"candidates", len(blobHashes),
+		"mode", mode,
 	)
 	return result, nil
 }
@@ -209,7 +240,12 @@ SELECT blob_hash
 // processOne handles a single blob_hash. Returns rescued=true if the blob was
 // rescued (content_blob reference appeared), or an error if processing failed
 // (account circuit-broken or DB error). On success returns (false, nil).
-func (c *Collector) processOne(ctx context.Context, hash string, broken map[string]struct{}) (bool, error) {
+//
+// When dryRun=true the rescue path still executes for real (a rescued blob's
+// deleted_at must be reset to NULL so it stops being a candidate), but the
+// delete path only logs `would delete blob=... locations=N backends=[...]`
+// and returns without calling Driver.Remove or issuing the DELETE tx.
+func (c *Collector) processOne(ctx context.Context, hash string, broken map[string]struct{}, dryRun bool) (bool, error) {
 	// TOCTOU re-check: did a content_blob reference appear during the grace
 	// window? If so, rescue the blob.
 	referenced, err := c.isReferenced(ctx, hash)
@@ -222,25 +258,35 @@ func (c *Collector) processOne(ctx context.Context, hash string, broken map[stri
 		); err != nil {
 			return false, fmt.Errorf("rescue update: %w", err)
 		}
-		c.logger.Info("gc phase 2: rescued (content_blob reference appeared)", "blob_hash", hash)
+		c.logger.Info("gc phase 2: rescued (content_blob reference appeared)", "blob_hash", hash, "dry_run", dryRun)
 		return true, nil
 	}
 
-	// Fetch all blob_location rows for this hash.
 	locations, err := c.fetchLocations(ctx, hash)
 	if err != nil {
 		return false, fmt.Errorf("fetch locations: %w", err)
 	}
+
+	if dryRun {
+		backends := make([]string, 0, len(locations))
+		for _, loc := range locations {
+			backends = append(backends, loc.BackendID)
+		}
+		c.logger.Info("gc phase 2: would delete (dry-run)",
+			"blob", hash,
+			"locations", len(locations),
+			"backends", backends,
+		)
+		return false, nil
+	}
+
 	if len(locations) == 0 {
-		// No copies to delete — just drop the blob row in a single tx.
 		if err := c.deleteBlobTx(ctx, hash); err != nil {
 			return false, fmt.Errorf("delete blob (no locations): %w", err)
 		}
 		return false, nil
 	}
 
-	// Delete every copy. A single failure → circuit-break that account and
-	// abort this blob (it stays marked; next run retries).
 	for _, loc := range locations {
 		if _, broken := broken[loc.BackendID]; broken {
 			return false, fmt.Errorf("account %s already circuit-broken this run", loc.BackendID)
@@ -251,7 +297,7 @@ func (c *Collector) processOne(ctx context.Context, hash string, broken map[stri
 				"blob_hash", hash, "backend_id", loc.BackendID)
 			return false, fmt.Errorf("malformed backend_id %q", loc.BackendID)
 		}
-		_ = vendor // vendor is implicit in the resolved driver; accountID logged below
+		_ = vendor
 		d, cb, ok := c.resolver.Resolve(loc.BackendID)
 		if !ok {
 			c.logger.Warn("gc: no account for backend_id, skipping copy",
@@ -259,8 +305,6 @@ func (c *Collector) processOne(ctx context.Context, hash string, broken map[stri
 			return false, fmt.Errorf("no account for backend_id %q", loc.BackendID)
 		}
 		if err := d.Remove(ctx, loc.FileID); err != nil {
-			// Circuit-break: ForceOpen on the CB (idempotent — affects this
-			// run via the broken map AND concurrent code via the CB state).
 			if cb != nil {
 				cb.ForceOpen()
 			}
@@ -277,7 +321,6 @@ func (c *Collector) processOne(ctx context.Context, hash string, broken map[stri
 		}
 	}
 
-	// All copies removed — single-tx DELETE blob_location + blob.
 	if err := c.deleteBlobTx(ctx, hash); err != nil {
 		return false, fmt.Errorf("delete blob tx: %w", err)
 	}
