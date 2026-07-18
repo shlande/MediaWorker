@@ -20,25 +20,89 @@ import (
 	"github.com/shlande/mediaworker/internal/types"
 )
 
+// NATOptions gates the libp2p NAT traversal options. The zero value (all
+// fields false) preserves the pre-T15 behaviour where every option is
+// enabled. Callers passing explicit values should set Enabled=true to
+// honour the gate; a false value disables that specific option.
+//
+// This struct is intentionally decoupled from config.NATTraversalConfig so
+// the libp2phost package does not depend on internal/config — the caller
+// (main.go) is responsible for the *bool → NATOptions conversion via
+// ResolveNATOptions.
+type NATOptions struct {
+	// AutoNAT controls libp2p.EnableNATService. When false (zero value),
+	// AutoNAT is enabled (preserving pre-T15 behaviour). When true, AutoNAT
+	// is enabled AND a log declaration is emitted. To DISABLE AutoNAT,
+	// callers must set Explicit=true and AutoNAT=false.
+	AutoNAT bool
+	// AutoRelay controls libp2p.EnableAutoRelayWithPeerSource. Same
+	// false=enabled semantics as AutoNAT.
+	AutoRelay bool
+	// DCUtR controls libp2p.EnableHolePunching. Same false=enabled semantics.
+	DCUtR bool
+	// Explicit marks that the caller has explicitly set the fields above.
+	// When false (zero value), all three NAT options are enabled
+	// unconditionally (preserving pre-T15 behaviour). When true, each
+	// option is gated by its corresponding bool field.
+	Explicit bool
+}
+
+// ResolveNATOptions converts a config.NATTraversalConfig (which uses *bool
+// for nil-distinguishes-omitted semantics) into a libp2phost.NATOptions
+// struct. The conversion preserves the pre-T15 behaviour: a zero-value
+// NATTraversalConfig (all nil) produces a zero-value NATOptions (Explicit=false),
+// which NewEdgeHostWithNAT interprets as "enable everything".
+//
+// Callers MUST pass the result to NewEdgeHostWithNAT — passing a
+// config.NATTraversalConfig directly is a type error (intentional).
+func ResolveNATOptions(autoNAT, autoRelay, dcutr *bool) NATOptions {
+	if autoNAT == nil && autoRelay == nil && dcutr == nil {
+		return NATOptions{Explicit: false}
+	}
+	return NATOptions{
+		Explicit: true,
+		AutoNAT:  autoNAT == nil || *autoNAT,
+		AutoRelay: autoRelay == nil || *autoRelay,
+		DCUtR:    dcutr == nil || *dcutr,
+	}
+}
+
 // NewEdgeHost creates a libp2p host configured for the MediaWorker edge
-// private network. It wires PSK admission, NAT traversal (AutoNAT, relay,
-// DCUtR hole punching), a memory peerstore, and a connection gater.
+// private network with the default NAT traversal stack (AutoNAT, AutoRelay
+// with empty peer source, DCUtR, relay client + relay service). This is the
+// pre-T15 behaviour preserved bit-for-bit.
 //
-// The host listens on TCP addresses only. PSK mode does not support QUIC or
-// WebTransport; see https://github.com/libp2p/go-libp2p/issues/for-psk-quic.
-//
-// Parameters:
-//   - identity: the node's Ed25519 key and derived PeerId
-//   - listenAddrs: multiaddr strings (e.g. "/ip4/0.0.0.0/tcp/9001")
-//   - psk: 32-byte pre-shared key for private network admission
-//   - gater: connection gater for filtering peers (may be nil for no-op)
+// Callers that need to gate NAT traversal by config should use
+// NewEdgeHostWithNAT instead.
 func NewEdgeHost(
 	identity *identity.NodeIdentity,
 	listenAddrs []string,
 	psk types.PSK,
 	gater connmgr.ConnectionGater,
 ) (host.Host, error) {
-	if identity == nil {
+	return NewEdgeHostWithNAT(identity, listenAddrs, psk, gater, NATOptions{})
+}
+
+// NewEdgeHostWithNAT is like NewEdgeHost but accepts a NATOptions struct
+// that gates the libp2p NAT traversal options. A zero-value NATOptions
+// (Explicit=false) preserves the pre-T15 behaviour: every option is enabled.
+// When Explicit=true, each option is gated by its corresponding bool field.
+//
+// AutoRelay: when enabled, the host is configured with
+// EnableAutoRelayWithPeerSource using an empty peer source (returns an
+// immediately-closed channel — no relay candidates). This matches the
+// pre-T15 behaviour. Operators wanting real relay candidates must wire a
+// peer source in a future task; we do NOT invent a relay list config here
+// (plan line 230 — "无列表时 Warn 跳过" is honoured by the empty peer source
+// returning zero candidates, which AutoRelay handles gracefully).
+func NewEdgeHostWithNAT(
+	nodeIdentity *identity.NodeIdentity,
+	listenAddrs []string,
+	psk types.PSK,
+	gater connmgr.ConnectionGater,
+	nat NATOptions,
+) (host.Host, error) {
+	if nodeIdentity == nil {
 		return nil, fmt.Errorf("identity is required")
 	}
 	if len(listenAddrs) == 0 {
@@ -51,38 +115,61 @@ func NewEdgeHost(
 	}
 
 	opts := []libp2p.Option{
-		libp2p.Identity(identity.PrivKey),
+		libp2p.Identity(nodeIdentity.PrivKey),
 		libp2p.ListenAddrStrings(listenAddrs...),
 		libp2p.Peerstore(ps),
 	}
 
-	// PSK private network admission (TCP only — PSK does not support QUIC).
 	if len(psk) > 0 {
 		opts = append(opts, libp2p.PrivateNetwork(pnet.PSK(psk)))
 	}
 
-	// Connection gater (may be nil).
 	if gater != nil {
 		opts = append(opts, libp2p.ConnectionGater(gater))
 	}
 
-	// NAT traversal stack.
-	opts = append(opts,
-		libp2p.EnableRelay(),                                                      // relay client
-		libp2p.EnableRelayService(circuit.WithResources(circuit.DefaultResources())), // relay provider (activates when publicly reachable)
-		libp2p.EnableHolePunching(),                                               // DCUtR
-		libp2p.EnableNATService(),                                                 // AutoNAT
-	)
+	// Relay client — always enabled (relies on AutoRelay to find relays).
+	opts = append(opts, libp2p.EnableRelay())
 
-	// AutoRelay with peer source.
-	// TODO: Wire up PeerEntryStore to provide real relay candidates. For now,
-	// the peer source returns an empty channel — AutoRelay will not find any
-	// relays until PeerEntryStore is integrated in a later task.
+	// Relay provider (activates when publicly reachable). Always enabled —
+	// any node that is publicly reachable can act as a relay for the mesh.
 	opts = append(opts,
-		libp2p.EnableAutoRelayWithPeerSource(
-			peerSourceFunc,
-		),
-	)
+		libp2p.EnableRelayService(circuit.WithResources(circuit.DefaultResources())))
+
+	logger := slog.Default().With("component", "libp2p_host")
+
+	// Resolve effective settings: when not explicit, all options enabled
+	// (preserves pre-T15 behaviour).
+	autoNATEff := !nat.Explicit || nat.AutoNAT
+	autoRelayEff := !nat.Explicit || nat.AutoRelay
+	dcutrEff := !nat.Explicit || nat.DCUtR
+
+	if autoNATEff {
+		opts = append(opts, libp2p.EnableNATService())
+		logger.Info("NAT traversal option enabled", "option", "autonat",
+			"source", natSource(nat.Explicit, nat.AutoNAT))
+	} else {
+		logger.Info("NAT traversal option disabled", "option", "autonat")
+	}
+
+	if autoRelayEff {
+		opts = append(opts,
+			libp2p.EnableAutoRelayWithPeerSource(peerSourceFunc))
+		logger.Info("NAT traversal option enabled", "option", "auto_relay",
+			"source", natSource(nat.Explicit, nat.AutoRelay),
+			"peer_source", "empty (TODO: wire PeerEntryStore)",
+		)
+	} else {
+		logger.Info("NAT traversal option disabled", "option", "auto_relay")
+	}
+
+	if dcutrEff {
+		opts = append(opts, libp2p.EnableHolePunching())
+		logger.Info("NAT traversal option enabled", "option", "dcutr",
+			"source", natSource(nat.Explicit, nat.DCUtR))
+	} else {
+		logger.Info("NAT traversal option disabled", "option", "dcutr")
+	}
 
 	h, err := libp2p.New(opts...)
 	if err != nil {
@@ -92,6 +179,15 @@ func NewEdgeHost(
 	registerConnNotifee(h)
 
 	return h, nil
+}
+
+// natSource returns "config" when the field was explicitly set, "default"
+// when it was omitted (preserves pre-T15 behaviour).
+func natSource(explicit, value bool) string {
+	if !explicit {
+		return "default"
+	}
+	return "config"
 }
 
 // peerSourceFunc is an empty AutoRelay peer source. It returns an empty

@@ -284,3 +284,115 @@ func genIdentity(t *testing.T) *sharedid.NodeIdentity {
 		PeerID:  types.PeerId(pid.String()),
 	}
 }
+
+// ─── T15: NATOptions gating ────────────────────────────────────────────────
+
+// TestNewEdgeHostWithNAT_DefaultPreservesCurrentBehaviour verifies that a
+// zero-value NATOptions (Explicit=false) preserves the pre-T15 behaviour:
+// host creation succeeds with all NAT options enabled.
+func TestNewEdgeHostWithNAT_DefaultPreservesCurrentBehaviour(t *testing.T) {
+	psk := genTestPSK(t)
+	id := genIdentity(t)
+
+	h, err := NewEdgeHostWithNAT(id, []string{"/ip4/127.0.0.1/tcp/0"}, psk, nil, NATOptions{})
+	if err != nil {
+		t.Fatalf("NewEdgeHostWithNAT with default NATOptions: %v", err)
+	}
+	defer h.Close()
+
+	if h.ID() == "" {
+		t.Fatal("host has empty peer ID")
+	}
+}
+
+// TestNewEdgeHostWithNAT_AllExplicitTrue verifies that an explicit all-true
+// config produces a working host (matches the l4ConfigYAML/edgeConfigYAML
+// samples where all three fields are set to true).
+func TestNewEdgeHostWithNAT_AllExplicitTrue(t *testing.T) {
+	psk := genTestPSK(t)
+	id := genIdentity(t)
+
+	h, err := NewEdgeHostWithNAT(id, []string{"/ip4/127.0.0.1/tcp/0"}, psk, nil,
+		NATOptions{Explicit: true, AutoNAT: true, AutoRelay: true, DCUtR: true})
+	if err != nil {
+		t.Fatalf("NewEdgeHostWithNAT all-on: %v", err)
+	}
+	defer h.Close()
+}
+
+// TestNewEdgeHostWithNAT_AllExplicitFalse verifies that an explicit all-false
+// config still produces a working host (NAT options simply aren't added to
+// the libp2p Option list — the host still starts, just without NAT traversal).
+func TestNewEdgeHostWithNAT_AllExplicitFalse(t *testing.T) {
+	psk := genTestPSK(t)
+	id := genIdentity(t)
+
+	h, err := NewEdgeHostWithNAT(id, []string{"/ip4/127.0.0.1/tcp/0"}, psk, nil,
+		NATOptions{Explicit: true, AutoNAT: false, AutoRelay: false, DCUtR: false})
+	if err != nil {
+		t.Fatalf("NewEdgeHostWithNAT all-off: %v", err)
+	}
+	defer h.Close()
+}
+
+// TestNewEdgeHostWithNAT_Mixed verifies that mixed values (some on, some off)
+// produce a working host.
+func TestNewEdgeHostWithNAT_Mixed(t *testing.T) {
+	psk := genTestPSK(t)
+	id := genIdentity(t)
+
+	h, err := NewEdgeHostWithNAT(id, []string{"/ip4/127.0.0.1/tcp/0"}, psk, nil,
+		NATOptions{Explicit: true, AutoNAT: false, AutoRelay: true, DCUtR: false})
+	if err != nil {
+		t.Fatalf("NewEdgeHostWithNAT mixed: %v", err)
+	}
+	defer h.Close()
+}
+
+// TestResolveNATOptions verifies the *bool → NATOptions conversion:
+//   - all nil → Explicit=false (preserves pre-T15 behaviour)
+//   - any non-nil → Explicit=true with nil treated as true
+func TestResolveNATOptions(t *testing.T) {
+	t.Run("all nil preserves default", func(t *testing.T) {
+		got := ResolveNATOptions(nil, nil, nil)
+		if got.Explicit {
+			t.Errorf("Explicit = true, want false when all nil")
+		}
+	})
+	t.Run("all explicit true", func(t *testing.T) {
+		trueVal := true
+		got := ResolveNATOptions(&trueVal, &trueVal, &trueVal)
+		if !got.Explicit {
+			t.Errorf("Explicit = false, want true")
+		}
+		if !got.AutoNAT || !got.AutoRelay || !got.DCUtR {
+			t.Errorf("got = %+v, want all true", got)
+		}
+	})
+	t.Run("all explicit false", func(t *testing.T) {
+		falseVal := false
+		got := ResolveNATOptions(&falseVal, &falseVal, &falseVal)
+		if !got.Explicit {
+			t.Errorf("Explicit = false, want true")
+		}
+		if got.AutoNAT || got.AutoRelay || got.DCUtR {
+			t.Errorf("got = %+v, want all false", got)
+		}
+	})
+	t.Run("mixed with nil treated as true", func(t *testing.T) {
+		falseVal := false
+		got := ResolveNATOptions(&falseVal, nil, nil)
+		if !got.Explicit {
+			t.Errorf("Explicit = false, want true when any non-nil")
+		}
+		if got.AutoNAT {
+			t.Errorf("AutoNAT = true, want false (explicit false)")
+		}
+		if !got.AutoRelay {
+			t.Errorf("AutoRelay = false, want true (nil → preserve default)")
+		}
+		if !got.DCUtR {
+			t.Errorf("DCUtR = false, want true (nil → preserve default)")
+		}
+	})
+}
