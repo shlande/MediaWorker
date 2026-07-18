@@ -97,7 +97,7 @@ func TestMetrics_HTTPHandler(t *testing.T) {
 func TestMetrics_AllMetricsExposed(t *testing.T) {
 	// Given: a Metrics instance with some data recorded
 	// When:  gathered
-	// Then:  all 12 expected metric names are present
+	// Then:  all expected metric names are present
 	m := NewMetrics()
 	// Record at least one value so vectors are present
 	m.RecordCacheHit("warm")
@@ -112,6 +112,15 @@ func TestMetrics_AllMetricsExposed(t *testing.T) {
 	m.SetJWTRefreshLastTS(1000)
 	m.RecordRelayBytes(500)
 	m.RecordBackhaulBytes(600)
+	// T20 instruments — record one value so vec labels materialise.
+	m.RecordJWTInitialSuccess()
+	m.RecordJWTInitialFailure()
+	m.RecordJWTRefreshFailure()
+	m.RecordCPJWTIssued(CPJWTOutcomeSuccess)
+	m.RecordCPContentIngestedReceived()
+	m.RecordCPPinPlanDispatched()
+	m.RecordIngest("dash_video", IngestOutcomeSuccess)
+	m.SetIngestPublishFailures(0)
 
 	families := mustGather(t, m)
 
@@ -128,6 +137,15 @@ func TestMetrics_AllMetricsExposed(t *testing.T) {
 		"edge_jwt_refresh_last_success_timestamp",
 		"edge_relay_bytes_total",
 		"edge_backhaul_bytes_total",
+		// T20 additions.
+		"edge_jwt_initial_success_total",
+		"edge_jwt_initial_failure_total",
+		"edge_jwt_refresh_failure_total",
+		"cp_jwt_issued_total",
+		"cp_content_ingested_received_total",
+		"cp_pin_plan_dispatched_total",
+		"ingest_total",
+		"ingest_publish_failures",
 	}
 
 	seen := make(map[string]bool)
