@@ -127,6 +127,14 @@ func (c *PGMetadataClient) Close() error {
 	return c.db.Close()
 }
 
+// DB returns the underlying *sql.DB handle. Exposed (T14) so the janitor
+// service can construct a gc.Collector against the same connection pool
+// that NewPGMetadataClient already opened + migrated. Callers must NOT
+// call db.Close() — PGMetadataClient.Close() owns the lifecycle.
+func (c *PGMetadataClient) DB() *sql.DB {
+	return c.db
+}
+
 // ─── ContentMetaClient methods ─────────────────────────────────────────────────
 
 // GetContentMeta retrieves content metadata by content_id.
