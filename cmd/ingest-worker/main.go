@@ -24,6 +24,7 @@ import (
 	"github.com/shlande/mediaworker/internal/storage/metadata"
 	"github.com/shlande/mediaworker/internal/ingest"
 	"github.com/shlande/mediaworker/internal/ingest/syncpub"
+	"github.com/shlande/mediaworker/internal/node/monitor"
 	"github.com/shlande/mediaworker/internal/storage/accountpool"
 )
 
@@ -96,15 +97,31 @@ func run(configPath string) error {
 	pipeline.RegisterIngester(ingest.NewDashIngester(cfg.Ingest.FFmpegPath, cfg.Ingest.WorkDir))
 	pipeline.RegisterIngester(ingest.NewImageIngester(cfg.Ingest.WorkDir))
 
+	// 6b. Metrics (T20). Mounted on the same mux as /ingest and /healthz.
+	// No auth — intranet assumption (plan line 275). The /metrics handler
+	// also refreshes the ingest_publish_failures gauge from
+	// syncpub.PublishFailures() on each scrape, so the gauge stays in sync
+	// with the package-level atomic counter without needing a polling
+	// goroutine.
+	metrics := monitor.NewMetrics()
+	metricsHandler := metrics.HTTPHandler()
+
 	// 7. HTTP handler.
 	mux := http.NewServeMux()
 	mux.HandleFunc("/ingest/", func(w http.ResponseWriter, r *http.Request) {
-		handleIngest(w, r, pipeline, cfg.HTTP.MaxUploadBytes)
+		handleIngest(w, r, pipeline, cfg.HTTP.MaxUploadBytes, metrics)
 	})
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	mux.Handle("/metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Refresh the publish-failures gauge before each scrape so the
+		// value reflects the latest syncpub counter. The gauge is a
+		// mirror, not a counter — the source of truth lives in syncpub.
+		metrics.SetIngestPublishFailures(syncpub.PublishFailures())
+		metricsHandler.ServeHTTP(w, r)
+	}))
 
 	srv := &http.Server{
 		Addr:         cfg.HTTP.Listen,
@@ -215,7 +232,7 @@ func checkWorkDirDiskSpace(workDir string, maxUploadBytes int64) {
 
 // ─── HTTP handler ──────────────────────────────────────────────────────
 
-func handleIngest(w http.ResponseWriter, r *http.Request, pipeline *ingest.IngestPipeline, maxUploadBytes int64) {
+func handleIngest(w http.ResponseWriter, r *http.Request, pipeline *ingest.IngestPipeline, maxUploadBytes int64, metrics *monitor.Metrics) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -260,8 +277,15 @@ func handleIngest(w http.ResponseWriter, r *http.Request, pipeline *ingest.Inges
 	contentID, err := pipeline.Ingest(ctx, contentType, file, opts)
 	if err != nil {
 		slog.Error("ingest failed", "content_type", contentType, "err", err)
+		if metrics != nil {
+			metrics.RecordIngest(contentType, monitor.IngestOutcomeFailure)
+		}
 		http.Error(w, fmt.Sprintf("ingest failed: %v", err), http.StatusInternalServerError)
 		return
+	}
+
+	if metrics != nil {
+		metrics.RecordIngest(contentType, monitor.IngestOutcomeSuccess)
 	}
 
 	resp := map[string]string{"content_id": contentID}
