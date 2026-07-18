@@ -19,9 +19,9 @@ type mockCB struct {
 	state int
 }
 
-func (m *mockCB) State() int        { return m.state }
-func (m *mockCB) ForceOpen()        { m.state = StateOpen }
-func (m *mockCB) ForceClose()       { m.state = StateClosed }
+func (m *mockCB) State() int  { return m.state }
+func (m *mockCB) ForceOpen()  { m.state = StateOpen }
+func (m *mockCB) ForceClose() { m.state = StateClosed }
 
 func newMockCB(state int) *mockCB { return &mockCB{state: state} }
 
@@ -56,12 +56,12 @@ func (d *callTrackingDriver) GetLink(ctx context.Context, fileID string) (*types
 func newAccount(vendor string, accID string, driver *mock.MockDriver, weight float64, lim Limiter, cb CircuitBreaker) *Account {
 	h := types.HealthState{State: "healthy"}
 	a := &Account{
-		Vendor:        types.Vendor(vendor),
-		AccountID:     accID,
-		Driver:        driver,
-		Limiter:       lim,
-		CB:            cb,
-		VendorWeight:  weight,
+		Vendor:       types.Vendor(vendor),
+		AccountID:    accID,
+		Driver:       driver,
+		Limiter:      lim,
+		CB:           cb,
+		VendorWeight: weight,
 	}
 	a.Health.Store(h)
 	return a
@@ -72,7 +72,7 @@ var alwaysDenyLimiter Limiter = &denyLimiter{}
 
 type denyLimiter struct{}
 
-func (d *denyLimiter) Allow() bool           { return false }
+func (d *denyLimiter) Allow() bool         { return false }
 func (d *denyLimiter) SetLimit(rate.Limit) {}
 
 // ─── SelectForRead tests ───
@@ -333,10 +333,10 @@ func TestSelectForRead_doesNotCallGetLink(t *testing.T) {
 		MockDriver: mock.NewMockDriver(types.Vendor115, mock.MockDriverConfig{}),
 	}
 	acct := newAccount(string(types.Vendor115), "acct1", trkDrv.MockDriver, 3.0, rate.NewLimiter(10, 20), newMockCB(StateClosed))
-	
+
 	// Put a file so GetLink would succeed if called
 	_, _ = trkDrv.Put(ctx, "dir", "fid1", nil, 0)
-	
+
 	pool.AddAccount(acct)
 
 	got, err := pool.SelectForRead(ctx, "hash_nolink")

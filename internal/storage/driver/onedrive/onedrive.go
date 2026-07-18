@@ -99,13 +99,13 @@ type graphListResponse struct {
 }
 
 type graphDriveItem struct {
-	ID               string             `json:"id"`
-	Name             string             `json:"name"`
-	Size             int64              `json:"size"`
-	File             *graphFileFacet    `json:"file,omitempty"`
-	FileSystemInfo   *graphFileSystemInfo `json:"fileSystemInfo,omitempty"`
-	DownloadURL      string             `json:"@microsoft.graph.downloadUrl,omitempty"`
-	ParentReference  *graphParentRef    `json:"parentReference,omitempty"`
+	ID              string               `json:"id"`
+	Name            string               `json:"name"`
+	Size            int64                `json:"size"`
+	File            *graphFileFacet      `json:"file,omitempty"`
+	FileSystemInfo  *graphFileSystemInfo `json:"fileSystemInfo,omitempty"`
+	DownloadURL     string               `json:"@microsoft.graph.downloadUrl,omitempty"`
+	ParentReference *graphParentRef      `json:"parentReference,omitempty"`
 }
 
 type graphFileFacet struct {

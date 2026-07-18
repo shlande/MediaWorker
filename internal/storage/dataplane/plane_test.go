@@ -56,7 +56,7 @@ type mockDriver struct {
 	vendor types.Vendor
 }
 
-func (m *mockDriver) Vendor() types.Vendor                          { return m.vendor }
+func (m *mockDriver) Vendor() types.Vendor { return m.vendor }
 func (m *mockDriver) List(ctx context.Context, dirID string, page int) ([]types.FileInfo, error) {
 	return nil, nil
 }

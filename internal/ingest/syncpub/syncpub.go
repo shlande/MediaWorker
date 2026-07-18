@@ -25,8 +25,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/pnet"
 	"github.com/multiformats/go-multiaddr"
 
-	"github.com/shlande/mediaworker/internal/shared/identity"
 	nodesync "github.com/shlande/mediaworker/internal/node/syncbroadcaster"
+	"github.com/shlande/mediaworker/internal/shared/identity"
 	"github.com/shlande/mediaworker/internal/types"
 )
 
@@ -36,9 +36,9 @@ const eventType = types.EventContentIngested // "CONTENT_INGESTED"
 // stream-open failures; a hard-unreachable CP is caught up-front by the
 // connectivity check in main.go (host.Connect → log.Fatal).
 const (
-	maxRetries      = 3
-	baseBackoffMS   = 100
-	sendTimeoutSec  = 10
+	maxRetries     = 3
+	baseBackoffMS  = 100
+	sendTimeoutSec = 10
 )
 
 // publishFailures counts events that exhausted all retries and were logged
@@ -59,9 +59,9 @@ func PublishFailures() uint64 { return publishFailures.Load() }
 // method `Publish(evt types.ContentIngestedEvent)`. The receiver is a pointer
 // so the host is shared across calls.
 type SyncPublisher struct {
-	host    host.Host
-	client  *nodesync.Client
-	cpPeer  peer.ID
+	host   host.Host
+	client *nodesync.Client
+	cpPeer peer.ID
 }
 
 // NewSyncPublisher builds the libp2p host (no listen addrs, PSK-admitted),

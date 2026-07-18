@@ -40,8 +40,8 @@ import (
 	nodejwt "github.com/shlande/mediaworker/internal/node/jwt"
 	"github.com/shlande/mediaworker/internal/node/libp2phost"
 	"github.com/shlande/mediaworker/internal/node/peerstore"
-	nodepinstrategy "github.com/shlande/mediaworker/internal/node/pinstrategy"
 	"github.com/shlande/mediaworker/internal/node/pinstore"
+	nodepinstrategy "github.com/shlande/mediaworker/internal/node/pinstrategy"
 	"github.com/shlande/mediaworker/internal/node/routing"
 	nodesync "github.com/shlande/mediaworker/internal/node/syncbroadcaster"
 	"github.com/shlande/mediaworker/internal/shared/identity"
@@ -473,9 +473,9 @@ func main() {
 		// after cache miss + ICP miss (until data plane is wired).
 		backhaulMgr = backhaul.NewBackhaulManager(
 			backhaulWarmCache{warmCache},
-			nil,                                       // dataPlane — TBD
+			nil, // dataPlane — TBD
 			backhaulICPFetcher{h: h, ring: ring, self: nodeIdentity.PeerID},
-			nil,                                       // l4Fetcher — this IS an L4 node
+			nil, // l4Fetcher — this IS an L4 node
 		)
 		logger.Info("backhaul manager created (L4 mode, data plane TBD)")
 
@@ -485,9 +485,9 @@ func main() {
 		// l4Fetcher is nil for now — L4 stream protocol not yet defined.
 		backhaulMgr = backhaul.NewBackhaulManager(
 			backhaulWarmCache{warmCache},
-			nil,                                       // dataPlane — disabled
+			nil, // dataPlane — disabled
 			backhaulICPFetcher{h: h, ring: ring, self: nodeIdentity.PeerID},
-			nil,                                       // l4Fetcher — not yet implemented
+			nil, // l4Fetcher — not yet implemented
 		)
 		logger.Info("backhaul manager created (edge mode, no L4)")
 	}

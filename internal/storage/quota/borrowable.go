@@ -18,10 +18,10 @@ import (
 // available (non-zero borrowed count and within validity period). Borrowed tokens
 // are granted by the control plane via Grant() and revoked via Revoke().
 type BorrowableLimiter struct {
-	base       *rate.Limiter
-	borrowed   atomic.Int64
+	base        *rate.Limiter
+	borrowed    atomic.Int64
 	borrowUntil atomic.Int64
-	maxBorrow  int64
+	maxBorrow   int64
 }
 
 // NewBorrowableLimiter creates a BorrowableLimiter wrapping the given base limiter.

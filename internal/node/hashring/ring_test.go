@@ -368,7 +368,7 @@ func TestHashRing_NoPeerICP(t *testing.T) {
 
 	// peer-noicp should never appear in ring
 	for i := range 200 {
-		if ring.Get("noicp-test-" + string(rune('0'+i%10))) == "peer-noicp" {
+		if ring.Get("noicp-test-"+string(rune('0'+i%10))) == "peer-noicp" {
 			t.Error("peer-noicp (PeerICP=false) appeared in ring")
 			return
 		}

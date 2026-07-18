@@ -22,7 +22,6 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/shlande/mediaworker/internal/storage/metadata"
 	"github.com/shlande/mediaworker/internal/node/backhaul"
 	"github.com/shlande/mediaworker/internal/storage/accountpool"
 	"github.com/shlande/mediaworker/internal/storage/auth"
@@ -32,6 +31,7 @@ import (
 	"github.com/shlande/mediaworker/internal/storage/driver/baidu"
 	"github.com/shlande/mediaworker/internal/storage/driver/onedrive"
 	"github.com/shlande/mediaworker/internal/storage/linkpool"
+	"github.com/shlande/mediaworker/internal/storage/metadata"
 	"github.com/shlande/mediaworker/internal/types"
 )
 
@@ -45,14 +45,14 @@ import (
 // host. Panics if a request reaches a host with no registered mock server —
 // tests must set up mocks for every host the driver contacts.
 type mockRoundTripper struct {
-	mu       sync.Mutex
-	hosts    map[string]*httptest.Server // original host → mock server
+	mu               sync.Mutex
+	hosts            map[string]*httptest.Server // original host → mock server
 	defaultTransport http.RoundTripper
 }
 
 func newMockRoundTripper() *mockRoundTripper {
 	return &mockRoundTripper{
-		hosts:   make(map[string]*httptest.Server),
+		hosts:            make(map[string]*httptest.Server),
 		defaultTransport: http.DefaultTransport,
 	}
 }
@@ -187,15 +187,15 @@ func (m *mockMetaClient) GetAccountHealths(_ context.Context, _ types.Vendor) ([
 
 // storageTestHarness holds all the components needed for a storage distribution test.
 type storageTestHarness struct {
-	rt     *mockRoundTripper
-	httpc  *http.Client
+	rt       *mockRoundTripper
+	httpc    *http.Client
 	tokenMgr *auth.TokenManager
-	meta   *mockMetaClient
-	pool   *accountpool.AccountPool
-	linkP  *linkpool.LinkPool
-	dp     *dataplane.LocalDataPlane
-	cache  *memBlobCache
-	bm     *backhaul.BackhaulManager
+	meta     *mockMetaClient
+	pool     *accountpool.AccountPool
+	linkP    *linkpool.LinkPool
+	dp       *dataplane.LocalDataPlane
+	cache    *memBlobCache
+	bm       *backhaul.BackhaulManager
 }
 
 // addAccount creates an Account with the given driver and registers it in the pool.
@@ -441,9 +441,9 @@ func TestStorageDistribution_Baidu(t *testing.T) {
 							{
 								"fs_id":    1234567890,
 								"filename": "test_blob.dat",
-								"size":   len(mockBlobData),
-								"isdir":  0,
-								"dlink":  dlink,
+								"size":     len(mockBlobData),
+								"isdir":    0,
+								"dlink":    dlink,
 							},
 						},
 					})
@@ -639,10 +639,10 @@ func TestStorageDistribution_OneDrive(t *testing.T) {
 		if path == "/v1.0/me/drive/items/"+mockFileID {
 			dlURL := "http://" + r.Host + "/cdn-onedrive/" + mockFileID
 			json.NewEncoder(w).Encode(map[string]interface{}{
-				"id":                              mockFileID,
-				"name":                            "test_blob.dat",
-				"size":                            len(mockBlobData),
-				"@microsoft.graph.downloadUrl":    dlURL,
+				"id":                           mockFileID,
+				"name":                         "test_blob.dat",
+				"size":                         len(mockBlobData),
+				"@microsoft.graph.downloadUrl": dlURL,
 			})
 			return
 		}

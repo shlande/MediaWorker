@@ -89,7 +89,7 @@ func (dp *LocalDataPlane) FetchBlobLocal(ctx interface{}, blobHash string) (io.R
 	var location *types.BlobLocation
 	for i := range locations {
 		expectedKey := string(acct.Vendor) + ":" + acct.AccountID
-	if locations[i].BackendID == expectedKey {
+		if locations[i].BackendID == expectedKey {
 			location = &locations[i]
 			break
 		}

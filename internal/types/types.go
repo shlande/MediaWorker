@@ -29,12 +29,12 @@ type CapabilityJWT string
 
 // NodeJWTPayload is the decoded payload inside a CapabilityJWT.
 type NodeJWTPayload struct {
-	NodeID          string           `json:"node_id"`
-	PeerID          PeerId           `json:"peer_id"`
-	Capabilities    NodeCapabilities `json:"capabilities"`
-	BandwidthQuota  int64            `json:"bandwidth_quota"`
-	Iat             int64            `json:"iat"`
-	Exp             int64            `json:"exp"`
+	NodeID         string           `json:"node_id"`
+	PeerID         PeerId           `json:"peer_id"`
+	Capabilities   NodeCapabilities `json:"capabilities"`
+	BandwidthQuota int64            `json:"bandwidth_quota"`
+	Iat            int64            `json:"iat"`
+	Exp            int64            `json:"exp"`
 }
 
 // ─── 私有网络准入 (PSK) ───
@@ -179,8 +179,8 @@ type BlobDescriptor struct {
 // business semantics (role / sort_order / business_meta) that the content-addressed
 // blob table deliberately does not store.
 type BlobRole struct {
-	BlobHash     string         `json:"blob_hash"`               // references BlobDescriptor.BlobHash
-	Role         string         `json:"role"`                    // "init" | "media" | "original" | "thumbnail" | "page" | ...
+	BlobHash     string         `json:"blob_hash"` // references BlobDescriptor.BlobHash
+	Role         string         `json:"role"`      // "init" | "media" | "original" | "thumbnail" | "page" | ...
 	SortOrder    int            `json:"sort_order"`
 	BusinessMeta map[string]any `json:"business_meta,omitempty"` // {"representation_id":"720p","bitrate":1500000} etc.
 }
@@ -213,10 +213,10 @@ type NodeSpaceInfo struct {
 
 // NodePinPlan is the pin plan for a single node (produced by the strategy layer).
 type NodePinPlan struct {
-	NodeID      string   `json:"node_id"`
-	ContentID   string   `json:"content_id"`
-	PinBlobs    []string `json:"pin_blobs"`
-	UnpinBlobs  []string `json:"unpin_blobs"`
+	NodeID     string   `json:"node_id"`
+	ContentID  string   `json:"content_id"`
+	PinBlobs   []string `json:"pin_blobs"`
+	UnpinBlobs []string `json:"unpin_blobs"`
 }
 
 // PinPlan is a pin instruction delivered to a node (control plane → node).

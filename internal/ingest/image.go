@@ -82,8 +82,8 @@ func (i *ImageIngester) Process(ctx context.Context, input io.Reader, opts Proce
 		Size:     origSize,
 	}}
 	roles := []types.BlobRole{{
-		BlobHash: origHash,
-		Role:     "original",
+		BlobHash:  origHash,
+		Role:      "original",
 		SortOrder: 0,
 		BusinessMeta: map[string]any{
 			"width":  width,

@@ -161,8 +161,8 @@ func TestBorrowableLimiter_compilesToLimiterInterface(t *testing.T) {
 
 // mockBroadcaster records broadcast calls for test assertions.
 type mockBroadcaster struct {
-	mu       sync.Mutex
-	events   []broadcastCall
+	mu     sync.Mutex
+	events []broadcastCall
 }
 
 type broadcastCall struct {

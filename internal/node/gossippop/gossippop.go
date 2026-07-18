@@ -33,9 +33,9 @@ import (
 	"log/slog"
 	"time"
 
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
-	pubsub "github.com/libp2p/go-libp2p-pubsub"
 )
 
 // NewGossipSub creates a GossipSub service with peer scoring enabled.
@@ -83,7 +83,6 @@ func NewGossipSub(ctx context.Context, h host.Host, scorer *PeerScorer) (*pubsub
 			params.HeartbeatInterval = 300 * time.Millisecond
 			return params
 		}()),
-
 	)
 	if err != nil {
 		return nil, fmt.Errorf("new gossipsub: %w", err)

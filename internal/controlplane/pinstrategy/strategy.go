@@ -31,6 +31,7 @@ type PinStrategy interface {
 //     > 50 GB free → pin up to 5 media blobs
 //     > 20 GB free → pin up to 2 media blobs
 //     ≤ 20 GB free → only init blobs
+//
 // Sorting uses BlobRole.SortOrder (not BlobDescriptor.SortOrder).
 type DashPinStrategy struct{}
 

@@ -12,20 +12,20 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
 	"github.com/shlande/mediaworker/internal/config"
-	"github.com/shlande/mediaworker/internal/storage/metadata"
 	"github.com/shlande/mediaworker/internal/ingest"
 	"github.com/shlande/mediaworker/internal/ingest/syncpub"
 	"github.com/shlande/mediaworker/internal/node/monitor"
 	"github.com/shlande/mediaworker/internal/storage/accountpool"
+	"github.com/shlande/mediaworker/internal/storage/metadata"
 )
 
 func main() {
@@ -325,4 +325,3 @@ func (a *ingestAccountPoolAdapter) SelectKForUpload(ctx context.Context, k int) 
 	}
 	return out, nil
 }
-

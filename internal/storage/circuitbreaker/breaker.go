@@ -42,14 +42,14 @@ var nowFn = time.Now
 // Closed, HalfOpen, and Open. It tracks consecutive BanSignalError failures and
 // transitions between states accordingly.
 type CircuitBreaker struct {
-	mu            sync.Mutex
-	state         int
-	failureCount  int
-	lastFailTime  time.Time
-	openUntil     time.Time
+	mu               sync.Mutex
+	state            int
+	failureCount     int
+	lastFailTime     time.Time
+	openUntil        time.Time
 	failureThreshold int
-	openDuration  time.Duration
-accountID string
+	openDuration     time.Duration
+	accountID        string
 }
 
 // New creates a CircuitBreaker for the given account. threshold is the number

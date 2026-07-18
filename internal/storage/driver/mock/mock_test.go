@@ -14,10 +14,10 @@ import (
 
 func TestMockDriver_PutGetGetLink_roundtrip(t *testing.T) {
 	tests := []struct {
-		name   string
-		vendor types.Vendor
-		ctor   func(MockDriverConfig) *MockDriver
-		ipBound bool
+		name      string
+		vendor    types.Vendor
+		ctor      func(MockDriverConfig) *MockDriver
+		ipBound   bool
 		urlPrefix string
 	}{
 		{"115", types.Vendor115, func(cfg MockDriverConfig) *MockDriver { return NewMockDriver(types.Vendor115, cfg) }, false, "https://mock.example.com/115/"},
@@ -191,9 +191,9 @@ func TestMockDriver_HealthCheck_configurable(t *testing.T) {
 
 func TestMockDriver_RateLimitConfig_defaults(t *testing.T) {
 	tests := []struct {
-		name   string
-		ctor   func(MockDriverConfig) *MockDriver
-		want   types.RateLimitConfig
+		name string
+		ctor func(MockDriverConfig) *MockDriver
+		want types.RateLimitConfig
 	}{
 		{"115", func(cfg MockDriverConfig) *MockDriver { return NewMockDriver(types.Vendor115, cfg) }, types.RateLimitConfig{QPS: 1.0, Burst: 2, ConcurrentLimit: 5}},
 		{"quark", NewQuarkDriver, types.RateLimitConfig{QPS: 0.5, Burst: 1, ConcurrentLimit: 5}},

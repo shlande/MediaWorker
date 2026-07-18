@@ -7,14 +7,14 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p"
+	kaddht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/discovery"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/pnet"
-	"github.com/libp2p/go-libp2p/p2p/host/peerstore/pstoremem"
-	kaddht "github.com/libp2p/go-libp2p-kad-dht"
 	discoveryrouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
+	"github.com/libp2p/go-libp2p/p2p/host/peerstore/pstoremem"
 
 	"github.com/shlande/mediaworker/internal/config"
 	"github.com/shlande/mediaworker/internal/shared/identity"

@@ -7,10 +7,10 @@ import (
 	"log/slog"
 	"time"
 
+	kaddht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/discovery"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
-	kaddht "github.com/libp2p/go-libp2p-kad-dht"
 	discoveryrouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
 
 	"github.com/shlande/mediaworker/internal/node/peerstore"

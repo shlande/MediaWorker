@@ -23,7 +23,7 @@ type LocalPopularity struct {
 // request counts over 1 minute. The sum of all buckets gives the per-blob
 // popularity over the last 6 minutes.
 type SlidingWindow struct {
-	Buckets    [6]int64  // 6 x 1 min = 6 min sliding window
+	Buckets    [6]int64 // 6 x 1 min = 6 min sliding window
 	CurIdx     int
 	LastRotate time.Time
 }

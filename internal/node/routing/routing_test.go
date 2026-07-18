@@ -190,13 +190,13 @@ func (m *mockPrimaryChecker) IsPrimary(blobHash string) bool {
 
 // mockBackhaul implements BlobRouterBackhaul for tests.
 type mockBackhaul struct {
-	mu          sync.Mutex
-	l4Called    int
-	noL4Called  int
-	l4Data      []byte
-	noL4Data    []byte
-	l4Err       error
-	noL4Err     error
+	mu         sync.Mutex
+	l4Called   int
+	noL4Called int
+	l4Data     []byte
+	noL4Data   []byte
+	l4Err      error
+	noL4Err    error
 }
 
 func (m *mockBackhaul) HandleBlobL4(_ context.Context, w io.Writer, _ string) error {

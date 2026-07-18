@@ -29,12 +29,12 @@ type Broadcaster interface {
 // AccountInfo is the full representation of a cloud-drive account as stored
 // in the cloud_account table and carried in snapshot/incremental events.
 type AccountInfo struct {
-	Vendor         types.Vendor         `json:"vendor"`
-	AccountID      string               `json:"account_id"`
-	Credential     types.Credential     `json:"credential"`
-	RateLimitCfg   types.RateLimitConfig `json:"rate_limit_config"`
-	VendorProfile  types.VendorProfile  `json:"vendor_profile"`
-	Enabled        bool                 `json:"enabled"`
+	Vendor        types.Vendor          `json:"vendor"`
+	AccountID     string                `json:"account_id"`
+	Credential    types.Credential      `json:"credential"`
+	RateLimitCfg  types.RateLimitConfig `json:"rate_limit_config"`
+	VendorProfile types.VendorProfile   `json:"vendor_profile"`
+	Enabled       bool                  `json:"enabled"`
 }
 
 // AccountRegistry is the PG-backed account master database. It exposes CRUD

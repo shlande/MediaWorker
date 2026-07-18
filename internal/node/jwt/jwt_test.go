@@ -20,8 +20,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/pnet"
 
-	cpjwt "github.com/shlande/mediaworker/internal/controlplane/jwt"
 	"github.com/shlande/mediaworker/internal/config"
+	cpjwt "github.com/shlande/mediaworker/internal/controlplane/jwt"
 	sjwt "github.com/shlande/mediaworker/internal/shared/jwt"
 	"github.com/shlande/mediaworker/internal/types"
 )
@@ -412,11 +412,11 @@ func TestJWT_Dedup(t *testing.T) {
 	verifier := NewJWTVerifier(cpPub)
 
 	type dedupTestCase struct {
-		name          string
-		existingExp   int64
-		newExpOffset  time.Duration // relative to now
-		wantAccepted  bool
-		wantError     error
+		name         string
+		existingExp  int64
+		newExpOffset time.Duration // relative to now
+		wantAccepted bool
+		wantError    error
 	}
 
 	now := time.Now()

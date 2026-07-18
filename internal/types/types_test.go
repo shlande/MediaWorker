@@ -123,10 +123,10 @@ func TestNodeStatusReport_roundtrip(t *testing.T) {
 		NodeID: "node_l4_01",
 		PeerID: PeerId("12D3KooWExample"),
 		Capabilities: NodeCapabilities{
-			Edge:           false,
-			L4Backhaul:     true,
-			RelayProvider:  true,
-			PeerICP:        false,
+			Edge:          false,
+			L4Backhaul:    true,
+			RelayProvider: true,
+			PeerICP:       false,
 		},
 		PrefixSpace: PartitionStatus{
 			TotalBytes: 500000000000,
@@ -169,10 +169,10 @@ func TestPeerId_type(t *testing.T) {
 
 func TestNodeCapabilities_roundtrip(t *testing.T) {
 	roundtrip(t, NodeCapabilities{
-		Edge:           true,
-		L4Backhaul:     false,
-		RelayProvider:  true,
-		PeerICP:        false,
+		Edge:          true,
+		L4Backhaul:    false,
+		RelayProvider: true,
+		PeerICP:       false,
 	})
 }
 
@@ -197,10 +197,10 @@ func TestNodeJWTPayload_roundtrip(t *testing.T) {
 		NodeID: "node_l4_01",
 		PeerID: PeerId("12D3KooWJWTExample"),
 		Capabilities: NodeCapabilities{
-			Edge:           true,
-			L4Backhaul:     false,
-			RelayProvider:  false,
-			PeerICP:        true,
+			Edge:          true,
+			L4Backhaul:    false,
+			RelayProvider: false,
+			PeerICP:       true,
 		},
 		BandwidthQuota: 104857600,
 		Iat:            1700000000,
@@ -251,10 +251,10 @@ func TestPeerStoreEntry_roundtrip(t *testing.T) {
 		Addrs:  []string{"/ip4/10.0.0.1/tcp/4001"},
 		JWT:    CapabilityJWT("eyJhbGciOiJFZERTQSJ9.payload.sig"),
 		Capabilities: NodeCapabilities{
-			Edge:           true,
-			L4Backhaul:     false,
-			RelayProvider:  false,
-			PeerICP:        true,
+			Edge:          true,
+			L4Backhaul:    false,
+			RelayProvider: false,
+			PeerICP:       true,
 		},
 		JWTExp:   1700003600,
 		LastSeen: 1700003000,

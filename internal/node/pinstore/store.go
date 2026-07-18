@@ -35,11 +35,11 @@ const keyPrefix = "p:"
 
 // PinEntry is the persisted pin record for a single blob.
 type PinEntry struct {
-	BlobHash string    `json:"blob_hash"`
-	BlobType string    `json:"blob_type"`
-	Role     string    `json:"role"`
-	Size     int64     `json:"size"`
-	PinnedAt time.Time `json:"pinned_at"`
+	BlobHash string      `json:"blob_hash"`
+	BlobType string      `json:"blob_type"`
+	Role     string      `json:"role"`
+	Size     int64       `json:"size"`
+	PinnedAt time.Time   `json:"pinned_at"`
 	Ready    atomic.Bool `json:"-"`
 }
 

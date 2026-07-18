@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/shlande/mediaworker/internal/config"
-	cpmetrics "github.com/shlande/mediaworker/internal/controlplane/metrics"
 	"github.com/shlande/mediaworker/internal/controlplane/jwt"
+	cpmetrics "github.com/shlande/mediaworker/internal/controlplane/metrics"
 	sjwt "github.com/shlande/mediaworker/internal/shared/jwt"
 	"github.com/shlande/mediaworker/internal/types"
 )

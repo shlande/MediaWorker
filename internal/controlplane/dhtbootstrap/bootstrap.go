@@ -11,13 +11,13 @@ import (
 	"time"
 
 	"github.com/libp2p/go-libp2p"
+	kaddht "github.com/libp2p/go-libp2p-kad-dht"
 	"github.com/libp2p/go-libp2p/core/discovery"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/pnet"
-	"github.com/libp2p/go-libp2p/p2p/host/peerstore/pstoremem"
-	kaddht "github.com/libp2p/go-libp2p-kad-dht"
 	discoveryrouting "github.com/libp2p/go-libp2p/p2p/discovery/routing"
+	"github.com/libp2p/go-libp2p/p2p/host/peerstore/pstoremem"
 
 	"github.com/shlande/mediaworker/internal/config"
 	"github.com/shlande/mediaworker/internal/shared/identity"
@@ -29,10 +29,10 @@ import (
 // ModeServer DHT, advertises itself in the private namespace, and runs a
 // re-advertise heartbeat loop.
 type BootstrapHost struct {
-	host        host.Host
-	dht         *kaddht.IpfsDHT
-	routingDisc *discoveryrouting.RoutingDiscovery
-	namespace   string
+	host           host.Host
+	dht            *kaddht.IpfsDHT
+	routingDisc    *discoveryrouting.RoutingDiscovery
+	namespace      string
 	advertiseTTL   time.Duration
 	advertiseIntv  time.Duration
 	bootstrapAddrs []peer.AddrInfo

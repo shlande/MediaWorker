@@ -27,9 +27,9 @@ type JWTClient struct {
 	httpClient   *http.Client
 	capabilities types.NodeCapabilities
 
-	mu            sync.RWMutex
-	currentJWT    types.CapabilityJWT
-	degraded      bool
+	mu         sync.RWMutex
+	currentJWT types.CapabilityJWT
+	degraded   bool
 
 	// retryBackoff controls the base delay for retries. Tests can set this to a
 	// small value to speed up retry exhaustion.

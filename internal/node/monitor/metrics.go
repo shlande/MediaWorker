@@ -16,18 +16,18 @@ import (
 // port). Edge instruments keep the edge_* prefix so existing alert rules are
 // untouched; new cross-service counters use cp_* and ingest_* prefixes.
 type Metrics struct {
-	CacheHitTotal     *prometheus.CounterVec   // labels: cache_type ("prefix"|"warm"|"cold")
-	CacheRequestTotal *prometheus.CounterVec   // labels: cache_type
-	TTFBSeconds       *prometheus.HistogramVec // labels: cache_type
-	PeerHitTotal      prometheus.Counter       // sibling ICP hit
-	PeerRequestTotal  prometheus.Counter       // sibling ICP request
-	BackhaulBandwidth prometheus.Gauge         // current backhaul bandwidth bytes
-	BackhaulCapacity  prometheus.Gauge         // backhaul capacity bytes
-	PeerScore         *prometheus.GaugeVec     // labels: peer_id
-	JWTRefreshSuccess prometheus.Counter       // JWT refresh success count
-	JWTRefreshLastTS  prometheus.Gauge         // last successful JWT refresh timestamp (unix)
-	RelayBytesTotal   prometheus.Counter       // relay forwarded bytes
-	BackhaulBytesTotal prometheus.Counter      // backhaul bytes total
+	CacheHitTotal      *prometheus.CounterVec   // labels: cache_type ("prefix"|"warm"|"cold")
+	CacheRequestTotal  *prometheus.CounterVec   // labels: cache_type
+	TTFBSeconds        *prometheus.HistogramVec // labels: cache_type
+	PeerHitTotal       prometheus.Counter       // sibling ICP hit
+	PeerRequestTotal   prometheus.Counter       // sibling ICP request
+	BackhaulBandwidth  prometheus.Gauge         // current backhaul bandwidth bytes
+	BackhaulCapacity   prometheus.Gauge         // backhaul capacity bytes
+	PeerScore          *prometheus.GaugeVec     // labels: peer_id
+	JWTRefreshSuccess  prometheus.Counter       // JWT refresh success count
+	JWTRefreshLastTS   prometheus.Gauge         // last successful JWT refresh timestamp (unix)
+	RelayBytesTotal    prometheus.Counter       // relay forwarded bytes
+	BackhaulBytesTotal prometheus.Counter       // backhaul bytes total
 
 	// T20 — edge-node JWT acquisition. JWTRefreshSuccess already covers the
 	// refresh success side; the counters below add the failure side and the
@@ -324,11 +324,11 @@ func (m *Metrics) RecordCPJWTIssued(outcome string) {
 // CPJWT outcome label values — keep in sync with the error classes returned
 // by JWTService.HandleJWTRequest (service.go:88+).
 const (
-	CPJWTOutcomeSuccess        = "success"
-	CPJWTOutcomeInvalidPeerID  = "invalid_peerid"
-	CPJWTOutcomeInvalidSig     = "invalid_signature"
-	CPJWTOutcomeRateLimited    = "rate_limited"
-	CPJWTOutcomeInternalError  = "internal_error"
+	CPJWTOutcomeSuccess       = "success"
+	CPJWTOutcomeInvalidPeerID = "invalid_peerid"
+	CPJWTOutcomeInvalidSig    = "invalid_signature"
+	CPJWTOutcomeRateLimited   = "rate_limited"
+	CPJWTOutcomeInternalError = "internal_error"
 )
 
 // RecordCPContentIngestedReceived increments the control-plane

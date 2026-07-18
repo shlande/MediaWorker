@@ -60,10 +60,10 @@ func ResolveNATOptions(autoNAT, autoRelay, dcutr *bool) NATOptions {
 		return NATOptions{Explicit: false}
 	}
 	return NATOptions{
-		Explicit: true,
-		AutoNAT:  autoNAT == nil || *autoNAT,
+		Explicit:  true,
+		AutoNAT:   autoNAT == nil || *autoNAT,
 		AutoRelay: autoRelay == nil || *autoRelay,
-		DCUtR:    dcutr == nil || *dcutr,
+		DCUtR:     dcutr == nil || *dcutr,
 	}
 }
 
@@ -228,6 +228,6 @@ func (n *connNotifee) Disconnected(_ network.Network, conn network.Conn) {
 	n.logger.Info("peer disconnected", "peer", remote.ShortString())
 }
 
-func (n *connNotifee) ListenOpen(_ network.Network, _ multiaddr.Multiaddr)    {}
-func (n *connNotifee) ListenClose(_ network.Network, _ multiaddr.Multiaddr)   {}
-func (n *connNotifee) Listen(_ network.Network, _ multiaddr.Multiaddr)        {}
+func (n *connNotifee) ListenOpen(_ network.Network, _ multiaddr.Multiaddr)  {}
+func (n *connNotifee) ListenClose(_ network.Network, _ multiaddr.Multiaddr) {}
+func (n *connNotifee) Listen(_ network.Network, _ multiaddr.Multiaddr)      {}

@@ -14,10 +14,10 @@ import (
 func (d *BaiduDriver) precreate(ctx context.Context, token, path string, size int64, blockList string) (string, error) {
 	u := d.baseURL + "/rest/2.0/xpan/file?method=precreate&access_token=" + token
 	form := map[string]string{
-		"path":       path,
-		"size":       strconv.FormatInt(size, 10),
-		"isdir":      "0",
-		"block_list": blockList,
+		"path":        path,
+		"size":        strconv.FormatInt(size, 10),
+		"isdir":       "0",
+		"block_list":  blockList,
 		"content_md5": "",
 	}
 

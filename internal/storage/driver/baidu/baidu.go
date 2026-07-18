@@ -25,13 +25,13 @@ const (
 
 // BaiduDriver is the Baidu Netdisk implementation of driver.Driver.
 type BaiduDriver struct {
-	tokenMgr     *auth.TokenManager
-	accountID    string
-	clientID     string
-	clientSecret string
-	baseURL      string
+	tokenMgr      *auth.TokenManager
+	accountID     string
+	clientID      string
+	clientSecret  string
+	baseURL       string
 	uploadBaseURL string
-	httpc        *http.Client
+	httpc         *http.Client
 }
 
 // NewBaiduDriver creates a new BaiduDriver. If httpc is nil, http.DefaultClient is used.
@@ -44,11 +44,11 @@ func NewBaiduDriver(
 		httpc = http.DefaultClient
 	}
 	return &BaiduDriver{
-		tokenMgr:     tokenMgr,
-		accountID:    accountID,
-		clientID:     clientID,
-		clientSecret: clientSecret,
-		baseURL:      defaultBaseURL,
+		tokenMgr:      tokenMgr,
+		accountID:     accountID,
+		clientID:      clientID,
+		clientSecret:  clientSecret,
+		baseURL:       defaultBaseURL,
 		uploadBaseURL: baiduUploadHost,
 		httpc:         httpc,
 	}

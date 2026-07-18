@@ -89,7 +89,7 @@ type AccountHealth struct {
 // ─── Compile-time interface checks ─────────────────────────────────────────────
 
 var (
-	_ BlobStoreClient  = (*PGMetadataClient)(nil)
+	_ BlobStoreClient   = (*PGMetadataClient)(nil)
 	_ ContentMetaClient = (*PGMetadataClient)(nil)
 	_ PopularityClient  = (*PGMetadataClient)(nil)
 	_ MetadataWriter    = (*PGMetadataClient)(nil)
@@ -174,8 +174,8 @@ func (c *PGMetadataClient) GetContentBlobs(ctx context.Context, contentID string
 	)
 	for rows.Next() {
 		var (
-			bd types.BlobDescriptor
-			br types.BlobRole
+			bd              types.BlobDescriptor
+			br              types.BlobRole
 			businessMetaRaw []byte
 		)
 		if err := rows.Scan(&bd.BlobHash, &bd.BlobType, &bd.Size,

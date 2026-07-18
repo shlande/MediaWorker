@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shlande/mediaworker/internal/storage/metadata"
 	"github.com/shlande/mediaworker/internal/node/pinstore"
 	nodepin "github.com/shlande/mediaworker/internal/node/pinstrategy"
+	"github.com/shlande/mediaworker/internal/storage/metadata"
 	"github.com/shlande/mediaworker/internal/types"
 )
 
@@ -421,8 +421,8 @@ func TestPinOrchestrator_OnContentIngested(t *testing.T) {
 func TestPinOrchestrator_OnContentIngested_PreheatsCache(t *testing.T) {
 	// Given: an orchestrator with empty blob cache.
 	cm := &mockContentMetaClient{
-		contentBlobs:    makeTestBlobs(),
-		contentRoles:    makeTestRoles(),
+		contentBlobs: makeTestBlobs(),
+		contentRoles: makeTestRoles(),
 	}
 	pop := &mockPopularityClient{}
 	bcast := &mockBroadcaster{}

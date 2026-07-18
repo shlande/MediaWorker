@@ -41,7 +41,7 @@ type IngestControlPlaneConfig struct {
 
 // IngestHTTPConfig controls the HTTP server.
 type IngestHTTPConfig struct {
-	Listen         string `yaml:"listen"`          // e.g. ":8080"
+	Listen         string `yaml:"listen"`           // e.g. ":8080"
 	MaxUploadBytes int64  `yaml:"max_upload_bytes"` // max upload body size (default: 10 GiB)
 }
 

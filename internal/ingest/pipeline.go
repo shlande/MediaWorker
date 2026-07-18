@@ -16,11 +16,11 @@ import (
 // blobs redundantly, writes metadata in a single transaction, and publishes
 // the ingestion event asynchronously.
 type IngestPipeline struct {
-	ingesters   map[string]ContentIngester
-	backends    BackendPool
-	blobStore   BlobStoreWriter
-	eventBus    EventPublisher
-	redundancy  int
+	ingesters  map[string]ContentIngester
+	backends   BackendPool
+	blobStore  BlobStoreWriter
+	eventBus   EventPublisher
+	redundancy int
 }
 
 // NewIngestPipeline returns a ready-to-use IngestPipeline.

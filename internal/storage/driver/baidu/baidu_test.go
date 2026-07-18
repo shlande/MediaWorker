@@ -71,13 +71,13 @@ func newBaiduDriverWithBaseURL(
 		httpc = http.DefaultClient
 	}
 	return &BaiduDriver{
-		tokenMgr:    tokenMgr,
-		accountID:   accountID,
-		clientID:    clientID,
-		clientSecret: clientSecret,
-		baseURL:     baseURL,
+		tokenMgr:      tokenMgr,
+		accountID:     accountID,
+		clientID:      clientID,
+		clientSecret:  clientSecret,
+		baseURL:       baseURL,
 		uploadBaseURL: baseURL, // Use same mock server for uploads in tests
-		httpc:       httpc,
+		httpc:         httpc,
 	}
 }
 
@@ -339,7 +339,7 @@ func TestBaiduDriver_GetLink_returnsIPBoundLink(t *testing.T) {
 	if link.ExpireAt.Before(time.Now()) {
 		t.Error("GetLink.ExpireAt should be in the future")
 	}
-	if link.ExpireAt.After(time.Now().Add(20*time.Minute)) {
+	if link.ExpireAt.After(time.Now().Add(20 * time.Minute)) {
 		t.Error("GetLink.ExpireAt should be ~15 minutes from now")
 	}
 }

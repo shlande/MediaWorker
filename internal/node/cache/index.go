@@ -9,13 +9,13 @@ import (
 // IndexEntry represents a blob's cached state in the memory index (L1).
 // It tracks location, access pattern, and latency to inform eviction decisions.
 type IndexEntry struct {
-	Location           string    // "prefix" | "warm" | "cold"
+	Location           string // "prefix" | "warm" | "cold"
 	Size               int64
 	LRUStamp           time.Time
 	PopScore           float64
 	LastFetchLatencyMs int64
-	Bitrate            int    // bps, used for eviction sorting in WarmCache
-	IsPrefix           bool   // pinned by PinStore; skip in eviction
+	Bitrate            int  // bps, used for eviction sorting in WarmCache
+	IsPrefix           bool // pinned by PinStore; skip in eviction
 }
 
 // ErrNotFound is returned when a blob hash is not in the index.

@@ -19,10 +19,10 @@ import (
 
 // Config is the root configuration for a MediaWorker edge node.
 type Config struct {
-	Node       NodeConfig       `yaml:"node"`
-	Edge       EdgeConfig       `yaml:"edge"`
-	Access     AccessConfig     `yaml:"access_layer"`
-	HashRing   HashRingConfig   `yaml:"hash_ring"`
+	Node     NodeConfig     `yaml:"node"`
+	Edge     EdgeConfig     `yaml:"edge"`
+	Access   AccessConfig   `yaml:"access_layer"`
+	HashRing HashRingConfig `yaml:"hash_ring"`
 }
 
 // ---------------------------------------------------------------------------
@@ -32,10 +32,10 @@ type Config struct {
 // NodeConfig groups identity, declared capabilities, libp2p host settings and
 // JWT service connection parameters.
 type NodeConfig struct {
-	Identity             IdentityConfig        `yaml:"identity"`
-	DeclaredCapabilities CapabilitiesConfig    `yaml:"declared_capabilities"`
-	Libp2p               Libp2pConfig          `yaml:"libp2p"`
-	JWTService           JWTServiceConfig      `yaml:"jwt_service"`
+	Identity             IdentityConfig     `yaml:"identity"`
+	DeclaredCapabilities CapabilitiesConfig `yaml:"declared_capabilities"`
+	Libp2p               Libp2pConfig       `yaml:"libp2p"`
+	JWTService           JWTServiceConfig   `yaml:"jwt_service"`
 }
 
 // IdentityConfig holds the path to the node's Ed25519 private key.
@@ -58,12 +58,12 @@ type CapabilitiesConfig struct {
 
 // Libp2pConfig groups all libp2p-related settings.
 type Libp2pConfig struct {
-	Listen         []string              `yaml:"listen"`
-	PrivateNetwork PrivateNetworkConfig  `yaml:"private_network"`
-	DHT            DHTConfig             `yaml:"dht"`
-	NATTraversal   NATTraversalConfig    `yaml:"nat_traversal"`
-	PeerStore      PeerStoreConfig       `yaml:"peer_store"`
-	ConnGater      ConnGaterConfig       `yaml:"conn_gater"`
+	Listen         []string             `yaml:"listen"`
+	PrivateNetwork PrivateNetworkConfig `yaml:"private_network"`
+	DHT            DHTConfig            `yaml:"dht"`
+	NATTraversal   NATTraversalConfig   `yaml:"nat_traversal"`
+	PeerStore      PeerStoreConfig      `yaml:"peer_store"`
+	ConnGater      ConnGaterConfig      `yaml:"conn_gater"`
 }
 
 // PrivateNetworkConfig controls PSK-based private network admission.
@@ -79,11 +79,11 @@ type PrivateNetworkConfig struct {
 // to 5m when empty/zero/invalid; ParsedAdvertiseTTL stays zero when the
 // string is empty (caller decides fallback) but is parsed when set.
 type DHTConfig struct {
-	Mode              string        `yaml:"mode"`                        // "server" or "client"
-	Namespace         string        `yaml:"namespace"`                   // fixed lookup namespace
-	AdvertiseTTL      string        `yaml:"advertise_ttl"`               // e.g. "15m"
-	AdvertiseInterval string        `yaml:"advertise_interval"`          // e.g. "5m"
-	BootstrapPeers    []string      `yaml:"bootstrap_peers"`             // multiaddr + /p2p/ suffix
+	Mode              string   `yaml:"mode"`               // "server" or "client"
+	Namespace         string   `yaml:"namespace"`          // fixed lookup namespace
+	AdvertiseTTL      string   `yaml:"advertise_ttl"`      // e.g. "15m"
+	AdvertiseInterval string   `yaml:"advertise_interval"` // e.g. "5m"
+	BootstrapPeers    []string `yaml:"bootstrap_peers"`    // multiaddr + /p2p/ suffix
 
 	// Parsed fields populated by LoadConfig; safe to read after LoadConfig returns.
 	ParsedAdvertiseTTL      time.Duration `yaml:"-"`
@@ -140,8 +140,8 @@ func (n NATTraversalConfig) DCUtREffective() bool {
 // GCInterval is a string duration parsed into ParsedGCInterval by LoadConfig
 // (default 1h when empty/zero/invalid).
 type PeerStoreConfig struct {
-	Path       string        `yaml:"path"`
-	GCInterval string        `yaml:"gc_interval"` // e.g. "1h"
+	Path       string `yaml:"path"`
+	GCInterval string `yaml:"gc_interval"` // e.g. "1h"
 
 	// Parsed field populated by LoadConfig; safe to read after LoadConfig returns.
 	ParsedGCInterval time.Duration `yaml:"-"`
@@ -149,8 +149,8 @@ type PeerStoreConfig struct {
 
 // ConnGaterConfig controls connection gating limits.
 type ConnGaterConfig struct {
-	IPRateLimit    int      `yaml:"ip_rate_limit"`
-	CIDRAllowlist  []string `yaml:"cidr_allowlist"`
+	IPRateLimit   int      `yaml:"ip_rate_limit"`
+	CIDRAllowlist []string `yaml:"cidr_allowlist"`
 }
 
 // ---------------------------------------------------------------------------

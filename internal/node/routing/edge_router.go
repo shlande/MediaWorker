@@ -46,11 +46,11 @@ type PrefixCache interface {
 // primary, it delegates to the BlobRouterBackhaul, choosing the L4 or
 // non-L4 code path based on this node's capabilities.
 type EdgeRouter struct {
-	hashRing   PrimaryChecker
-	backhaul   BlobRouterBackhaul
-	selfPeer   types.PeerId
-	isL4       bool
-	host       host.Host
+	hashRing    PrimaryChecker
+	backhaul    BlobRouterBackhaul
+	selfPeer    types.PeerId
+	isL4        bool
+	host        host.Host
 	prefixCache PrefixCache
 }
 

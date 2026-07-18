@@ -18,13 +18,13 @@ type AuditLog struct {
 
 // AuditEntry is a single audit record for JWT issuance.
 type AuditEntry struct {
-	Event          string        `json:"event"`
-	PeerID         types.PeerId  `json:"peer_id"`
-	RemoteIP       string        `json:"remote_ip"`
-	L4Whitelisted  bool          `json:"l4_whitelisted"`
-	BandwidthQuota int64         `json:"bandwidth_quota"`
-	Exp            int64          `json:"exp"`
-	Timestamp      time.Time     `json:"timestamp"`
+	Event          string       `json:"event"`
+	PeerID         types.PeerId `json:"peer_id"`
+	RemoteIP       string       `json:"remote_ip"`
+	L4Whitelisted  bool         `json:"l4_whitelisted"`
+	BandwidthQuota int64        `json:"bandwidth_quota"`
+	Exp            int64        `json:"exp"`
+	Timestamp      time.Time    `json:"timestamp"`
 }
 
 // NewAuditLog creates an AuditLog that writes JSON lines to w. If w is nil,

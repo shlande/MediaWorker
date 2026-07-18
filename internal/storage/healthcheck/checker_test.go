@@ -241,6 +241,6 @@ func TestHealthCheck_ContextCancellation(t *testing.T) {
 
 	hc := NewHealthChecker(pool, time.Hour, &mockWriter{})
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel() // already cancelled
+	cancel()      // already cancelled
 	hc.Start(ctx) // should return immediately without panic
 }

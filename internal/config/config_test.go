@@ -554,9 +554,9 @@ control_plane:
 
 func TestLoadConfig_JWTRefreshDurationDefaults(t *testing.T) {
 	cases := []struct {
-		name      string
-		yamlBody  string
-		wantInter time.Duration
+		name       string
+		yamlBody   string
+		wantInter  time.Duration
 		wantBefore time.Duration
 	}{
 		{

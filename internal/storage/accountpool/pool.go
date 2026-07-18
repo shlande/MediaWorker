@@ -47,14 +47,14 @@ type BlobLocationClient interface {
 // Account represents a single cloud drive account with its driver, rate limiter,
 // circuit breaker, health state and vendor weight for load-aware selection.
 type Account struct {
-	Vendor     types.Vendor
-	AccountID  string
-	Credential types.Credential
-	Driver     driver.Driver
-	Limiter    Limiter
-	Concurrent atomic.Int32
-	CB         CircuitBreaker
-	Health     atomic.Value // stores types.HealthState
+	Vendor       types.Vendor
+	AccountID    string
+	Credential   types.Credential
+	Driver       driver.Driver
+	Limiter      Limiter
+	Concurrent   atomic.Int32
+	CB           CircuitBreaker
+	Health       atomic.Value // stores types.HealthState
 	VendorWeight float64
 }
 
@@ -237,9 +237,9 @@ func (ap *AccountPool) UploadBlob(ctx context.Context, blobHash string, data []b
 
 	g, gctx := errgroup.WithContext(ctx)
 	type result struct {
-		idx  int
-		fi   *types.FileInfo
-		err  error
+		idx int
+		fi  *types.FileInfo
+		err error
 	}
 	results := make([]result, len(accounts))
 

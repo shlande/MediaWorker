@@ -2,8 +2,8 @@
 // the control-plane and edge-node binaries do not cross-link into each other's
 // role-specific packages. This enforces the architectural boundary:
 //
-//   cmd/control-plane  →  internal/controlplane/*  (no internal/node/*)
-//   cmd/edge-node      →  internal/node/*          (no internal/controlplane/*)
+//	cmd/control-plane  →  internal/controlplane/*  (no internal/node/*)
+//	cmd/edge-node      →  internal/node/*          (no internal/controlplane/*)
 //
 // These tests use `go list -deps` to enumerate the full transitive dependency
 // closure of each binary and assert that forbidden packages are absent.

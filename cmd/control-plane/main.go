@@ -14,14 +14,14 @@ import (
 	"time"
 
 	"github.com/shlande/mediaworker/internal/config"
-	cpmetrics "github.com/shlande/mediaworker/internal/controlplane/metrics"
 	cpdht "github.com/shlande/mediaworker/internal/controlplane/dhtbootstrap"
 	cpjwt "github.com/shlande/mediaworker/internal/controlplane/jwt"
 	"github.com/shlande/mediaworker/internal/controlplane/locationsvc"
-	"github.com/shlande/mediaworker/internal/storage/metadata"
+	cpmetrics "github.com/shlande/mediaworker/internal/controlplane/metrics"
 	"github.com/shlande/mediaworker/internal/controlplane/pinstrategy"
 	"github.com/shlande/mediaworker/internal/controlplane/syncbroadcaster"
 	"github.com/shlande/mediaworker/internal/shared/identity"
+	"github.com/shlande/mediaworker/internal/storage/metadata"
 	"github.com/shlande/mediaworker/internal/types"
 )
 
@@ -195,10 +195,10 @@ func run(configPath string) error {
 		for evt := range ingestCh {
 			var evtData types.ContentIngestedEvent
 			if err := json.Unmarshal(evt.Payload, &evtData); err != nil {
-			slog.Warn("failed to decode CONTENT_INGESTED", "err", err)
-			continue
-		}
-		po.OnContentIngested(evtData)
+				slog.Warn("failed to decode CONTENT_INGESTED", "err", err)
+				continue
+			}
+			po.OnContentIngested(evtData)
 		}
 	}()
 

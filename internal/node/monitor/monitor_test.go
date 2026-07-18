@@ -308,5 +308,3 @@ func findHistogram(t *testing.T, families []*dto.MetricFamily, name, labelValue 
 	}
 	return m.Histogram
 }
-
-

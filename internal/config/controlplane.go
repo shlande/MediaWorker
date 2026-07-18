@@ -15,13 +15,13 @@ import (
 
 // ControlPlaneConfig is the root configuration for a MediaWorker control plane.
 type ControlPlaneConfig struct {
-	JWT             JWTHTTPConfig             `yaml:"jwt_http"`
-	JWTPolicy       JWTPolicyConfig           `yaml:"jwt_policy"`
-	L4Whitelist     L4WhitelistConfig         `yaml:"l4_whitelist"`
-	PinOrchestrator PinOrchestratorConfig     `yaml:"pin_orchestrator"`
-	DHTBootstrap    DHTBootstrapConfig        `yaml:"dht_bootstrap"`
-	SyncBroadcaster SyncBroadcasterConfig     `yaml:"sync_broadcaster"`
-	Metadata        MetadataConfig            `yaml:"metadata"`
+	JWT             JWTHTTPConfig              `yaml:"jwt_http"`
+	JWTPolicy       JWTPolicyConfig            `yaml:"jwt_policy"`
+	L4Whitelist     L4WhitelistConfig          `yaml:"l4_whitelist"`
+	PinOrchestrator PinOrchestratorConfig      `yaml:"pin_orchestrator"`
+	DHTBootstrap    DHTBootstrapConfig         `yaml:"dht_bootstrap"`
+	SyncBroadcaster SyncBroadcasterConfig      `yaml:"sync_broadcaster"`
+	Metadata        MetadataConfig             `yaml:"metadata"`
 	Identity        ControlPlaneIdentityConfig `yaml:"identity"`
 }
 
@@ -133,7 +133,7 @@ type DHTBootstrapConfig struct {
 
 // SyncBroadcasterConfig controls the GossipSub-based command broadcast channel.
 type SyncBroadcasterConfig struct {
-	ProtocolID string `yaml:"protocol_id"` // pub/sub topic / protocol identifier
+	ProtocolID  string `yaml:"protocol_id"`  // pub/sub topic / protocol identifier
 	SendTimeout string `yaml:"send_timeout"` // per-message send timeout, e.g. "30s"
 }
 
@@ -159,6 +159,7 @@ type MetadataConfig struct {
 // private keys:
 //   - PrivKeyPath: JWT signing key (PEM PKCS#8 format, crypto/ed25519).
 //   - Libp2pPrivKeyPath: libp2p identity key (protobuf format, libp2p crypto.PrivKey).
+//
 // These formats are incompatible; keeping them in separate files avoids
 // a startup crash on first run.
 type ControlPlaneIdentityConfig struct {

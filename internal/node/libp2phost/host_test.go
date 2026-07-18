@@ -33,7 +33,7 @@ func genTestPSK(t *testing.T) types.PSK {
 
 // hostAddr returns the first listen address of the host as a full p2p multiaddr
 // string suitable for peer.AddrInfoFromString.
-func hostAddr(t *testing.T, h interface{ ID() peer.ID } ) string {
+func hostAddr(t *testing.T, h interface{ ID() peer.ID }) string {
 	t.Helper()
 	// Use ID() + loopback for test connection; tests run on localhost.
 	return "/ip4/127.0.0.1/tcp/0/p2p/" + h.ID().String()

@@ -15,8 +15,8 @@ import (
 	"github.com/multiformats/go-multiaddr"
 	"golang.org/x/time/rate"
 
-	cpjwt "github.com/shlande/mediaworker/internal/controlplane/jwt"
 	"github.com/shlande/mediaworker/internal/config"
+	cpjwt "github.com/shlande/mediaworker/internal/controlplane/jwt"
 	"github.com/shlande/mediaworker/internal/node/jwt"
 	"github.com/shlande/mediaworker/internal/node/peerstore"
 	sharedid "github.com/shlande/mediaworker/internal/shared/identity"
@@ -39,23 +39,23 @@ type dummyConn struct {
 	remotePeer peer.ID
 }
 
-func (d dummyConn) Close() error                                       { return nil }
-func (d dummyConn) CloseWithError(network.ConnErrorCode) error         { return nil }
-func (d dummyConn) LocalPeer() peer.ID                                 { return "" }
-func (d dummyConn) LocalPrivateKey() crypto.PrivKey                    { return nil }
-func (d dummyConn) RemotePeer() peer.ID                                { return d.remotePeer }
-func (d dummyConn) RemotePublicKey() crypto.PubKey                     { return nil }
-func (d dummyConn) ConnState() network.ConnectionState                 { return network.ConnectionState{} }
-func (d dummyConn) Stat() network.ConnStats                            { return network.ConnStats{} }
-func (d dummyConn) ID() string                                         { return "dummy" }
-func (d dummyConn) NewStream(context.Context) (network.Stream, error)  { return nil, nil }
-func (d dummyConn) GetStreams() []network.Stream                       { return nil }
-func (d dummyConn) IsClosed() bool                                     { return false }
-func (d dummyConn) Scope() network.ConnScope                           { return nil }
-func (d dummyConn) ConnMultiaddrs() network.ConnMultiaddrs             { return nil }
-func (d dummyConn) LocalMultiaddr() multiaddr.Multiaddr                { return nil }
-func (d dummyConn) RemoteMultiaddr() multiaddr.Multiaddr               { return nil }
-func (d dummyConn) As(_ any) bool                                      { return false }
+func (d dummyConn) Close() error                                      { return nil }
+func (d dummyConn) CloseWithError(network.ConnErrorCode) error        { return nil }
+func (d dummyConn) LocalPeer() peer.ID                                { return "" }
+func (d dummyConn) LocalPrivateKey() crypto.PrivKey                   { return nil }
+func (d dummyConn) RemotePeer() peer.ID                               { return d.remotePeer }
+func (d dummyConn) RemotePublicKey() crypto.PubKey                    { return nil }
+func (d dummyConn) ConnState() network.ConnectionState                { return network.ConnectionState{} }
+func (d dummyConn) Stat() network.ConnStats                           { return network.ConnStats{} }
+func (d dummyConn) ID() string                                        { return "dummy" }
+func (d dummyConn) NewStream(context.Context) (network.Stream, error) { return nil, nil }
+func (d dummyConn) GetStreams() []network.Stream                      { return nil }
+func (d dummyConn) IsClosed() bool                                    { return false }
+func (d dummyConn) Scope() network.ConnScope                          { return nil }
+func (d dummyConn) ConnMultiaddrs() network.ConnMultiaddrs            { return nil }
+func (d dummyConn) LocalMultiaddr() multiaddr.Multiaddr               { return nil }
+func (d dummyConn) RemoteMultiaddr() multiaddr.Multiaddr              { return nil }
+func (d dummyConn) As(_ any) bool                                     { return false }
 
 // newTestStore creates a PeerEntryStore backed by a temp BadgerDB directory.
 func newTestStore(t *testing.T) *peerstore.PeerEntryStore {

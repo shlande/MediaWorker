@@ -8,8 +8,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/libp2p/go-libp2p/core/peer"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
+	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/shlande/mediaworker/internal/types"
 )
@@ -23,18 +23,18 @@ const PopularityTopic = "edge-popularity-v1"
 // 30 seconds. It carries a snapshot of the local sliding-window counters,
 // signed with the node's Ed25519 private key.
 type PopularityUpdate struct {
-	PeerID    types.PeerId `json:"peer_id"`
-	Timestamp int64        `json:"timestamp"`
+	PeerID    types.PeerId     `json:"peer_id"`
+	Timestamp int64            `json:"timestamp"`
 	Counts    map[string]int64 `json:"counts"`
-	Sig       []byte       `json:"sig"`
+	Sig       []byte           `json:"sig"`
 }
 
 // payloadForSigning returns the JSON bytes of the update fields that are
 // covered by the Ed25519 signature (PeerID, Timestamp, Counts).
 func (u *PopularityUpdate) payloadForSigning() ([]byte, error) {
 	return json.Marshal(struct {
-		PeerID    types.PeerId   `json:"peer_id"`
-		Timestamp int64          `json:"timestamp"`
+		PeerID    types.PeerId     `json:"peer_id"`
+		Timestamp int64            `json:"timestamp"`
 		Counts    map[string]int64 `json:"counts"`
 	}{
 		PeerID:    u.PeerID,

@@ -19,13 +19,12 @@ import (
 	"testing"
 	"time"
 
+	kaddht "github.com/libp2p/go-libp2p-kad-dht"
+	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
-	kaddht "github.com/libp2p/go-libp2p-kad-dht"
-	pubsub "github.com/libp2p/go-libp2p-pubsub"
 
-	"github.com/shlande/mediaworker/internal/storage/metadata"
 	"github.com/shlande/mediaworker/internal/controlplane/pinstrategy"
 	"github.com/shlande/mediaworker/internal/node/backhaul"
 	"github.com/shlande/mediaworker/internal/node/cache"
@@ -38,6 +37,7 @@ import (
 	"github.com/shlande/mediaworker/internal/node/peerstore"
 	"github.com/shlande/mediaworker/internal/node/pinstore"
 	sharedid "github.com/shlande/mediaworker/internal/shared/identity"
+	"github.com/shlande/mediaworker/internal/storage/metadata"
 	"github.com/shlande/mediaworker/internal/types"
 )
 
@@ -94,8 +94,8 @@ type clusterNode struct {
 
 // clusterOptions control which subsystems are created for each node.
 type clusterOptions struct {
-	psk        types.PSK
-	nodeCount  int
+	psk             types.PSK
+	nodeCount       int
 	enableGossipSub bool
 	enableDHT       bool
 	enableICP       bool
@@ -931,14 +931,14 @@ func TestIntegration_HashRing(t *testing.T) {
 	bothPeers := []types.PeerId{pidA, pidB}
 	for _, pid := range bothPeers {
 		_ = nodeA.peerStore.Put(pid, types.PeerStoreEntry{
-			PeerID: pid,
+			PeerID:       pid,
 			Capabilities: types.NodeCapabilities{PeerICP: true},
-			LastSeen: now,
+			LastSeen:     now,
 		})
 		_ = nodeB.peerStore.Put(pid, types.PeerStoreEntry{
-			PeerID: pid,
+			PeerID:       pid,
 			Capabilities: types.NodeCapabilities{PeerICP: true},
-			LastSeen: now,
+			LastSeen:     now,
 		})
 	}
 
@@ -995,14 +995,14 @@ func TestIntegration_Degraded(t *testing.T) {
 	// Register both peers.
 	now := time.Now().Unix()
 	_ = nodeA.peerStore.Put(pidB, types.PeerStoreEntry{
-		PeerID: pidB,
+		PeerID:       pidB,
 		Capabilities: types.NodeCapabilities{PeerICP: true},
-		LastSeen: now,
+		LastSeen:     now,
 	})
 	_ = nodeA.peerStore.Put(pidA, types.PeerStoreEntry{
-		PeerID: pidA,
+		PeerID:       pidA,
 		Capabilities: types.NodeCapabilities{PeerICP: true},
-		LastSeen: now,
+		LastSeen:     now,
 	})
 
 	ringA := hashring.NewHashRing(pidA, nodeA.peerStore, 150,
