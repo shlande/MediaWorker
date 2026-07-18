@@ -20,6 +20,7 @@
 6. [部署拓扑](#6-部署拓扑)
 7. [技术选型清单](#7-技术选型清单)
 8. [容量规划概要](#8-容量规划概要)
+9. [目标态 vs 实现态（target state vs implemented state）](#9-目标态-vs-实现态target-state-vs-implemented-state)
 
 ---
 
@@ -481,8 +482,8 @@ prefix cache 由 PinOrchestrator 动态管理（详见 [`distribution/README.md 
 | 调度层失联（节点发现入口不可达） | **5-10min**（节点用 PeerStore 缓存继续运行；恢复后重新连接 DHT bootstrap + 续签 JWT） | 新节点无法加入；已有节点继续服务，JWT 过期前未续签则降级 | [distribution §12.5](distribution/README.md) |
 | 整区域 L4 全挂（相关故障） | **不覆盖** | 该区域非 L4 节点回源全部失败，客户端 503 | [§1.3](#13-sla-边界与不可恢复场景) |
 | 控制面挂（凭证/PinPlan 下发） | **5-10min**（凭证本地 TTL 5min 内正常运转，PinPlan 停止但已有 pin 保持） | 新凭证轮换暂停，已有凭证继续工作 | [storage §10](storage/README.md) |
-| PG 主库挂 | **< 2min**（Patroni 自动 failover） | 写暂不可用，读走 Redis 不受影响 | [storage §10](storage/README.md) |
-| Redis 挂 | **< 30s**（哨兵自动 failover） | 部分读回退 PG 从库，延迟 +10ms | [storage §10](storage/README.md) |
+| PG 主库挂 | **< 2min**（Patroni 自动 failover）—— **目标态**：写暂不可用，读走 Redis 不受影响。**实现态**：Redis 缓存未采纳（见 §9.1），读路径实际退化为控制面 `GET /v1/blob-locations/{hash}` + PG 从库直查，PG 主库挂时读仍可用（从库承担），仅写（新入库）暂不可用 | 写暂不可用，读延迟可能 +10ms（从库直查无 Redis 缓存） | [storage §10](storage/README.md) |
+| Redis 挂 | **< 30s**（哨兵自动 failover）—— **目标态**。**实现态**：Redis 未采纳（见 §9.1），不存在 Redis 故障场景；该行仅在重新评估采纳 Redis 后生效 | 部分读回退 PG 从库，延迟 +10ms | [storage §10](storage/README.md) |
 
 ---
 
@@ -607,3 +608,50 @@ prefix cache 由 PinOrchestrator 动态管理（详见 [`distribution/README.md 
 - **合计 ~14 GB**，4C16G PG 实例 + 8G Redis 即可
 
 详细容量计算见原架构文档 §13。
+
+---
+
+## 9. 目标态 vs 实现态（target state vs implemented state）
+
+> **本节为文档-代码偏差校准表**。本系统处于 P0 评审修复阶段，多份架构文档以"目标态"形式存在，部分能力尚未落地。下表逐域列出当前实现态偏差，避免阅读者把设计稿当成已实现能力。所有标注均与 `review-remediation` plan T1-T20 完成状态对齐（截至 commit a4abcfb）。
+
+### 9.1 逐域偏差表
+
+| 领域 | 目标态（设计稿） | 实现态（当前代码） | 偏差说明 / 交叉引用 |
+|------|------------------|--------------------|---------------------|
+| **元数据缓存层 Redis** | Redis 7+ 哨兵模式作为热数据缓存（content 元数据、content_blob 编排、blob 位置、账号健康），见 [`storage/README.md §9.3`](storage/README.md) | **未采纳**：本波次（T9/T10）改为控制面查询 API `GET /v1/blob-locations/{hash}` + 能力 JWT 认证（`internal/controlplane/locationsvc`），edge 侧用 `HTTPLocationClient` 拉位置。Redis 缓存读路径**未实现**。 | T9/T10 决策（plan line 28：Redis 未采纳，user decision）。Redis 设计稿保留作为目标态资产，未来若 P95 读延迟仍不达标可重新评估。 |
+| **PolicyController（链路策略控制域）** | 独立领域 `PolicyController`：Backend 抽象（CloudDriveBackend / LocalStorageBackend）、用量采集、回源权重（ReadWeight）+ 上传权重（UploadWeight）通过 SyncBroadcaster 下发，见 [`policy/README.md`](policy/README.md) | **未实现**：`docs/policy/` 为纯目标态设计，零代码实现。当前回源账号选择走 `AccountPool.SelectForRead` 的静态 `VendorProfile` 权重；上传选择走 `SelectKForUpload`（健康 + 跨厂商 + 负载最低），未接入动态权重。 | `docs/policy/README.md` 顶部已加 banner 标注目标态。 |
+| **Cold Cache / FetchSegment / NAT traversal 配置字段** | `edge.cold_cache`、`access_layer.fetch_segment_server/client`、`access_layer.data_plane.subscribe_control/drivers/rate_limit_local`、`access_layer.vendor_profiles/rate_limits/health_check/cloud_accounts`、`metadata.popularity_query_interval` 等 | **配置已删除**：T17 移除全部未消费字段（`internal/config/config.go` + `controlplane.go`），保留旧 YAML 加载时只发 `slog.Warn("deprecated config key ignored")`。NAT 穿透栈（AutoRelay/AutoNAT/DCUtR）实际在 libp2p host 装配，配置项已不在 `edge:` 树下。 | 详见 T17 完成记录 + 各领域文档对应章节的"实现态偏差"批注。 |
+| **OTel 分布式追踪** | 目标态提及 Prometheus + Grafana + Loki，未明确 OTel SDK 接线计划 | **未实现**：T20 仅完成 `/metrics`（Prometheus）挂载于 3 个服务（control-plane / edge-node / ingest-worker）和关键路径插桩。OpenTelemetry trace SDK 未引入，跨服务 trace 上下文未传递。 | plan line 275 明确 deferred。 |
+| **L4 数据面 edge main 装配** | L4 节点 edge main 装配 `LocalDataPlane`（含 `HTTPLocationClient` + `func() string { return string(jwtClient.CurrentJWT()) }` 闭包），完整回源路径 FetchBlobLocal 可用 | **未接线**：T10 交付了 `HTTPLocationClient` 与 `JWTClient.CurrentJWT()`，但 edge main 中 `LocalDataPlane` 仍为 `nil`（plan line 185）。L4 回源路径目前走 `BackhaulManager.HandleBlobL4` 的 ICP 兜底逻辑，不走本地数据面直连网盘。 | plan line 185 标注为后续工作。 |
+
+### 9.2 风险登记册：已识别但暂缓处置的风险项
+
+以下 3 项风险在评审中识别，但当前部署边界（内网 / 节点数 ≤5 / 仅运营者访问）下可接受，暂缓处置。每项均标注**再评估触发条件**，触发后须重新进入修复队列。
+
+#### 风险 #1：ingest-worker 无准入控制
+
+- **风险描述**：`POST /ingest/{content_type}` 接受最大 10 GB multipart 上传，无任何认证或准入控制（T5 仅做了 `max_upload_bytes` 配置化 + work_dir 空闲空间启动检查，未加认证层）。
+- **当前接受理由**：端口仅在内网暴露，未对外。
+- **再评估触发条件**：
+  1. 该端口暴露给外网之前；
+  2. 测试环境晋升（test env promotion）前；
+  3. 多租户接入需求出现时。
+
+#### 风险 #2：控制面单点（JWT 签发 × 1h TTL）
+
+- **风险描述**：JWT 签发器为控制面单实例，TTL 1h。控制面宕机 > 1h 时全网 JWT 陆续过期，节点退出 `Edge` capability 导致哈希环收缩，最终引发网络自解散（已缓解到 5-10min RTO，但 >1h 仍会全网降级，见 [`distribution/README.md §12.5`](distribution/README.md)）。
+- **当前接受理由**：当前节点数 ≤5，控制面单实例主备切换 5min 内可恢复。
+- **再评估触发条件**：
+  1. 生产化（productionization）前；
+  2. 节点数 > 5；
+  3. 多区域部署需求出现时。
+
+#### 风险 #5：客户端 `/blob/{hash}` 无访问控制
+
+- **风险描述**：`GET /blob/{hash}` 直接返回段字节流，无 signed URL / anti-leech / token 校验。任何拿到 blob_hash 的客户端均可下载（hash 本身是不可枚举的 SHA-256，但仍是访问控制缺口）。
+- **当前接受理由**：当前仅运营者内网访问，无终端用户。
+- **再评估触发条件**：
+  1. 对终端用户开放访问之前；
+  2. 内容版权保护需求出现时；
+  3. 公网暴露 edge 节点 HTTP 端口之前。

@@ -230,6 +230,14 @@ func (s *ControlPlane) autoPromoteRelayProvider(ctx context.Context) {
 
 ### 2.3 节点配置文件
 
+> **实现态偏差**：下方两个 YAML 示例中以下字段在 `review-remediation` T17 中已从 `EdgeConfig` 删除（`internal/config/config.go`），旧 YAML 仍可加载但只发 `slog.Warn("deprecated config key ignored")`：
+> - `edge.cold_cache`（Cold Cache 未实现，无 on-disk cold-store）
+> - `access_layer.fetch_segment_server` / `fetch_segment_client`（FetchSegment gRPC 服务端未在 edge-node 装配，兄弟节点拉取走 libp2p stream `/edge/blob/get/1.0.0` 协议，由 ICP 层承担，见 [`README.md §4.2`](README.md#42-非-l4-节点代理拉取)）
+> - `access_layer.data_plane.subscribe_control` / `drivers` / `rate_limit_local`（数据面装配实际由 libp2p host 装配阶段 + JWT capability 驱动，Driver 实例化由 `accountpool.BuildFromConfig` 在 ingest-worker / janitor 侧完成；edge-node 当前 `LocalDataPlane=nil`，详见主文档 [`README.md §9.1`](../README.md#9-目标态-vs-实现态target-state-vs-implemented-state)）
+> - `access_layer.vendor_profiles` / `rate_limits` / `health_check` / `cloud_accounts`（这些字段的活副本在 `IngestStorageConfig` / `JanitorConfig.Storage` 下，由 `storage:` 树消费，不在 `access_layer:` 下）
+>
+> 下方 YAML 保留为目标态参考。当前生产 YAML 模板见 `configs/node-l4.yaml` / `configs/node-edge.yaml`（T17 已同步移除上述字段并加入 `# key: removed in T17 (deprecated)` 注释）。
+
 ```yaml
 # node-config.yaml -- 启用 L4 回源能力的自建节点示例
 node:

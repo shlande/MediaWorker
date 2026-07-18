@@ -134,6 +134,8 @@ Ingest 域的执行体是 **Ingest Worker**——独立部署角色，承担 Con
 
 ### 2.2 配置示例
 
+> **实现态偏差**：下方 `access_layer.data_plane.subscribe_control` / `drivers` / `rate_limit_local` 三个字段在 `review-remediation` T17 中已从 `EdgeConfig` 删除（`internal/config/config.go`），旧 YAML 仍可加载但只发 `slog.Warn("deprecated config key ignored")`。ingest-worker 实际的数据面装配走 `IngestStorageConfig`（`storage:` 树下的 `cloud_accounts` / `vendor_profiles` / `rate_limits`，由 `accountpool.BuildFromConfig` 消费），不在 `access_layer:` 树下。`FetchSegment gRPC 服务端` 字段（`access_layer.fetch_segment_server` / `fetch_segment_client`）同样在 T17 中删除——ingest-worker 不暴露 FetchSegment 服务，回源由分发域 L4 节点承担。详见主文档 [`README.md §9.1`](../README.md#9-目标态-vs-实现态target-state-vs-implemented-state) 的逐域偏差表。
+
 ```yaml
 # node-config.yaml -- Ingest Worker 示例
 node:

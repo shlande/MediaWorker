@@ -161,6 +161,10 @@ type PartitionStatus struct {
 
 ## 2. 缓存层结构
 
+> **实现态偏差**：图中 `L4: Cold Cache (可选)` 为目标态设计稿，**配置字段 `edge.cold_cache` 在 T17 中已删除**（`internal/config/config.go`），无 on-disk cold-store 装配，当前仅 prefix cache (NVMe) + warm cache (SSD) 两层。Cold cache 设计保留作为目标态资产，未来长尾视频回源压力上升时可重新评估。详见主文档 [`README.md §9.1`](../README.md#9-目标态-vs-实现态target-state-vs-implemented-state) 的逐域偏差表。
+>
+> 另：本文件中提及的 `access_layer.fetch_segment_server` / `fetch_segment_client` / `data_plane.subscribe_control` / `data_plane.drivers` / `data_plane.rate_limit_local` / `access_layer.vendor_profiles` / `rate_limits` / `health_check` / `cloud_accounts` 等字段，均已在 T17 中从 `EdgeConfig` 删除（旧 YAML 加载时发 `slog.Warn("deprecated config key ignored")`）。NAT 穿透栈（AutoRelay/AutoNAT/DCUtR）实际在 libp2p host 装配阶段完成，配置项不在 `edge:` 树下。节点配置示例见 [`network.md §2.3`](network.md#23-节点配置文件)，但其中部分 `access_layer.*` 字段同样为已删除的目标态字段，详见 network.md §2.3 批注。
+
 ```go
 // 节点基础结构 (L4 和非 L4 节点共用, 能力由 JWT payload 决定)
 type EdgeNode struct {

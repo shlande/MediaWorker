@@ -1,5 +1,7 @@
 # 链路策略控制 — 领域文档
 
+> **本文档为目标态设计，当前零代码实现**。PolicyController / Backend 抽象 / 用量采集 / 回源权重（ReadWeight）+ 上传权重（UploadWeight）下发链路**均未落地**。当前回源账号选择走 `AccountPool.SelectForRead` 的静态 `VendorProfile` 权重（见 [`storage/README.md §4`](../storage/README.md)）；上传选择走 `SelectKForUpload`（健康 + 跨厂商 + 负载最低），未接入 PolicyController 的动态权重。本文档作为目标态设计稿保留，待决策重新激活时再与代码对齐。详见主文档 [`README.md §9.1`](../README.md#9-目标态-vs-实现态target-state-vs-implemented-state) 的"目标态 vs 实现态"逐域偏差表。
+
 > 本文档覆盖**账号链路策略控制**：统一抽象网盘账号和本地持久存储为 Backend，根据用量指标动态计算回源权重和上传权重，通过 SyncBroadcaster 下发到 L2+L4 节点。
 >
 > 这是一个**独立领域**，横跨读路径（影响分发域的 SelectForRead）和写路径（影响 ingest 域的账号选择）。不属于 storage 域（storage 只管段文件存储和元数据记录），也不属于 distribution 域（distribution 只管缓存和分发）。

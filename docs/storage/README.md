@@ -1118,12 +1118,21 @@ message BlobLocation {
 
 ### 9.3 实现选型：PostgreSQL + Redis
 
+> **实现态偏差**：本节 Redis 读路径**未被采纳**。`review-remediation` T9/T10 决策（plan line 28：Redis 未采纳，user decision）将读路径改为**控制面查询 API `GET /v1/blob-locations/{hash}` + 能力 JWT 认证**：
+> - 控制面侧：`internal/controlplane/locationsvc.Handler` 挂载于 JWT HTTP server，校验 `Bearer <jwt>` + Edge capability 后查 PG `blob_location`，返回 `{"locations":[...]}`（200）或 404/401/403/503/500。
+> - edge 侧：`internal/storage/dataplane.HTTPLocationClient` 调用上述 API，5s 超时，单次请求无重试（plan line 189）。`JWTClient.CurrentJWT()` 提供当前 JWT 字符串。
+> - Redis 设计稿保留作为目标态资产（未来读 P95 仍不达标时可重新评估），但当前**无 Redis 部署、无哨兵、无读路径缓存层**。PostgreSQL 主从仍是元数据主存储 + 读扩展。
+>
+> §10.5 元数据服务 HA、§11.8 RTO 表中 PG/Redis 相关行同样受此偏差影响，详见对应章节批注。
+
 | 选型 | 理由 |
 |------|------|
 | **PostgreSQL 14+** 作为主存储 | 1) 事务保证 blob 位置写入原子性（一个 blob 的 K 个 location 必须一起提交）；2) JSONB 字段存 content.type_metadata 和 content_blob.business_meta（内容类型专属元数据，storage 域不解析，元数据模块解析）；3) 主从流复制做读扩展 + HA |
 | **Redis 7+** 作为热数据缓存 | 1) content 专属元数据缓存（TTL 1h），命中率 > 90%；2) content→blob 列表（含编排信息）缓存（TTL 30min，content 不可变可以设更长）；3) blob 位置缓存（TTL 30min，blob 不可变）；4) 账号健康状态缓存（30s 更新一次，实时性要求不高但热点读极高）；5) 哨兵模式自动故障转移 |
 
 ### 10.4 一致性策略
+
+> **实现态偏差**：本节 Redis 读路径**未被采纳**。当前读路径为：edge 侧 `HTTPLocationClient` 调用控制面 `GET /v1/blob-locations/{hash}`（能力 JWT 认证）→ 控制面 `locationsvc.Handler` 直查 PG `blob_location` 表 → 返回 JSON。**无 Redis 缓存层、无回填逻辑**。下方"读路径"和"账号健康状态"小节描述的 Redis 行为为目标态设计稿，Redis 未实际部署。详见 §9.3 批注。
 
 - **写路径（入库）**：`BEGIN → INSERT blob × N (去重) → INSERT blob_location × N×K → INSERT content → INSERT content_blob × N → COMMIT`。所有写入走 PostgreSQL 主库。详见 `ingest/README.md §4.1`。
 - **读路径**：Redis 缓存 → 未命中 → PostgreSQL 从库 → 回填 Redis。
@@ -1181,6 +1190,8 @@ message BlobLocation {
 
 ### 10.5 元数据服务 HA
 
+> **实现态偏差**：本节 Redis 哨兵架构为目标态设计稿，当前未部署 Redis（见 §9.3 批注）。实际行为：PG 主从流复制承担元数据读写；控制面 `locationsvc` 直查 PG 从库（无 Redis 缓存层）。`review-remediation` T9/T10 决策改为控制面查询 API，未来若读 P95 不达标可重新评估引入 Redis。
+
 ```
          ┌─────────┐  流复制  ┌─────────┐
   Write ─┤ PG 主库  ├─────────>┤ PG 从库  ├── Read
@@ -1223,6 +1234,10 @@ message BlobLocation {
 3. **边缘侧无感知**。边缘只发 `blob_hash` 请求到接入层，链接失效由接入层内部消化，边缘端永远不会收到 403 或过期链接错误。
 
 ### 11.8 容灾恢复时间目标（RTO）
+
+> **实现态偏差**：下表中 "PG 主库挂" / "Redis 挂" 两行的 RTO 描述为目标态。当前 Redis 未采纳（见 §9.3 批注），实际行为：
+> - "PG 主库挂"：读路径仍可用（控制面 `locationsvc` 走 PG 从库直查），仅写（新入库事务）不可用，与目标态一致但无 Redis 缓存兜底。
+> - "Redis 挂"：当前不适用——无 Redis 部署即无此故障场景。该行仅在未来重新评估采纳 Redis 后生效。
 
 | 故障场景 | RTO | 影响范围 |
 |---------|-----|---------|
