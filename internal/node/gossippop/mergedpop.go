@@ -132,6 +132,28 @@ func (mp *MergedPopularity) getVideoPopularity(blobHash string) float64 {
 	return entry.WeightedHeat
 }
 
+// Snapshot returns a copy of the merged popularity view containing only
+// entries whose TotalWeight >= MinTrustedWeight (the same trust threshold used
+// by getVideoPopularity). The returned map is safe for the caller to mutate.
+//
+// This is the bridge between the GossipSub-driven MergedPopularity and the
+// cache eviction PopSource: edge main wires a closure that converts this map
+// into []*cache.VideoMeta so that WarmCache.Evict can rank blobs by gossip
+// heat instead of falling back to PG.
+func (mp *MergedPopularity) Snapshot() map[string]float64 {
+	mp.mu.RLock()
+	defer mp.mu.RUnlock()
+
+	out := make(map[string]float64, len(mp.entries))
+	for hash, entry := range mp.entries {
+		if entry.TotalWeight < MinTrustedWeight {
+			continue
+		}
+		out[hash] = entry.WeightedHeat
+	}
+	return out
+}
+
 // ─── Publish helper ───
 
 // PublishPopularity is a periodic background goroutine that snapshots the
