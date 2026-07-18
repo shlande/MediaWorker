@@ -45,6 +45,7 @@ import (
 	"github.com/shlande/mediaworker/internal/node/routing"
 	nodesync "github.com/shlande/mediaworker/internal/node/syncbroadcaster"
 	"github.com/shlande/mediaworker/internal/shared/identity"
+	sjwt "github.com/shlande/mediaworker/internal/shared/jwt"
 	"github.com/shlande/mediaworker/internal/types"
 )
 
@@ -203,7 +204,12 @@ func main() {
 	// -------------------------------------------------------------------
 	// 11. JWT client — request initial capability JWT from control plane
 	// -------------------------------------------------------------------
-	jwtClient := nodejwt.NewJWTClient(edPriv, nodeIdentity.PeerID, cfg.Node.JWTService.Endpoint)
+	jwtClient := nodejwt.NewJWTClient(edPriv, nodeIdentity.PeerID, cfg.Node.JWTService.Endpoint, types.NodeCapabilities{
+		Edge:          cfg.Node.DeclaredCapabilities.Edge,
+		L4Backhaul:    cfg.Node.DeclaredCapabilities.L4Backhaul,
+		RelayProvider: cfg.Node.DeclaredCapabilities.RelayProvider,
+		PeerICP:       cfg.Node.DeclaredCapabilities.PeerICP,
+	})
 
 	jwtResp, err := jwtClient.RequestJWTWithRetry(rootCtx)
 	if err != nil {
@@ -211,6 +217,17 @@ func main() {
 	} else {
 		logger.Info("JWT obtained", "refresh_before", jwtResp.RefreshBefore)
 	}
+
+	// -------------------------------------------------------------------
+	// 11b. JWT refresh goroutine — periodically renew the capability JWT
+	// before it expires. On failure logs an Error and continues (does NOT
+	// panic/Fatal — consistent with §11 degraded-mode behaviour). The
+	// goroutine exits when rootCtx is cancelled (process shutdown).
+	// -------------------------------------------------------------------
+	go runJWTRefreshLoop(rootCtx, jwtClient, ed25519.PublicKey(cpPubKey),
+		cfg.Node.JWTService.ParsedRefreshInterval,
+		cfg.Node.JWTService.ParsedRefreshBeforeExpiry,
+		logger)
 
 	// -------------------------------------------------------------------
 	// 12. JWT refresh push handler (/edge/jwt-refresh/1.0.0)
@@ -582,4 +599,70 @@ func parseBootstrapAddrs(addrs []string) []peer.AddrInfo {
 		result = append(result, *ai)
 	}
 	return result
+}
+
+// runJWTRefreshLoop periodically re-requests a capability JWT from the control
+// plane. The next refresh fires at min(refreshInterval, exp-now-refreshBeforeExpiry):
+//   - refreshInterval: caller-configured steady cadence (e.g. 5m)
+//   - exp-now-refreshBeforeExpiry: time-to-expiry minus a safety margin so we
+//     renew before the CP TTL lapses; if the CP-issued JWT has a shorter TTL
+//     than the interval, we refresh sooner to avoid drift into an unauthenticated
+//     window.
+//
+// The CP-side RefreshBefore hint (jwtResp.RefreshBefore) is honoured indirectly
+// through refreshBeforeExpiry from the node config: the CP informs the node of
+// its desired lead time via the `refresh_before_expiry` YAML field, which the
+// operator is expected to align with the CP's `RefreshBeforeSeconds` policy.
+//
+// On request failure: logs at Error and continues the loop (NO panic/Fatal —
+// consistent with the initial-failure degraded mode). The goroutine exits when
+// ctx is cancelled (process shutdown via rootCtx).
+func runJWTRefreshLoop(
+	ctx context.Context,
+	jwtClient *nodejwt.JWTClient,
+	cpPubKey ed25519.PublicKey,
+	refreshInterval, refreshBeforeExpiry time.Duration,
+	logger *slog.Logger,
+) {
+	// Fallbacks: if config produced zero (e.g. loader path bypassed), use 5m.
+	if refreshInterval <= 0 {
+		refreshInterval = 5 * time.Minute
+	}
+	if refreshBeforeExpiry <= 0 {
+		refreshBeforeExpiry = 5 * time.Minute
+	}
+
+	for {
+		wait := refreshInterval
+
+		// If we have a cached JWT, refine the wait so we renew at
+		// exp-now-refreshBeforeExpiry (but never later than refreshInterval).
+		if jwt := jwtClient.CurrentJWT(); jwt != "" {
+			if payload, err := sjwt.VerifyJWTAnyPeerID(jwt, cpPubKey); err == nil {
+				exp := time.Unix(payload.Exp, 0)
+				remaining := time.Until(exp)
+				if remaining > refreshBeforeExpiry {
+					wait = remaining - refreshBeforeExpiry
+					if wait > refreshInterval {
+						wait = refreshInterval
+					}
+				} else {
+					// Already within the safety margin — refresh now.
+					wait = 0
+				}
+			}
+		}
+
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(wait):
+		}
+
+		if _, err := jwtClient.RequestJWT(ctx); err != nil {
+			logger.Error("jwt refresh request failed", "err", err)
+			continue
+		}
+		logger.Info("jwt refreshed")
+	}
 }
