@@ -322,7 +322,7 @@ func startDHTForNode(t *testing.T, ctx context.Context, node *clusterNode, opts 
 		}
 	}
 
-	disc := dht.NewEdgeDiscovery(node.host, node.peerStore, bootstrapAddrs, "test-ns", 60*time.Second, opts.dhtMode)
+	disc := dht.NewEdgeDiscovery(node.host, node.peerStore, bootstrapAddrs, "test-ns", 60*time.Second, 0, opts.dhtMode)
 	node.dhtDisc = disc
 
 	dhtCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
