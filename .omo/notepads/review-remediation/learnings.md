@@ -431,3 +431,50 @@ Created `internal/controlplane/metrics/` package (CP-resident) exposing only the
 - **`docs/distribution/network.md` 也在 5 文件之列**：plan 的 MUST DO 列了 "docs/distribution/README.md / network.md"，所以实际是 6 个文件。验收条件「5 files each contain annotation」覆盖到 network.md（5 hits）是 bonus，README.md (2 hits) 也满足。
 - **L4 dataplane nil 的批注双重覆盖**：在主文档 §9.1 列出"edge-node 当前 `LocalDataPlane=nil`"，同时 network.md §2.3 批注再次提及。两处指向同一事实（T10 交付 HTTPLocationClient 但 edge main 未接线，plan line 185），便于阅读者从任一入口都看到。
 - Evidence at `.omo/evidence/task-21-review-remediation.log` (50 lines). 全部 grep 验收通过。
+
+## T22 - api/*.md 刷新（逐行修正，Metis F15 清单）
+### What I did
+刷新 `api/` 目录全部 .md 文档以反映 T1-T20 落地后的实现态，并新增 janitor.md。零代码改动。
+
+逐文件清单：
+- `api/ingest-worker.md`：
+  - :73 事件流——原"LogPublisher 仅日志，SyncBroadcaster 属规划" → T8 `SyncPublisher` 经 `/edge/control/1.0.0` 直发 CP，启动 `CheckConnectivity` fail-closed。
+  - :75 冗余度——原"已知偏差：硬编码 K=2，未生效" → "已修复（T3）：由 `ingest.redundancy` 经 `NewIngestPipeline` 传入，<=0 规范化为 2"。
+  - :114-115 配置表——删除 ⚠️ 注记，标注生效路径（config → NewIngestPipeline → uploadAllBlobs）。
+  - :104 事件总线表行——原"当前为日志实现" → "生产 SyncPublisher（T8）；LogPublisher 仅测试降级"。
+  - §6 配置表——新增 T5 `http.max_upload_bytes`、T8 `control_plane.{multiaddr,priv_key_path}`、T16 `http.{read,write}_timeout`；新增环境变量 `LIBP2P_PSK`（T8 必填）；新增 HTTP 路由段（含 T20 `/metrics`）。
+  - 新增 §8 入库事件回路（T8）小节，含流程图与 fail-closed 约束说明。
+- `api/README.md`：
+  - §1 系统概览表——CP 端口加注"+ /metrics"；edge-node 加注"+ /metrics"；ingest-worker 加注"事件直发 CP（T8）"；新增 janitor 行（无 HTTP 端口）。
+  - §2.2 edge-node routing 行——原"⚠️ 未接入 main.go（规划功能）" → "T11 已挂 HTTP mux；scheduler.go 仍为模拟"。
+  - §2.3 ingest-worker——adapters 行改为"LogPublisher（保留供测试与降级）"，新增 syncpub/ 行（T8）。
+  - §3.1 HTTP 接口表——新增 control-plane GET /v1/blob-locations/{hash}（T9）+ 三服务 /metrics 行（T20）。
+  - §4 规划/未接线表——重写为 19 行对照表，逐项标注"已接线/已生效/已删除/已暴露"或"未实现/未接入"，每行带落地 todo（T11/T12/T8/T3/T20/T15/T17/T9/T10/T13/T14/T4/T5/T6/T7/T18/T16/T20-fix）。
+  - §5 详细文档导航——新增 janitor.md 入口。
+- `api/edge-node.md`：
+  - §2 HTTP API——原"仅暴露一个 HTTP 路由" → "三个路由：/blob/{hash}、/metrics（T20）、/healthz；由 EdgeRouter.HandleBlobRequest 统一分发（T11）"。
+  - §2 行为描述——非 L4 模式从"L4Fetcher 接口已预留但尚未实现" → "backhaulICPFetcher（T12）向主节点拉流并写回 warmCache"。
+  - §2 路由能力接线状态注记——重写为 T11/T12/T20/T15 已落地的说明。
+  - §2 新增 `GET /metrics` 小节（T20）。
+  - §4 回源数据流图——加入 EdgeRouter 分发层 + backhaulICPFetcher + warmCache 写回路径。
+  - §7 peer_store.gc_interval 行——原"未接线" → "已接线（T15）：StartValueLogGC 周期调 badger.RunValueLogGC(0.5)；默认 1h，零/负值 no-op"。
+  - §8 后台循环表——DHT heartbeat 改为 advertise_interval（T15）；新增 GossipSub 热度订阅（T18）、JWT 刷新（T7）、peerstore VLog GC（T15）三行。
+- `api/control-plane.md`：
+  - §2 引子——原"仅暴露一个 HTTP 路由" → "三个路由：/v1/node/jwt、/v1/blob-locations/{hash}（T9）、/metrics（T20）。复用同一 mux 与端口（plan line 176/275 硬约束）"。
+  - 新增 §2.2 `GET /v1/blob-locations/{hash}` 小节（T9）：含路径参数、Authorization Bearer JWT 头、处理流程 5 步、响应 200 JSON 形态、错误码表（200/400/401/403/404/500/503）、鉴权说明、注意事项（T10 客户端归一化、单次无重试、5s 默认超时、edge main 未装配）。
+  - 新增 §2.3 `GET /metrics` 小节（T20）：列出 cp_jwt_issued_total/cp_content_ingested_received_total/cp_pin_plan_dispatched_total 三计数器；注明位于 `internal/controlplane/metrics/`（T20-fix 恢复的隔离边界）。
+  - §5 配置表——`jwt_http.{read,write}_timeout` 注 T16；新增 `jwt_policy.*` 行（T6）；`pin_orchestrator.top_contents_limit` 注 T16；删除 `metadata.popularity_query_interval`（T17）；`sync_broadcaster.protocol_id` 默认值修正为 `/edge/control/1.0.0`（原文档误为 `/mediaworker/sync/0.1.0`）。
+- `api/janitor.md`（新增）：全新文档 §1-§7——职责、CLI 接口（端点/鉴权）、错误码（退出码 0/1）、配置项（11 行 + 两层 dry-run 门控说明）、内部契约、部署、安全考量。
+- `api/shared-types.md`：未修改（领域类型契约未变）。
+
+### Gotchas
+- **`api/` 全量 untracked**：`git status` 显示 `?? api/`——这是该目录首次入 git。`git diff --stat api/` 返回空（无 baseline 可 diff）。`git add api/` 将整个目录一次性入索引，commit 时所有 .md 文件作为新文件出现。这与"修改既有文件"的常规 git-master 流程不同——本次 commit 实质上是首次追踪这些文件，但内容上仍按"修复偏差 + 新增小节"对待，commit message 沿用 plan 给定的 `docs(api): refresh stale deviation notes and document new endpoints`。
+- **历史偏差记录保留而非删除（plan line 293）**：原 `ingest-worker.md:75` 的"已知偏差：冗余度…未生效"未直接删除，改为"**已修复（T3）**：冗余度由 ingest.redundancy 控制…"——保留历史信息 + 标注修复版本。`README.md §4` 表保留全部原项，新增"落地 todo"列做对照而非删除"未落地"行。这与 T21 的"批注而非删除"风格一致。
+- **`grep` 验收的"零误导性命中"语义**：plan line 296 说"`grep -n "未生效|仅日志|硬编码" api/` 零误导性命中"。最终 grep 仅 1 处命中（`ingest-worker.md:75` "调用点不再硬编码"——修复说明文本，描述已修复状态）。这不算"误导性"——它是修复注记的一部分，删除会让读者不知道改了什么。其他历史性命中（`未接`/`规划`/`未实现`）均位于真未落地项（scheduler.go、IngestOrchestrator、edge LocalDataPlane 装配）的描述中，非误导。
+- **`sync_broadcaster.protocol_id` 默认值修正**：原文档说默认 `/mediaworker/sync/0.1.0`，但 T16 learnings 明确写 `ControlProtocol = "/edge/control/1.0.0"`（与 §3.2 表中 `/edge/control/1.0.0` 一致）。`/mediaworker/sync/0.1.0` 是个错误（可能是早期 GossipSub 协议名残留）。修正为 `/edge/control/1.0.0`，与代码事实一致。
+- **`metadata.popularity_query_interval` 删除**：T17 已删除该字段（同步查询已满足当前规模，无后台 poll）。`deprecatedControlPlaneKeys` 会发 `slog.Warn("deprecated config key ignored", "key", "metadata.popularity_query_interval")`。文档同步删除该配置行，未加"已废弃"批注（T17 已在 yaml loader 层面 warn，api 文档不再列出）。
+- **三层 dry-run 门控说明**：janitor 的 dry-run 默认 true 通过 (1) `*bool` 指针 + `EffectiveDryRun()` (2) CLI `-dry-run` 默认 true (3) `runCycle` 永远调 `SweepWithDryRun` 而非 `Sweep` 三层保证。文档 §4 + §7 都强调这一点，避免未来维护者误以为删除一层即可（每层都有独立语义：配置层防误配置、CLI 层防误执行、调用层防代码绕过）。
+- **位置 API 503 是确定性合约**：T9 learnings 明确 "503 vs skip-registration is a deliberate contract choice"——CP 在 PG 不可达时仍注册 handler 但返回 503，让 edge 看到稳定状态码。文档 §2.2 错误码表 + "注意事项"段都强调这一点，避免未来维护者"简化"为跳过注册。
+- **edge main 未装配 HTTPLocationClient**：T10 交付了客户端构件但未在 edge-node main.go 装配（plan line 185，独立后续项）。文档 control-plane.md §2.2 + README §4 表都明确标注"edge main 暂未接线（LocalDataPlane 保持 nil，独立后续项）"，避免读者误以为已全自动生效。
+- **未勾选 plan checkbox**（per MUST NOT DO）：plan line 291 的 `[ ]` 保持未勾选状态，留给上层验收。
+- Evidence at `.omo/evidence/task-22-review-remediation.log`（200+ 行，含逐文件变更清单 + acceptance criteria 验证 + QA scenarios 抽查）。`grep` 验收：仅 1 处命中且为修复说明文本（非误导）。新增小节均含端点/认证/错误码三要素。

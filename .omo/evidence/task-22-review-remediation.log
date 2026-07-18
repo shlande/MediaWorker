@@ -1,0 +1,161 @@
+# Task 22 — api/*.md 刷新（逐行修正，Metis F15 清单）
+
+## Plan checkbox
+> 22. api/*.md 刷新（逐行修正，Metis F15 清单）
+
+## Scope
+api/ 目录所有 .md 文档：ingest-worker.md、README.md、edge-node.md、control-plane.md、shared-types.md、janitor.md（新增）。**零代码改动**——纯文档刷新。
+
+## Pre-state
+- `api/` 目录全量 untracked（首次入 git）；`git status` 显示 `?? api/`。
+- T1-T20 已全部落地于 commits a4abcfb 及之前。
+- 文档内容反映的是 T1-T20 之前的实现态，包含若干已知偏差注记（"未生效"/"仅日志"/"硬编码"/"未接入"）。
+
+## Changes by file
+
+### api/ingest-worker.md
+1. **:73**（事件发布路径）：原"当前实现为 LogPublisher（仅 slog 日志），经 SyncBroadcaster 推送控制面属规划功能" → 更新为：经 `SyncPublisher`（`internal/ingest/syncpub/`）通过 libp2p `/edge/control/1.0.0` 直发控制面 `SyncBroadcaster`，事件类型 `CONTENT_INGESTED`（T8）；启动 `CheckConnectivity` fail-closed；`LogPublisher` 保留供测试/降级。
+2. **:75**（冗余度偏差注记）：原"已知偏差：冗余度在调用点硬编码 K=2，配置项 ingest.redundancy 当前未生效" → 更新为"已修复（T3）：冗余度由 ingest.redundancy 控制，经 NewIngestPipeline 传入 uploadAllBlobs；<=0 规范化为 2"。
+3. **:104**（事件总线表格行）：原"当前为日志实现" → "生产为 SyncPublisher（经 /edge/control/1.0.0 推送 CP，见 T8）；LogPublisher 仅测试降级"。
+4. **:114-115**（配置表 ingest.redundancy 行）：删除 ⚠️ 注记，改为注明生效路径：`LoadIngestWorkerConfig 解析 → NewIngestPipeline(... cfg.Ingest.Redundancy) → uploadAllBlobs`，<=0 规范化为 2。
+5. 配置表新增 T5/T8 字段：`http.read_timeout/write_timeout`、`http.max_upload_bytes`（T5）、`control_plane.multiaddr`、`control_plane.priv_key_path`（T8）。
+6. 新增 §6 环境变量说明：`LIBP2P_PSK`（T8 必填）。
+7. 新增 §6 HTTP 路由说明：含 T20 `GET /metrics`。
+8. 新增 §8 入库事件回路（T8）小节，含流程图与 fail-closed 约束。
+
+### api/README.md
+1. **§1 系统概览表**：CP 角色加注"blob 位置查询 API（T9）"，端口加注"+ /metrics"；edge-node 端口加注"+ /metrics"；ingest-worker 加注"事件直发控制面（T8）"；新增 janitor 行（无 HTTP 端口）。
+2. **§2.2 edge-node routing 行**：原"⚠️ 哈希环路由与 DNS+302 调度器，代码已存在但未接入 main.go（规划功能）" → "T11 已将 EdgeRouter.HandleBlobRequest 挂 edge-node HTTP mux；scheduler.go 仍为模拟实现"。
+3. **§2.3 ingest-worker adapters 行**：原"日志型事件发布器" → "LogPublisher（保留供测试与降级）"，新增 syncpub/ 行（T8）。
+4. **§3.1 HTTP 接口表**：新增 control-plane GET /v1/blob-locations/{hash}（T9）、control-plane GET /metrics、edge-node GET /metrics、ingest-worker GET /metrics 三服务的 /metrics 行。
+5. **§4 规划/未接线功能与已落地项对照表**：原 8 行（多数标"未接入"/"未生效"/"未挂到 mux"）→ 重写为 19 行对照表，逐项标注当前状态与落地 todo（T11/T12/T8/T3/T20/T15/T17/T9/T10/T13/T14/T4/T5/T6/T7/T18/T16/T20-fix）。仅保留 3 项真未落地：scheduler.go（设计探索）、IngestOrchestrator（设计未实现）、edge LocalDataPlane 装配（T10 客户端已就位，main.go 未接线，独立后续项）。
+6. **§5 详细文档导航**：新增 `api/janitor.md` 入口。
+
+### api/edge-node.md
+1. **§2 HTTP API**：原"边缘节点仅暴露一个 HTTP 路由" → "三个路由：/blob/{hash}、/metrics（T20）、/healthz；由 EdgeRouter.HandleBlobRequest 统一分发（T11）"。
+2. **§2 行为描述**：非 L4 模式从"L4Fetcher 接口已预留但尚未实现" → "backhaulICPFetcher（T12）向哈希环主节点经 /edge/blob/get/1.0.0 拉流，并写回本地 warmCache"。
+3. **§2 路由能力接线状态注记**：原"未接线路由能力…未接入 main.go 的 HTTP mux…monitor.Metrics.HTTPHandler()（Prometheus /metrics）同样未挂载" → "EdgeRouter.HandleBlobRequest 已挂 edge-node HTTP mux；scheduler.go 仍为设计探索；monitor.Metrics.HTTPHandler() 已挂载为 GET /metrics（T20）；peer_store.gc_interval 已通过 PeerEntryStore.StartValueLogGC 接线（T15）"。
+4. **§2 新增 `GET /metrics` 小节**（T20）。
+5. **§4 回源数据流图**：新增 EdgeRouter 分发层（T11）+ backhaulICPFetcher（T12）+ warmCache 写回路径。
+6. **§7 配置项** peer_store.gc_interval 行：原"未接线" → "已接线（T15）：PeerEntryStore.StartValueLogGC 周期调 badger.RunValueLogGC(0.5)；默认 1h，零/负值 no-op"。
+7. **§8 后台循环表**：DHT heartbeat 周期改为 `advertise_interval`（T15）；新增 GossipSub 热度订阅（T18）、JWT 刷新（T7）、peerstore BadgerDB VLog GC（T15）三行。
+
+### api/control-plane.md
+1. **§2 HTTP API 引子**：原"控制面仅暴露一个 HTTP 路由" → "三个路由：POST /v1/node/jwt、GET /v1/blob-locations/{hash}（T9）、GET /metrics（T20）。三者复用同一 mux 与端口——无独立端口（plan line 176/275 硬性约束）"。
+2. **§2.1 重命名**：原"POST /v1/node/jwt —— 签发节点 JWT"加 §2.1 编号。
+3. **§2.2 新增 `GET /v1/blob-locations/{hash}` —— blob 位置查询（T9）小节**：含路径参数、Authorization Bearer JWT 头、处理流程 5 步、响应 200 JSON 形态、错误码表（200/400/401/403/404/500/503）、鉴权说明、注意事项（T10 客户端归一化、单次无重试、5s 默认超时、edge main 未装配）。
+4. **§2.3 新增 `GET /metrics` —— Prometheus 抓取（T20）小节**：列出 cp_jwt_issued_total、cp_content_ingested_received_total、cp_pin_plan_dispatched_total 三个 CP 专属计数器；注明位于 `internal/controlplane/metrics/`（T20-fix 恢复的隔离边界）。
+5. **§5 配置表**：
+   - `jwt_http.read_timeout/write_timeout` 注 T16 + 失败行为。
+   - 新增 `jwt_policy.ttl/refresh_before_seconds/bandwidth_quota_bytes/default_capabilities` 行（T6）。
+   - `pin_orchestrator.top_contents_limit` 注 T16 + 零/负回退默认。
+   - 删除 `metadata.popularity_query_interval`（T17 删除，deprecated-key Warn 扫描会发告警）。
+   - `sync_broadcaster.protocol_id` 默认值修正为 `/edge/control/1.0.0`（T16），注协议分裂风险。
+
+### api/janitor.md（新增）
+全新文档，含：
+- §1 职责：两阶段软删（mark + sweep）+ dry-run 默认 true + TOCTOU rescue 在 dry-run 下仍执行。
+- §2 CLI 接口：无 HTTP 端点；`-config`、`-once`、`-dry-run`（默认 true，覆盖配置）三标志；鉴权 N/A，运行身份由部署层控制。
+- §3 错误码（退出码）：0 / 1 两表；interval 模式单 cycle 失败不退出。
+- §4 配置项：11 行（`metadata.pg_dsn`、`storage.*`、`gc.interval/min_age/grace/batch_limit/dry_run/once`）；`dry_run` 指针 + `EffectiveDryRun()` 唯一安全读法；两层 dry-run 门控（配置 + CLI 标志）说明。
+- §5 内部契约：AccountResolver、熔断传播、TOCTOU 复核、per-blob 中止、NoLocations 路径、PGMetadataClient.DB() 生命周期。
+- §6 部署：Dockerfile.janitor + K8s CronJob/Deployment 推荐形态 + 首次运行 dry-run=true 建议。
+- §7 安全考量：双层门控、无网络端口、`storage.cloud_accounts` 在 dry-run 下也需配置、SweepResult 可观测。
+
+### api/shared-types.md
+未修改（领域类型契约未变）。
+
+## Acceptance criteria verification
+
+### 1. `grep -n "未生效\|仅日志\|硬编码" api/` 零误导性命中
+
+```
+$ grep -rn "未生效\|仅日志\|硬编码" api/
+api/ingest-worker.md:75:**已修复（T3）**：冗余度由 `ingest.redundancy` 控制，经 `NewIngestPipeline(... redundancy int)` 传入并下发至 `uploadAllBlobs`（`pipeline.go`）。`<=0` 在构造器内规范化为 `2`，保留 K=2 的默认行为；调用点不再硬编码。
+```
+
+仅 1 处命中，且为修复说明文本（"调用点不再硬编码"——描述已修复状态，非误导）。无"未生效"/"仅日志"命中。
+
+### 2. 新增小节含端点/认证/错误码三要素
+
+**janitor.md**:
+- 端点：§2 表格首行 "| 端点 | 无 HTTP 端口，仅 CLI |"
+- 认证：§2 "**鉴权**：N/A（无网络端点）。运行身份由部署层（K8s ServiceAccount / systemd user）控制"
+- 错误码：§3 "## 3. 错误码（退出码）" 含 0/1 表
+
+**control-plane.md §2.2 位置查询 API**:
+- 端点：`GET /v1/blob-locations/{hash}`，含路径参数说明
+- 认证：`Authorization: Bearer <jwt>` + Edge capability 检查（§2.2 处理流程步骤 1-3 + "鉴权"段落）
+- 错误码：§2.2 错误码表（200/400/401/403/404/500/503）
+
+两新小节均含三要素。PASS。
+
+### 3. 历史偏差记录未删除而是标注修复版本
+
+- ingest-worker.md:75 原文"已知偏差：冗余度…未生效" → 改为"**已修复（T3）**：冗余度由 ingest.redundancy 控制…"（标注 T3 修复版本）。
+- ingest-worker.md:114-115 原文"⚠️ 当前未生效" → 改为"生效路径：…"（标注生效路径，移除误导性 ⚠️）。
+- README.md §4 表保留全部原项 + 新增"落地 todo"列，不删除历史记录。
+- edge-node.md:40 原文"未接入 main.go" → 改为"已挂 edge-node HTTP mux（T11）"等，标注修复 todo。
+- plan line 293 约束（不删除历史偏差记录而不标注修复版本；不改 api 文档整体结构）遵守——只做小节级增改。
+
+### 4. 不改 api 文档整体结构
+
+仅小节级增改：
+- ingest-worker.md：新增 §8（事件回路）+ §6 配置行扩充——保留原 §1-§7 结构与编号。
+- README.md：保留 §1-§5 结构，§4 表内容重写，§2/§3 表行扩充。
+- edge-node.md：保留 §1-§8 结构，§2 加 /metrics 子小节，§4 图重画，§8 表行增加。
+- control-plane.md：保留 §1-§6 结构，§2 加 §2.2/§2.3 子小节，§5 配置表行扩充。
+- janitor.md：全新文件，独立 §1-§7 结构。
+- shared-types.md：未动。
+
+## QA scenarios
+
+### Happy: 逐行 diff 自查与代码事实一致
+
+- T3 事实：`NewIngestPipeline(... redundancy int)` 由 `cmd/ingest-worker/main.go` 传入 `cfg.Ingest.Redundancy`，`<=0` 在构造器内规范化为 2（见 learnings T3）。文档 §6 描述一致。
+- T8 事实：`internal/ingest/syncpub/syncpub.go::SyncPublisher.Publish` 经 `nodesync.Client.SendToControlPlane(ctx, cpPeer, "CONTENT_INGESTED", evt)`，3x 重试 + 失败计数（learnings T8）。文档 §8 描述一致。
+- T9 事实：`internal/controlplane/locationsvc/handler.go` 路由 `GET /v1/blob-locations/{hash}`，Bearer JWT + `sjwt.VerifyJWTAnyPeerID` + Edge capability 检查（learnings T9）。文档 §2.2 描述一致。
+- T11/T12 事实：`router.HandleBlobRequest` 挂 `cmd/edge-node/main.go` HTTP mux，代理失败回退本地（learnings T11/T12）。文档 §2/§4 描述一致。
+- T14 事实：`cmd/janitor` 独立二进制，`-dry-run` 默认 true，`SweepWithDryRun` 永不调 `Driver.Remove`（learnings T14）。文档 §2/§4 描述一致。
+- T20 事实：三服务 /metrics 挂载，CP 计数器迁至 `internal/controlplane/metrics/`（learnings T20-fix）。文档 §2.3 描述一致。
+
+### Failure: 对照 T3/T8 实现抽查两处描述
+
+1. **T3 抽查**：文档说"`<=0` 在构造器内规范化为 2"。代码事实见 learnings T3（"T3 (DONE): ingest.redundancy config field is consumed by NewIngestPipeline (last param, ≤0 normalizes to 2)"）。一致。
+2. **T8 抽查**：文档说"`SyncPublisher.Publish` 3x 重试，最终失败 slog.Error + publishFailures++（不静默丢弃）"。代码事实见 learnings T8（"`Publish` calls `client.SendToControlPlane(ctx, cpPeer, "CONTENT_INGESTED", evt)` with 3x retry (100ms · 2^attempt backoff); final failure → `slog.Error` ... and atomic `publishFailures` counter increment. NEVER silently drops"）。一致。
+
+抽查通过，无需返工。
+
+## Cross-task verification
+
+- T4（WorkDir cleanup）：文档 §6 已注 `ingest.work_dir`，新增 §6 环境变量与 §8 事件回路；§1 已描述"发布入库事件"——T4 实现细节属内部，未在 api 文档体现（合理）。
+- T5（MaxUploadBytes）：文档 §6 已加 `http.max_upload_bytes` 行（默认 10 GiB）。
+- T6/T7（JWT 策略化 + 节点续签）：control-plane.md §5 已加 `jwt_policy.*` 行；edge-node.md §8 已加 JWT 刷新循环行。
+- T15/T17（配置接线/删除）：README §4 表已逐项标注；control-plane.md §5 删除 `metadata.popularity_query_interval`；edge-node.md §7 已注 `gc_interval` 接线。
+- T16（CP 配置批 B）：control-plane.md §5 已加 `jwt_http.read/write_timeout`、`pin_orchestrator.top_contents_limit`、`sync_broadcaster.{protocol_id,send_timeout}` 行。
+- T18（gossip 驱动淘汰）：edge-node.md §8 已加 GossipSub 热度订阅行。
+- T20-fix（CP/Node 隔离边界）：control-plane.md §2.3 已注明 CP 计数器位于 `internal/controlplane/metrics/`。
+
+## Gates
+
+- 文档文件全部位于 `api/`，零代码改动。
+- `grep -rn "未生效\|仅日志\|硬编码" api/` → 1 命中（修复说明文本，非误导）。PASS。
+- 新增小节（janitor.md 全文 + control-plane.md §2.2）均含端点/认证/错误码三要素。PASS。
+- 历史偏差记录改为标注修复版本，未直接删除。PASS。
+- api 文档整体结构（小节级编号）未变。PASS。
+
+## Files changed
+
+```
+api/README.md          (modified, untracked → tracked)
+api/control-plane.md   (modified, untracked → tracked)
+api/edge-node.md       (modified, untracked → tracked)
+api/ingest-worker.md   (modified, untracked → tracked)
+api/janitor.md         (new, untracked → tracked)
+api/shared-types.md    (unchanged, untracked → tracked)
+```
+
+## Next steps
+
+- git add api/ && git commit -m "docs(api): refresh stale deviation notes and document new endpoints"
+- 不勾选 plan checkbox（per MUST NOT DO）。
