@@ -399,3 +399,35 @@ Created `internal/controlplane/metrics/` package (CP-resident) exposing only the
 - **`*MergedEntry` 指针被复用**：`OnPopularityUpdate` 在 entry 已存在时直接 mutate 同一 `*MergedEntry`。测试中若先 `mp.entries["blob1"]` 拿到指针，再调第二次 HandlePopularityMessage，再读同一指针——两次读的是 mutate 后的值。修正：在第二次调用前把 `heatBefore := entry.WeightedHeat; weightBefore := entry.TotalWeight` 拷贝出来。
 - **`docs/distribution/network.md` §4.5 强调"当前消费范围"是安全边界**：gossip 热度目前**只驱动本地缓存逐出**（`warmCache.SetPopSource`），**不参与 pin 决策**（pin 由控制面 PinOrchestrator 基于 PG content_popularity 决策）。这是有意的安全边界：即使四层防御全被绕过，恶意热度也只能影响单节点本地逐出顺序，不能诱导其他节点 pin 垃圾。文档明确写出这个边界，防止未来 maintainer 误把 gossip 热度接入 pin 决策路径。
 - Evidence at `.omo/evidence/task-19-review-remediation.log` (114 lines). All gates green: `go build` EXIT=0; `go vet ./internal/node/gossippop/...` EXIT=0; `go test -race ./internal/node/gossippop/...` PASS (7.6s, 23 tests incl. 7 new); `go test -race ./cmd/edge-node/...` PASS (call site regression).
+
+
+## T21 - 文档目标态 vs 实现态标注批（plan checkbox 21）
+
+### What I did
+- `docs/README.md`: 新增 §9「目标态 vs 实现态（target state vs implemented state）」整章 + 目录条目。包含 9.1 逐域偏差表（5 行：Redis 缓存层未采纳 / PolicyController 未实现 / Cold cache+FetchSegment+NAT 配置 T17 删除 / OTel deferred / L4 dataplane edge main 未接线）+ 9.2 风险登记册（3 项暂缓风险 #1 ingest-worker 无准入 / #2 控制面单点 / #5 客户端无访问控制，每项含风险描述 + 当前接受理由 + 再评估触发条件）。同步在 §5 RTO 表的 PG 主库挂 / Redis 挂两行加目标态/实现态批注。
+- `docs/storage/README.md`: §9.3 节首加块引用「实现态偏差：本节 Redis 读路径未被采纳；当前实现为控制面 `GET /v1/blob-locations/{hash}` + 能力 JWT 认证」+ T9/T10 决策引用 + Redis 设计稿保留为目标态资产的说明。§10.4、§10.5、§11.8 同步加块引用批注（RTO 表 PG/Redis 两行明确标注"目标态 / 实现态"）。
+- `docs/policy/README.md`: 文件首行后立即加 banner「**本文档为目标态设计，当前零代码实现**」，列出 PolicyController / Backend 抽象 / 用量采集 / 双权重下发链路均未落地，并指向主文档 §9.1。
+- `docs/ingest/README.md`: §2.2 配置示例块前加块引用「实现态偏差：`access_layer.data_plane.subscribe_control` / `drivers` / `rate_limit_local` 三字段 T17 已从 EdgeConfig 删除；`fetch_segment_server`/`fetch_segment_client` 同样已删；ingest-worker 实际走 `IngestStorageConfig` (`storage:` 树) 由 `accountpool.BuildFromConfig` 消费」。
+- `docs/distribution/README.md`: §2 缓存层结构节首加块引用（L4 Cold Cache 目标态设计稿 + `edge.cold_cache` 字段 T17 删除 + 列出本文件涉及的所有 T17 删除字段：`fetch_segment_*` / `subscribe_control` / `drivers` / `rate_limit_local` / `vendor_profiles` / `rate_limits` / `health_check` / `cloud_accounts`），指向 network.md §2.3 与主文档 §9.1。
+- `docs/distribution/network.md`: §2.3 节首加块引用列出 YAML 示例中所有 T17 删除字段（`edge.cold_cache` / `fetch_segment_server`/`client` / `data_plane.subscribe_control`/`drivers`/`rate_limit_local` / `access_layer.vendor_profiles`/`rate_limits`/`health_check`/`cloud_accounts`），说明 NAT 穿透栈实际在 libp2p host 装配阶段完成，指向 `configs/node-l4.yaml`/`node-edge.yaml` 为生产 YAML 模板。
+
+### Verification
+- `grep -c -E "目标态|实现态|未采纳|未实现"` across 5 files + network.md:
+  - docs/README.md: 10 hits
+  - docs/storage/README.md: 6 hits
+  - docs/policy/README.md: 1 hit
+  - docs/ingest/README.md: 1 hit
+  - docs/distribution/README.md: 2 hits
+  - docs/distribution/network.md: 5 hits
+  - 全部 ≥ 1，符合 plan line 287 验收条件。
+- 3 项暂缓风险在 docs/README.md §9.2 可被 grep 定位（行 632/641/650）。
+- Redis 设计稿保留：`grep -c Redis docs/storage/README.md` 从 13 增至 21（仅增加批注引用，未删除原文），符合 plan line 284「不删除 Redis 设计文本」约束。
+- 仅 docs/ 路径修改，无代码文件改动（`git diff --stat` 全部以 docs/ 开头）。
+
+### Gotchas
+- **T17 删除字段散布在 3 个文档**：`fetch_segment_*` 在 storage/ingest/distribution 三处都有提及，`cold_cache` 在 distribution/README.md (ASCII 图) + distribution/network.md (YAML) 两处，`subscribe_control`/`drivers`/`rate_limit_local` 在 ingest + distribution/network.md 两处。每处都需独立批注，否则阅读者只看到一处说明会以为其他处仍生效。
+- **Redis 批注位置选择**：T9/T10 决策是「读路径不走 Redis」，但 `docs/storage/README.md` 中 Redis 在 §9.3 实现选型 / §10.4 一致性策略 / §10.5 元数据服务 HA / §10.6 元数据服务与控制面单点 / §11.8 RTO 表 共 5 处提及。我选 §9.3 作为主批注位（实现选型章首，最先被阅读），其他 4 处加简短块引用指向 §9.3，避免重复 5 遍同样的话。
+- **风险登记册触发条件措辞**：plan 给出的触发条件是英文（"before exposing port externally, before test env promotion"），我翻译为中文措辞（"该端口暴露给外网之前" / "测试环境晋升前"），保持文档语言一致性（其他正文都是中文）。语义无损。
+- **`docs/distribution/network.md` 也在 5 文件之列**：plan 的 MUST DO 列了 "docs/distribution/README.md / network.md"，所以实际是 6 个文件。验收条件「5 files each contain annotation」覆盖到 network.md（5 hits）是 bonus，README.md (2 hits) 也满足。
+- **L4 dataplane nil 的批注双重覆盖**：在主文档 §9.1 列出"edge-node 当前 `LocalDataPlane=nil`"，同时 network.md §2.3 批注再次提及。两处指向同一事实（T10 交付 HTTPLocationClient 但 edge main 未接线，plan line 185），便于阅读者从任一入口都看到。
+- Evidence at `.omo/evidence/task-21-review-remediation.log` (50 lines). 全部 grep 验收通过。

@@ -1,0 +1,45 @@
+=== Task 21: review-remediation - 目标态 vs 实现态 annotation batch ===
+Date: 2026-07-18T19:42:06Z
+
+## Files modified (docs only)
+ docs/README.md               | 52 ++++++++++++++++++++++++++++++++++++++++++--
+ docs/distribution/README.md  |  4 ++++
+ docs/distribution/network.md |  8 +++++++
+ docs/ingest/README.md        |  2 ++
+ docs/policy/README.md        |  2 ++
+ docs/storage/README.md       | 15 +++++++++++++
+ 6 files changed, 81 insertions(+), 2 deletions(-)
+
+## Verification: per-file grep for 目标态/实现态/未采纳/未实现
+  - docs/README.md: 10 hit(s) [PASS: >=1]
+  - docs/storage/README.md: 6 hit(s) [PASS: >=1]
+  - docs/policy/README.md: 1 hit(s) [PASS: >=1]
+  - docs/ingest/README.md: 1 hit(s) [PASS: >=1]
+  - docs/distribution/README.md: 2 hit(s) [PASS: >=1]
+  - docs/distribution/network.md: 5 hit(s) [PASS: >=1]
+
+## Verification: 3 deferred risk items findable in docs/README.md
+632:#### 风险 #1：ingest-worker 无准入控制
+641:#### 风险 #2：控制面单点（JWT 签发 × 1h TTL）
+650:#### 风险 #5：客户端 `/blob/{hash}` 无访问控制
+
+## Per-domain annotation summary
+  - Redis cache layer (NOT adopted): docs/README.md §9.1 + docs/storage/README.md §9.3/§10.4/§10.5/§11.8
+  - PolicyController (not implemented): docs/policy/README.md banner + docs/README.md §9.1
+  - Cold cache / fetch_segment / NAT traversal config (converged to impl): docs/distribution/README.md §2 + docs/distribution/network.md §2.3 + docs/ingest/README.md §2.2
+  - OTel tracing (deferred): docs/README.md §9.1
+  - L4 dataplane edge main (dataPlane=nil): docs/README.md §9.1 + docs/distribution/network.md §2.3
+
+## MUST NOT compliance
+  - No code files touched:
+ docs/README.md               | 52 ++++++++++++++++++++++++++++++++++++++++++--
+ docs/distribution/README.md  |  4 ++++
+ docs/distribution/network.md |  8 +++++++
+ docs/ingest/README.md        |  2 ++
+ docs/policy/README.md        |  2 ++
+ docs/storage/README.md       | 15 +++++++++++++
+ 6 files changed, 81 insertions(+), 2 deletions(-)
+
+## Redis design text preserved (not deleted)
+  - Redis mentions before: 13
+  - Redis mentions after:  21 (>= before: design asset preserved)
