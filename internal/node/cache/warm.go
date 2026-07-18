@@ -4,12 +4,19 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 )
 
 // WarmCache is the L3 cache tier backed by SSD storage.
 // It uses content-aware LRU eviction with injected PinChecker and PopSource.
+//
+// The pinChecker and popSource fields are mutable so they can be wired after
+// construction (the PinStore and GossipSub stack are typically built after the
+// cache). All reads and writes of these fields are guarded by mu. The Evict
+// call path in Put takes an RLock to snapshot the two functions atomically.
 type WarmCache struct {
+	mu         sync.RWMutex
 	rootPath   string
 	maxSize    int64
 	usedSize   int64
@@ -19,7 +26,9 @@ type WarmCache struct {
 }
 
 // NewWarmCache creates a WarmCache rooted at the given path. The root directory
-// is created if it does not exist.
+// is created if it does not exist. pinChecker and popSource may be nil — safe
+// defaults are installed; wire the real implementations post-construction via
+// SetPinChecker / SetPopSource.
 func NewWarmCache(
 	rootPath string,
 	maxSize int64,
@@ -43,6 +52,30 @@ func NewWarmCache(
 	}
 }
 
+// SetPinChecker atomically replaces the cache's PinChecker. Safe for concurrent
+// use with Put/Get/Has and with SetPopSource. Passing nil installs the
+// always-false default (nothing pinned).
+func (wc *WarmCache) SetPinChecker(pc PinChecker) {
+	wc.mu.Lock()
+	defer wc.mu.Unlock()
+	if pc == nil {
+		pc = func(blobHash string) bool { return false }
+	}
+	wc.pinChecker = pc
+}
+
+// SetPopSource atomically replaces the cache's PopSource. Safe for concurrent
+// use with Put/Get/Has and with SetPinChecker. Passing nil installs the
+// always-empty default (Evict will return ErrCacheFull on the next call).
+func (wc *WarmCache) SetPopSource(ps PopSource) {
+	wc.mu.Lock()
+	defer wc.mu.Unlock()
+	if ps == nil {
+		ps = func() []*VideoMeta { return nil }
+	}
+	wc.popSource = ps
+}
+
 // blobPath returns the on-disk path for a blob hash.
 func (wc *WarmCache) blobPath(blobHash string) string {
 	return filepath.Join(wc.rootPath, blobHash)
@@ -58,7 +91,14 @@ func (wc *WarmCache) Put(blobHash string, data []byte, bitrate int) error {
 
 	// Make room via content-aware eviction if needed.
 	for wc.usedSize+size > wc.maxSize {
-		seg, err := Evict(wc.pinChecker, wc.popSource, wc.index)
+		// Snapshot the injected funcs under RLock so a concurrent
+		// SetPinChecker / SetPopSource cannot tear the read.
+		wc.mu.RLock()
+		pc := wc.pinChecker
+		ps := wc.popSource
+		wc.mu.RUnlock()
+
+		seg, err := Evict(pc, ps, wc.index)
 		if err != nil {
 			return ErrCacheFull
 		}
