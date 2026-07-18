@@ -1,0 +1,62 @@
+=== Task 14: janitor standalone GC service — evidence ===
+Date: 2026-07-18T18:10:17Z
+
+## Files created/modified
+NEW:
+- cmd/janitor/main.go (standalone GC service binary)
+- cmd/janitor/main_test.go (3 cycle tests + 1 resolver test)
+- internal/config/janitor.go (JanitorConfig + LoadJanitorConfig + Effective* accessors)
+- internal/config/janitor_test.go (9 config tests)
+- internal/storage/accountpool/build.go (shared BuildFromConfig constructor)
+- Dockerfile.janitor (follows Dockerfile.ingest-worker style)
+- configs/janitor.yaml (sample config)
+
+MODIFIED:
+- cmd/ingest-worker/main.go (buildAccountPool extracted → accountpool.BuildFromConfig)
+- internal/config/ingest.go (IngestStorageConfig.ToAccountPoolConfig adapter)
+- internal/storage/gc/gc.go (SweepWithDryRun + unified sweep impl)
+- internal/storage/metadata/metadata.go (PGMetadataClient.DB() accessor)
+
+## Build
+$ go build ./cmd/janitor
+EXIT=0
+
+$ go build ./...
+EXIT=0
+
+## Vet
+$ go vet ./internal/config/... ./cmd/janitor/... ./internal/storage/gc/... ./internal/storage/accountpool/... ./internal/storage/metadata/... ./cmd/ingest-worker/...
+EXIT=0
+
+## Acceptance gate (plan line 224)
+$ go test ./internal/config/... ./cmd/janitor/...
+ok  	github.com/shlande/mediaworker/internal/config	0.263s
+ok  	github.com/shlande/mediaworker/cmd/janitor	0.453s
+
+## Race test
+$ go test -race ./internal/config/... ./cmd/janitor/... ./internal/storage/gc/... ./internal/storage/accountpool/...
+ok  	github.com/shlande/mediaworker/internal/config	1.307s
+ok  	github.com/shlande/mediaworker/cmd/janitor	1.707s
+ok  	github.com/shlande/mediaworker/internal/storage/gc	1.456s
+ok  	github.com/shlande/mediaworker/internal/storage/accountpool	1.908s
+
+## Dry-run interception test (plan line 224 — zero Remove calls)
+$ go test ./cmd/janitor/... -run TestRunCycle_DryRun_NoRemoveCalls -v
+=== RUN   TestRunCycle_DryRun_NoRemoveCalls
+2026/07/19 02:10:21 INFO gc phase 1 (mark) marked=1 min_age=24h0m0s
+2026/07/19 02:10:21 INFO janitor cycle: phase 1 complete marked=1
+2026/07/19 02:10:21 INFO gc phase 2: would delete (dry-run) blob=orphan-abc locations=2 backends="[115:acct_01 115:acct_02]"
+2026/07/19 02:10:21 INFO gc phase 2 (sweep) rescued=0 deleted=1 failed=0 grace=24h0m0s batch_limit=500 candidates=1 mode=dry-run
+2026/07/19 02:10:21 INFO janitor cycle: phase 2 complete rescued=0 deleted=1 failed=0 dry_run=true duration=867.958µs
+--- PASS: TestRunCycle_DryRun_NoRemoveCalls (0.00s)
+PASS
+ok  	github.com/shlande/mediaworker/cmd/janitor	0.275s
+
+## Manual smoke: -once -dry-run against unreachable PG (plan line 225: clear error + non-zero exit)
+2026/07/19 02:10:21 INFO janitor starting once=true dry_run=true interval=1h0m0s min_age=24h0m0s grace=24h0m0s batch_limit=500
+2026/07/19 02:10:21 ERROR janitor fatal err="metadata client: metadata: ping postgres: dial tcp 127.0.0.1:1: connect: connection refused"
+EXIT=1
+
+## Manual smoke: invalid interval config (plan line 225: startup error)
+2026/07/19 02:10:21 ERROR janitor fatal err="load config: config: gc.interval \"not-a-duration\": time: invalid duration \"not-a-duration\""
+EXIT=1
