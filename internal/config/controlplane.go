@@ -16,12 +16,72 @@ import (
 // ControlPlaneConfig is the root configuration for a MediaWorker control plane.
 type ControlPlaneConfig struct {
 	JWT             JWTHTTPConfig             `yaml:"jwt_http"`
+	JWTPolicy       JWTPolicyConfig           `yaml:"jwt_policy"`
 	L4Whitelist     L4WhitelistConfig         `yaml:"l4_whitelist"`
 	PinOrchestrator PinOrchestratorConfig     `yaml:"pin_orchestrator"`
 	DHTBootstrap    DHTBootstrapConfig        `yaml:"dht_bootstrap"`
 	SyncBroadcaster SyncBroadcasterConfig     `yaml:"sync_broadcaster"`
 	Metadata        MetadataConfig            `yaml:"metadata"`
 	Identity        ControlPlaneIdentityConfig `yaml:"identity"`
+}
+
+// ---------------------------------------------------------------------------
+// JWT issuance policy
+// ---------------------------------------------------------------------------
+
+// JWTPolicyDefaultCapabilities holds the policy-default capability grants used
+// when a node does not declare its own capabilities (or declares none). These
+// values are intersected with the node's declared capabilities when present.
+//
+// L4Backhaul is intentionally absent here: L4 is whitelist-only and decided
+// solely by the L4 whitelist check in the JWT service.
+type JWTPolicyDefaultCapabilities struct {
+	Edge          bool `yaml:"edge"`
+	PeerICP       bool `yaml:"peer_icp"`
+	RelayProvider bool `yaml:"relay_provider"`
+}
+
+// JWTPolicyConfig controls JWT issuance parameters: TTL, refresh window,
+// bandwidth quota, and the default capabilities granted when a node does not
+// declare its own. All fields are optional; zero/empty values are normalised
+// to sensible defaults by LoadControlPlaneConfig via applyJWTPolicyDefaults.
+type JWTPolicyConfig struct {
+	TTL                  string                       `yaml:"ttl"`
+	RefreshBeforeSeconds int                          `yaml:"refresh_before_seconds"`
+	BandwidthQuotaBytes  int64                        `yaml:"bandwidth_quota_bytes"`
+	DefaultCapabilities  JWTPolicyDefaultCapabilities `yaml:"default_capabilities"`
+}
+
+const (
+	defaultJWTPolicyTTL                  = "1h"
+	defaultJWTPolicyRefreshBeforeSeconds = 300
+	defaultJWTPolicyBandwidthQuotaBytes  = 50_000_000
+)
+
+// applyJWTPolicyDefaults normalises zero/empty fields of p to sensible defaults
+// in-place. A nil receiver is treated as an empty config so callers can pass a
+// freshly allocated zero-value struct safely.
+func applyJWTPolicyDefaults(p *JWTPolicyConfig) {
+	if p == nil {
+		return
+	}
+	if p.TTL == "" {
+		p.TTL = defaultJWTPolicyTTL
+	}
+	if p.RefreshBeforeSeconds == 0 {
+		p.RefreshBeforeSeconds = defaultJWTPolicyRefreshBeforeSeconds
+	}
+	if p.BandwidthQuotaBytes == 0 {
+		p.BandwidthQuotaBytes = defaultJWTPolicyBandwidthQuotaBytes
+	}
+	// Go bool has no "unset" state, so an all-false DefaultCapabilities is
+	// ambiguous with an explicit "grant nothing". We treat all-false as
+	// "use defaults" (edge+peer_icp=true, relay=false) to preserve
+	// bit-for-bit backward compat for configs that omit the stanza entirely.
+	if !p.DefaultCapabilities.Edge && !p.DefaultCapabilities.PeerICP && !p.DefaultCapabilities.RelayProvider {
+		p.DefaultCapabilities.Edge = true
+		p.DefaultCapabilities.PeerICP = true
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +180,8 @@ func LoadControlPlaneConfig(path string) (*ControlPlaneConfig, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse control-plane config file: %w", err)
 	}
+
+	applyJWTPolicyDefaults(&cfg.JWTPolicy)
 
 	// Required-field validation.
 	if cfg.JWT.Listen == "" {

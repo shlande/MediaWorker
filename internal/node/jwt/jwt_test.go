@@ -21,6 +21,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/pnet"
 
 	cpjwt "github.com/shlande/mediaworker/internal/controlplane/jwt"
+	"github.com/shlande/mediaworker/internal/config"
 	sjwt "github.com/shlande/mediaworker/internal/shared/jwt"
 	"github.com/shlande/mediaworker/internal/types"
 )
@@ -100,7 +101,7 @@ func TestJWT_SignAndVerify(t *testing.T) {
 	}
 
 	svc := cpjwt.NewJWTService(cpPriv, cpjwt.NewPeerIdSet(), cpjwt.NewRateLimiter(cpjwt.DefaultRateLimitInterval),
-		cpjwt.NewAuditLog(nil))
+		cpjwt.NewAuditLog(nil), config.JWTPolicyConfig{})
 
 	signedPeerID := sjwt.SignPeerID(nodePriv, nodePeerID)
 	req := types.JWTRequest{PeerID: nodePeerID, SignedPeerID: signedPeerID}
@@ -209,7 +210,7 @@ func TestJWT_InvalidSignature(t *testing.T) {
 	}
 
 	svc := cpjwt.NewJWTService(cpPriv, cpjwt.NewPeerIdSet(), cpjwt.NewRateLimiter(cpjwt.DefaultRateLimitInterval),
-		cpjwt.NewAuditLog(nil))
+		cpjwt.NewAuditLog(nil), config.JWTPolicyConfig{})
 	signedPeerID := sjwt.SignPeerID(nodePriv, nodePeerID)
 	req := types.JWTRequest{PeerID: nodePeerID, SignedPeerID: signedPeerID}
 	resp, _ := svc.HandleJWTRequest(req, "127.0.0.1")
@@ -255,7 +256,7 @@ func TestJWT_PeerIDMismatch(t *testing.T) {
 	}
 
 	svc := cpjwt.NewJWTService(cpPriv, cpjwt.NewPeerIdSet(), cpjwt.NewRateLimiter(cpjwt.DefaultRateLimitInterval),
-		cpjwt.NewAuditLog(nil))
+		cpjwt.NewAuditLog(nil), config.JWTPolicyConfig{})
 	signedPeerID := sjwt.SignPeerID(nodePrivA, peerIDA)
 	req := types.JWTRequest{PeerID: peerIDA, SignedPeerID: signedPeerID}
 	resp, err := svc.HandleJWTRequest(req, "127.0.0.1")
@@ -294,7 +295,7 @@ func TestJWT_L4Whitelist(t *testing.T) {
 	whitelist := cpjwt.NewPeerIdSet()
 	// Don't whitelist yet — test non-whitelisted
 	svc := cpjwt.NewJWTService(cpPriv, whitelist, cpjwt.NewRateLimiter(cpjwt.DefaultRateLimitInterval),
-		cpjwt.NewAuditLog(nil))
+		cpjwt.NewAuditLog(nil), config.JWTPolicyConfig{})
 	signedPeerID := sjwt.SignPeerID(nodePriv, nodePeerID)
 	req := types.JWTRequest{PeerID: nodePeerID, SignedPeerID: signedPeerID}
 	resp1, err := svc.HandleJWTRequest(req, "127.0.0.1")
@@ -312,7 +313,7 @@ func TestJWT_L4Whitelist(t *testing.T) {
 	// Now whitelist the peer and request again (use different rate limit to bypass)
 	whitelist.Add(nodePeerID)
 	svc2 := cpjwt.NewJWTService(cpPriv, whitelist, cpjwt.NewRateLimiter(cpjwt.DefaultRateLimitInterval),
-		cpjwt.NewAuditLog(nil))
+		cpjwt.NewAuditLog(nil), config.JWTPolicyConfig{})
 	resp2, err := svc2.HandleJWTRequest(req, "127.0.0.2")
 	if err != nil {
 		t.Fatalf("HandleJWTRequest (whitelisted): %v", err)
@@ -345,7 +346,7 @@ func TestJWT_RateLimit(t *testing.T) {
 	}
 
 	rl := cpjwt.NewRateLimiter(1 * time.Hour) // 1h interval
-	svc := cpjwt.NewJWTService(cpPriv, cpjwt.NewPeerIdSet(), rl, cpjwt.NewAuditLog(nil))
+	svc := cpjwt.NewJWTService(cpPriv, cpjwt.NewPeerIdSet(), rl, cpjwt.NewAuditLog(nil), config.JWTPolicyConfig{})
 	signedPeerID := sjwt.SignPeerID(nodePriv, nodePeerID)
 	req := types.JWTRequest{PeerID: nodePeerID, SignedPeerID: signedPeerID}
 
@@ -557,7 +558,7 @@ func TestJWT_PushProtocol(t *testing.T) {
 
 	// Create JWT service for A (simulating control plane)
 	svc := cpjwt.NewJWTService(cpPriv, cpjwt.NewPeerIdSet(), cpjwt.NewRateLimiter(cpjwt.DefaultRateLimitInterval),
-		cpjwt.NewAuditLog(nil))
+		cpjwt.NewAuditLog(nil), config.JWTPolicyConfig{})
 	aPeerID := types.PeerId(hostA.ID().String())
 	signed := sjwt.SignPeerID(nodeAPriv, aPeerID)
 	req := types.JWTRequest{PeerID: aPeerID, SignedPeerID: signed}
@@ -622,7 +623,7 @@ func TestJWT_ClientIntegration(t *testing.T) {
 
 	// Start a mock HTTP server acting as the control plane JWT endpoint
 	svc := cpjwt.NewJWTService(cpPriv, cpjwt.NewPeerIdSet(), cpjwt.NewRateLimiter(cpjwt.DefaultRateLimitInterval),
-		cpjwt.NewAuditLog(nil))
+		cpjwt.NewAuditLog(nil), config.JWTPolicyConfig{})
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/v1/node/jwt", func(w http.ResponseWriter, r *http.Request) {

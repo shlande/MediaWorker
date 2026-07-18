@@ -56,9 +56,15 @@ type DHTBootstrapPeer struct {
 // ─── JWT 签发 ───
 
 // JWTRequest is a node's request to the control-plane JWT service for a signed JWT.
+//
+// DeclaredCapabilities is OPTIONAL: when nil, the control plane grants its
+// policy-default capabilities (backward-compatible with legacy clients). When
+// present, each granted capability is the intersection of declared ∩ default.
+// L4Backhaul inside DeclaredCapabilities is IGNORED — L4 is whitelist-only.
 type JWTRequest struct {
-	PeerID       PeerId `json:"peer_id"`
-	SignedPeerID []byte `json:"signed_peer_id"`
+	PeerID               PeerId            `json:"peer_id"`
+	SignedPeerID         []byte            `json:"signed_peer_id"`
+	DeclaredCapabilities *NodeCapabilities `json:"declared_capabilities,omitempty"`
 }
 
 // JWTResponse is the control-plane's response containing the signed JWT and refresh info.

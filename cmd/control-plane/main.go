@@ -62,7 +62,7 @@ func run(configPath string) error {
 	auditLog := cpjwt.NewAuditLog(os.Stdout)
 
 	// 5. JWT service + HTTP server.
-	jwtSvc := cpjwt.NewJWTService(privKey, ps, rateLimiter, auditLog)
+	jwtSvc := cpjwt.NewJWTService(privKey, ps, rateLimiter, auditLog, cfg.JWTPolicy)
 	httpServer := cpjwt.NewJWTHTTPServer(jwtSvc)
 
 	// 6. Load libp2p identity (separate key path from JWT — protobuf format).

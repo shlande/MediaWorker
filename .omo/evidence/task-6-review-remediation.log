@@ -1,0 +1,105 @@
+=== Task 6: JWT 签发策略化（CP 侧：配置 + declared_capabilities + 授予逻辑） ===
+Date: 2026-07-18T17:32:38Z
+
+## Files modified
+- internal/config/controlplane.go (added JWTPolicyConfig struct + applyJWTPolicyDefaults + wired into ControlPlaneConfig.JWTPolicy)
+- internal/types/types.go (added DeclaredCapabilities *NodeCapabilities to JWTRequest)
+- internal/controlplane/jwt/service.go (NewJWTService takes policy; HandleJWTRequest grant logic = declared ∩ default; L4 whitelist-only preserved)
+- cmd/control-plane/main.go:65 (construct JWTService with cfg.JWTPolicy)
+- internal/controlplane/jwt/httpserver_test.go (updated callers + 5 new grant-matrix tests)
+- internal/node/jwt/jwt_test.go (updated 7 NewJWTService callers + config import)
+- internal/node/libp2phost/gater_test.go (updated 1 NewJWTService caller + config import)
+
+## Verification gates
+
+### go build ./...
+EXIT=0
+
+### go vet (changed packages)
+EXIT=0
+
+### go test -count=1 ./internal/controlplane/jwt/... ./internal/config/... (acceptance gate)
+=== RUN   TestJWTHTTPServer_validJWTRequest_returns200
+--- PASS: TestJWTHTTPServer_validJWTRequest_returns200 (0.01s)
+=== RUN   TestJWTHTTPServer_invalidSignature_returns403
+--- PASS: TestJWTHTTPServer_invalidSignature_returns403 (0.00s)
+=== RUN   TestGrantMatrix_NilDeclaredMatchesCurrentBehaviour
+--- PASS: TestGrantMatrix_NilDeclaredMatchesCurrentBehaviour (0.00s)
+=== RUN   TestGrantMatrix_DeclaredEdgeAndRelay_DefaultAllowsRelay_GrantsEdgeAndRelay
+--- PASS: TestGrantMatrix_DeclaredEdgeAndRelay_DefaultAllowsRelay_GrantsEdgeAndRelay (0.00s)
+=== RUN   TestGrantMatrix_DeclaredL4ButNotWhitelisted_L4NotGranted
+--- PASS: TestGrantMatrix_DeclaredL4ButNotWhitelisted_L4NotGranted (0.00s)
+=== RUN   TestGrantMatrix_DeclaredL4AndWhitelisted_L4Granted
+--- PASS: TestGrantMatrix_DeclaredL4AndWhitelisted_L4Granted (0.00s)
+=== RUN   TestGrantMatrix_PolicyOverridesTTLAndQuota
+--- PASS: TestGrantMatrix_PolicyOverridesTTLAndQuota (0.00s)
+=== RUN   TestWhitelistStore_persistAcrossRestarts
+--- PASS: TestWhitelistStore_persistAcrossRestarts (0.06s)
+=== RUN   TestWhitelistStore_removePersists
+--- PASS: TestWhitelistStore_removePersists (0.06s)
+=== RUN   TestWhitelistStore_restoreIntoPeerIdSet
+--- PASS: TestWhitelistStore_restoreIntoPeerIdSet (0.04s)
+=== RUN   TestWhitelistStore_containsNotExist
+--- PASS: TestWhitelistStore_containsNotExist (0.03s)
+=== RUN   TestWhitelistStore_emptyListAll
+--- PASS: TestWhitelistStore_emptyListAll (0.03s)
+=== RUN   TestWhitelistStore_NewWhitelistStore_createsDir
+--- PASS: TestWhitelistStore_NewWhitelistStore_createsDir (0.03s)
+PASS
+ok  	github.com/shlande/mediaworker/internal/controlplane/jwt	0.583s
+=== RUN   TestLoadConfig_L4Node
+--- PASS: TestLoadConfig_L4Node (0.00s)
+=== RUN   TestLoadConfig_EdgeNode
+--- PASS: TestLoadConfig_EdgeNode (0.00s)
+=== RUN   TestLoadConfig_VendorProfiles
+--- PASS: TestLoadConfig_VendorProfiles (0.00s)
+=== RUN   TestLoadConfig_RateLimits
+--- PASS: TestLoadConfig_RateLimits (0.00s)
+=== RUN   TestLoadConfig_HealthCheck
+--- PASS: TestLoadConfig_HealthCheck (0.01s)
+=== RUN   TestLoadConfig_CloudAccounts
+--- PASS: TestLoadConfig_CloudAccounts (0.01s)
+=== RUN   TestLoadVendorProfiles_FromStandaloneFile
+--- PASS: TestLoadVendorProfiles_FromStandaloneFile (0.00s)
+=== RUN   TestLoadVendorProfiles_MissingFile
+--- PASS: TestLoadVendorProfiles_MissingFile (0.00s)
+=== RUN   TestLoadVendorProfiles_MissingKey
+--- PASS: TestLoadVendorProfiles_MissingKey (0.01s)
+=== RUN   TestLoadConfig_MissingPrivKey
+--- PASS: TestLoadConfig_MissingPrivKey (0.00s)
+=== RUN   TestLoadConfig_MissingListen
+--- PASS: TestLoadConfig_MissingListen (0.00s)
+=== RUN   TestLoadConfig_MissingJWTEndpoint
+--- PASS: TestLoadConfig_MissingJWTEndpoint (0.00s)
+=== RUN   TestLoadConfig_NonexistentFile
+--- PASS: TestLoadConfig_NonexistentFile (0.00s)
+=== RUN   TestLoadConfig_InvalidYAML
+--- PASS: TestLoadConfig_InvalidYAML (0.00s)
+=== RUN   TestLoadControlPlaneConfig_Valid
+--- PASS: TestLoadControlPlaneConfig_Valid (0.01s)
+=== RUN   TestLoadControlPlaneConfig_MissingJWTListen
+--- PASS: TestLoadControlPlaneConfig_MissingJWTListen (0.00s)
+=== RUN   TestLoadControlPlaneConfig_MissingDHTNamespace
+--- PASS: TestLoadControlPlaneConfig_MissingDHTNamespace (0.01s)
+=== RUN   TestLoadControlPlaneConfig_MissingPGDSN
+--- PASS: TestLoadControlPlaneConfig_MissingPGDSN (0.00s)
+=== RUN   TestLoadControlPlaneConfig_MissingPrivKey
+--- PASS: TestLoadControlPlaneConfig_MissingPrivKey (0.00s)
+=== RUN   TestLoadControlPlaneConfig_MissingLibp2pPrivKey
+--- PASS: TestLoadControlPlaneConfig_MissingLibp2pPrivKey (0.00s)
+=== RUN   TestLoadControlPlaneConfig_NonexistentFile
+--- PASS: TestLoadControlPlaneConfig_NonexistentFile (0.00s)
+=== RUN   TestLoadControlPlaneConfig_InvalidYAML
+--- PASS: TestLoadControlPlaneConfig_InvalidYAML (0.00s)
+=== RUN   TestLoadOrGenerateControlPlaneKey_GenerateAndLoad
+--- PASS: TestLoadOrGenerateControlPlaneKey_GenerateAndLoad (0.00s)
+=== RUN   TestSaveControlPlaneKey_RoundTrip
+--- PASS: TestSaveControlPlaneKey_RoundTrip (0.00s)
+=== RUN   TestLoadOrGenerateControlPlaneKey_InvalidFile
+--- PASS: TestLoadOrGenerateControlPlaneKey_InvalidFile (0.00s)
+PASS
+ok  	github.com/shlande/mediaworker/internal/config	0.585s
+
+### go test -count=1 ./internal/node/jwt/... ./internal/node/libp2phost/... (regression — external callers of NewJWTService)
+ok  	github.com/shlande/mediaworker/internal/node/jwt	1.436s
+ok  	github.com/shlande/mediaworker/internal/node/libp2phost	6.205s

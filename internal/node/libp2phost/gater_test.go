@@ -16,6 +16,7 @@ import (
 	"golang.org/x/time/rate"
 
 	cpjwt "github.com/shlande/mediaworker/internal/controlplane/jwt"
+	"github.com/shlande/mediaworker/internal/config"
 	"github.com/shlande/mediaworker/internal/node/jwt"
 	"github.com/shlande/mediaworker/internal/node/peerstore"
 	sharedid "github.com/shlande/mediaworker/internal/shared/identity"
@@ -107,7 +108,7 @@ func testJWTService(t *testing.T) (*cpjwt.JWTService, ed25519.PublicKey) {
 		t.Fatalf("generate control-plane key: %v", err)
 	}
 	svc := cpjwt.NewJWTService(priv, cpjwt.NewPeerIdSet(), cpjwt.NewRateLimiter(60*time.Minute),
-		cpjwt.NewAuditLog(nil))
+		cpjwt.NewAuditLog(nil), config.JWTPolicyConfig{})
 	return svc, pub
 }
 
