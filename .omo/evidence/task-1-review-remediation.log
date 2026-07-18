@@ -1,0 +1,86 @@
+=== Task 1 Evidence: metadata package move ===
+=== internal/controlplane/metadata → internal/storage/metadata ===
+=== Timestamp: 2026-07-19 ===
+
+=== 1. grep BEFORE (8 hits) ===
+/Users/shlande/MediaWorker/./cmd/ingest-worker/main.go:22:	"github.com/shlande/mediaworker/internal/controlplane/metadata"
+/Users/shlande/MediaWorker/./cmd/control-plane/main.go:19:	"github.com/shlande/mediaworker/internal/controlplane/metadata"
+/Users/shlande/MediaWorker/./test/integration/cluster_test.go:28:	"github.com/shlande/mediaworker/internal/controlplane/metadata"
+/Users/shlande/MediaWorker/./test/integration/isolation_test.go:43:		"github.com/shlande/mediaworker/internal/controlplane/metadata",
+/Users/shlande/MediaWorker/./test/integration/storage_distribution_test.go:23:	"github.com/shlande/mediaworker/internal/controlplane/metadata"
+/Users/shlande/MediaWorker/./internal/ingest/ingest.go:55:// controlplane/metadata.PGMetadataClient.WriteIngestTransaction but lives in
+/Users/shlande/MediaWorker/./internal/controlplane/pinstrategy/orchestrator.go:12:	"github.com/shlande/mediaworker/internal/controlplane/metadata"
+/Users/shlande/MediaWorker/./internal/controlplane/pinstrategy/pinstrategy_test.go:13:	"github.com/shlande/mediaworker/internal/controlplane/metadata"
+
+=== 2. git mv ===
+GIT_MASTER=1 git mv internal/controlplane/metadata internal/storage/metadata
+Renamed 18 files (5 .go, 13 SQL) — history preserved.
+
+=== 3. Import + comment updates ===
+Updated 7 import lines:
+  - cmd/control-plane/main.go:19
+  - cmd/ingest-worker/main.go:22
+  - internal/controlplane/pinstrategy/orchestrator.go:12
+  - internal/controlplane/pinstrategy/pinstrategy_test.go:13
+  - test/integration/cluster_test.go:28
+  - test/integration/isolation_test.go:43
+  - test/integration/storage_distribution_test.go:23
+Updated 1 comment:
+  - internal/ingest/ingest.go:55
+
+=== 4. grep AFTER (zero hits — PASS) ===
+(no output)
+
+=== 5. go build ./... (PASS) ===
+EXIT: 0
+
+=== 6. go vet ./... (PASS) ===
+EXIT: 0
+
+=== 7. go test ./... (PASS) ===
+?   	github.com/shlande/mediaworker/cmd/control-plane	[no test files]
+?   	github.com/shlande/mediaworker/cmd/edge-node	[no test files]
+?   	github.com/shlande/mediaworker/cmd/ingest-worker	[no test files]
+ok  	github.com/shlande/mediaworker/internal/config	(cached)
+ok  	github.com/shlande/mediaworker/internal/controlplane/accountregistry	(cached)
+ok  	github.com/shlande/mediaworker/internal/controlplane/dhtbootstrap	(cached)
+ok  	github.com/shlande/mediaworker/internal/controlplane/jwt	(cached)
+ok  	github.com/shlande/mediaworker/internal/controlplane/pinstrategy	(cached)
+ok  	github.com/shlande/mediaworker/internal/controlplane/syncbroadcaster	(cached)
+ok  	github.com/shlande/mediaworker/internal/ingest	(cached)
+ok  	github.com/shlande/mediaworker/internal/node/backhaul	(cached)
+ok  	github.com/shlande/mediaworker/internal/node/cache	(cached)
+ok  	github.com/shlande/mediaworker/internal/node/dht	(cached)
+ok  	github.com/shlande/mediaworker/internal/node/gossippop	(cached)
+ok  	github.com/shlande/mediaworker/internal/node/hashring	(cached)
+ok  	github.com/shlande/mediaworker/internal/node/icp	(cached)
+ok  	github.com/shlande/mediaworker/internal/node/jwt	(cached)
+ok  	github.com/shlande/mediaworker/internal/node/libp2phost	(cached)
+ok  	github.com/shlande/mediaworker/internal/node/monitor	(cached)
+ok  	github.com/shlande/mediaworker/internal/node/peerstore	(cached)
+ok  	github.com/shlande/mediaworker/internal/node/pinstore	(cached)
+?   	github.com/shlande/mediaworker/internal/node/pinstrategy	[no test files]
+ok  	github.com/shlande/mediaworker/internal/node/routing	(cached)
+ok  	github.com/shlande/mediaworker/internal/node/syncbroadcaster	(cached)
+?   	github.com/shlande/mediaworker/internal/shared/identity	[no test files]
+ok  	github.com/shlande/mediaworker/internal/shared/jwt	(cached)
+ok  	github.com/shlande/mediaworker/internal/storage/accountpool	(cached)
+ok  	github.com/shlande/mediaworker/internal/storage/auth	(cached)
+ok  	github.com/shlande/mediaworker/internal/storage/circuitbreaker	(cached)
+ok  	github.com/shlande/mediaworker/internal/storage/dataplane	(cached)
+ok  	github.com/shlande/mediaworker/internal/storage/driver	(cached)
+ok  	github.com/shlande/mediaworker/internal/storage/driver/baidu	(cached)
+ok  	github.com/shlande/mediaworker/internal/storage/driver/mock	(cached)
+ok  	github.com/shlande/mediaworker/internal/storage/driver/onedrive	(cached)
+ok  	github.com/shlande/mediaworker/internal/storage/healthcheck	(cached)
+ok  	github.com/shlande/mediaworker/internal/storage/linkpool	(cached)
+ok  	github.com/shlande/mediaworker/internal/storage/metadata	(cached)
+ok  	github.com/shlande/mediaworker/internal/storage/monitor	(cached)
+ok  	github.com/shlande/mediaworker/internal/storage/quota	(cached)
+ok  	github.com/shlande/mediaworker/internal/types	(cached)
+ok  	github.com/shlande/mediaworker/test/integration	(cached)
+
+=== 8. go test -tags=integration ./test/integration/... -count=1 (PASS) ===
+ok  	github.com/shlande/mediaworker/test/integration	13.864s
+
+=== FINAL STATUS: ALL GREEN ===

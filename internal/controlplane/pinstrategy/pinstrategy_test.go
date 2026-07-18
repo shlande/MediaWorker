@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/shlande/mediaworker/internal/controlplane/metadata"
+	"github.com/shlande/mediaworker/internal/storage/metadata"
 	"github.com/shlande/mediaworker/internal/node/pinstore"
 	nodepin "github.com/shlande/mediaworker/internal/node/pinstrategy"
 	"github.com/shlande/mediaworker/internal/types"

@@ -16,7 +16,7 @@ import (
 	"github.com/shlande/mediaworker/internal/config"
 	cpdht "github.com/shlande/mediaworker/internal/controlplane/dhtbootstrap"
 	cpjwt "github.com/shlande/mediaworker/internal/controlplane/jwt"
-	"github.com/shlande/mediaworker/internal/controlplane/metadata"
+	"github.com/shlande/mediaworker/internal/storage/metadata"
 	"github.com/shlande/mediaworker/internal/controlplane/pinstrategy"
 	"github.com/shlande/mediaworker/internal/controlplane/syncbroadcaster"
 	"github.com/shlande/mediaworker/internal/shared/identity"

@@ -20,7 +20,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/shlande/mediaworker/internal/controlplane/metadata"
+	"github.com/shlande/mediaworker/internal/storage/metadata"
 	"github.com/shlande/mediaworker/internal/node/backhaul"
 	"github.com/shlande/mediaworker/internal/storage/accountpool"
 	"github.com/shlande/mediaworker/internal/storage/auth"

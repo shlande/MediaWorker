@@ -52,7 +52,7 @@ type ProcessResult struct {
 // BlobStoreWriter is the metadata-transaction interface for persisting blob
 // records, their locations, and the content orchestration metadata. This
 // interface mirrors the shape of
-// controlplane/metadata.PGMetadataClient.WriteIngestTransaction but lives in
+// storage/metadata.PGMetadataClient.WriteIngestTransaction but lives in
 // the ingest package to break the import cycle.
 type BlobStoreWriter interface {
 	WriteIngestTransaction(

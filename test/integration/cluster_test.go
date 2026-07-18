@@ -25,7 +25,7 @@ import (
 	kaddht "github.com/libp2p/go-libp2p-kad-dht"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 
-	"github.com/shlande/mediaworker/internal/controlplane/metadata"
+	"github.com/shlande/mediaworker/internal/storage/metadata"
 	"github.com/shlande/mediaworker/internal/controlplane/pinstrategy"
 	"github.com/shlande/mediaworker/internal/node/backhaul"
 	"github.com/shlande/mediaworker/internal/node/cache"
