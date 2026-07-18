@@ -19,6 +19,10 @@ import (
 	"github.com/shlande/mediaworker/internal/types"
 )
 
+// ControlProtocol is the libp2p stream protocol ID for the control-plane ↔
+// node sync channel. This is the default; operators that override the
+// control-plane side via WithProtocolID must override the node side to the
+// same value — otherwise no streams can be negotiated (plan line 239).
 const ControlProtocol = protocol.ID("/edge/control/1.0.0")
 
 // WireMessage is the JSON envelope shared between the control-plane broadcaster
@@ -40,23 +44,48 @@ type OnEvent func(event types.Event)
 // It registers a stream handler that receives PinPlan events and provides a
 // SendToControlPlane method for pushing NodeStatusReport back to the CPS.
 type Client struct {
-	host    host.Host
-	onPlan  OnPinPlan
-	onEvent OnEvent
+	host       host.Host
+	protocolID protocol.ID
+	onPlan     OnPinPlan
+	onEvent    OnEvent
+}
+
+// Option configures a Client at construction time.
+type Option func(*Client)
+
+// WithProtocolID overrides the default libp2p stream protocol ID. An empty
+// string is ignored (default preserved). Must match the control-plane side's
+// configured protocol ID — otherwise no streams can be negotiated (plan line 239).
+func WithProtocolID(id string) Option {
+	return func(c *Client) {
+		if id != "" {
+			c.protocolID = protocol.ID(id)
+		}
+	}
 }
 
 // NewClient creates a node-side control-channel client and registers the
 // /edge/control/1.0.0 stream handler on the given host.
 // onPlan is called for PIN_PLAN_UPDATE events; onEvent is called for all
 // other recognized events. Either may be nil to skip that dispatch.
-func NewClient(h host.Host, onPlan OnPinPlan, onEvent OnEvent) *Client {
+func NewClient(h host.Host, onPlan OnPinPlan, onEvent OnEvent, opts ...Option) *Client {
 	c := &Client{
-		host:    h,
-		onPlan:  onPlan,
-		onEvent: onEvent,
+		host:       h,
+		protocolID: ControlProtocol,
+		onPlan:     onPlan,
+		onEvent:    onEvent,
 	}
-	h.SetStreamHandler(ControlProtocol, c.handleStream)
+	for _, opt := range opts {
+		opt(c)
+	}
+	h.SetStreamHandler(c.protocolID, c.handleStream)
 	return c
+}
+
+// ProtocolID returns the libp2p stream protocol ID this client negotiates.
+// Exposed for cross-side verification (CP-side broadcaster must match).
+func (c *Client) ProtocolID() protocol.ID {
+	return c.protocolID
 }
 
 // SendToControlPlane sends an event (e.g., NodeStatusReport) to the control
@@ -73,7 +102,7 @@ func (c *Client) SendToControlPlane(ctx context.Context, targetCP peer.ID, event
 		Payload: payloadBytes,
 	}
 
-	stream, err := c.host.NewStream(ctx, targetCP, ControlProtocol)
+	stream, err := c.host.NewStream(ctx, targetCP, c.protocolID)
 	if err != nil {
 		return fmt.Errorf("node/syncbroadcaster: open stream to CP %s: %w", targetCP.ShortString(), err)
 	}

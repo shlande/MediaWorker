@@ -12,6 +12,7 @@ import (
 	"io"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
@@ -23,7 +24,17 @@ import (
 
 // ControlProtocol is the libp2p stream protocol ID for the control-plane ↔ node
 // sync channel. Both forward (SendToNode) and reverse (node status push) use it.
+//
+// This is the default protocol ID; callers can override it via
+// WithProtocolID when constructing a SyncBroadcaster. The node-side client
+// (internal/node/syncbroadcaster/client.go) uses the same default constant —
+// overriding on one side only would fork the wire protocol, which is why
+// operators must change both ends in lockstep (plan line 239).
 const ControlProtocol = protocol.ID("/edge/control/1.0.0")
+
+// DefaultSendTimeout is the per-message send timeout used when
+// WithSendTimeout is not supplied or passes a zero/negative duration.
+const DefaultSendTimeout = 30 * time.Second
 
 // WireMessage is the JSON-encoded envelope carried over the control stream.
 // It is compatible with types.Event: Type maps to Event.Type, Payload maps to
@@ -39,10 +50,46 @@ type WireMessage struct {
 type SyncBroadcaster struct {
 	host host.Host
 
+	// protocolID is the libp2p stream protocol negotiated with nodes. Defaults
+	// to ControlProtocol ("/edge/control/1.0.0"). Changing this requires
+	// changing the node-side client's protocol ID in lockstep — otherwise the
+	// two sides cannot negotiate streams (plan line 239).
+	protocolID protocol.ID
+
+	// sendTimeout caps each sendWireMessage call. Defaults to
+	// DefaultSendTimeout (30s). A zero/negative value is normalised to the
+	// default at New time.
+	sendTimeout time.Duration
+
 	mu   sync.RWMutex
 	subs map[string][]chan types.Event // eventType → subscribers
 
 	snapshotStore *SnapshotStore
+}
+
+// Option configures a SyncBroadcaster at construction time.
+type Option func(*SyncBroadcaster)
+
+// WithProtocolID overrides the default libp2p stream protocol ID. An empty
+// string is ignored (default preserved). Operators must change the node-side
+// client's protocol ID to the same value — otherwise no streams can be
+// established (wire-protocol fork hazard, plan line 239).
+func WithProtocolID(id string) Option {
+	return func(sb *SyncBroadcaster) {
+		if id != "" {
+			sb.protocolID = protocol.ID(id)
+		}
+	}
+}
+
+// WithSendTimeout overrides the per-message send timeout. A zero or negative
+// duration is ignored (default preserved).
+func WithSendTimeout(d time.Duration) Option {
+	return func(sb *SyncBroadcaster) {
+		if d > 0 {
+			sb.sendTimeout = d
+		}
+	}
 }
 
 // RingBuffer is a fixed-capacity (1000) circular buffer of Events. It stores
@@ -204,21 +251,44 @@ func cloneBytes(src []byte) []byte {
 	return dst
 }
 
-// New creates a SyncBroadcaster and registers the /edge/control/1.0.0 stream
+// New creates a SyncBroadcaster and registers the control-protocol stream
 // handler on the given libp2p host for receiving reverse-direction events from
 // nodes (e.g., NodeStatusReport).
-func New(h host.Host) *SyncBroadcaster {
+//
+// Default protocol ID is ControlProtocol ("/edge/control/1.0.0"); override via
+// WithProtocolID (must match node-side client). Default send timeout is
+// DefaultSendTimeout (30s); override via WithSendTimeout.
+func New(h host.Host, opts ...Option) *SyncBroadcaster {
 	sb := &SyncBroadcaster{
-		host: h,
-		subs: make(map[string][]chan types.Event),
+		host:        h,
+		protocolID:  ControlProtocol,
+		sendTimeout: DefaultSendTimeout,
+		subs:        make(map[string][]chan types.Event),
 	}
-	h.SetStreamHandler(ControlProtocol, sb.handleStream)
+	for _, opt := range opts {
+		opt(sb)
+	}
+	h.SetStreamHandler(sb.protocolID, sb.handleStream)
 	return sb
 }
 
-// SendToNode sends an event to a specific node by opening a /edge/control/1.0.0
+// ProtocolID returns the libp2p stream protocol ID this broadcaster negotiates.
+// Exposed so callers (e.g., node-side client code wiring both ends) can verify
+// the configured value matches across the wire.
+func (sb *SyncBroadcaster) ProtocolID() protocol.ID {
+	return sb.protocolID
+}
+
+func (sb *SyncBroadcaster) SendTimeout() time.Duration {
+	return sb.sendTimeout
+}
+
+// SendToNode sends an event to a specific node by opening a control-protocol
 // stream and writing a varint-prefixed JSON WireMessage. nodeID is the string
 // representation of the target node's libp2p peer.ID.
+//
+// The send is bounded by sb.sendTimeout (default 30s). On timeout the
+// underlying stream open returns a context.DeadlineExceeded wrap.
 func (sb *SyncBroadcaster) SendToNode(nodeID string, eventType string, payload any) error {
 	targetPeerID, err := peer.Decode(nodeID)
 	if err != nil {
@@ -235,7 +305,9 @@ func (sb *SyncBroadcaster) SendToNode(nodeID string, eventType string, payload a
 		Payload: json.RawMessage(payloadBytes),
 	}
 
-	return sb.sendWireMessage(context.Background(), targetPeerID, msg)
+	ctx, cancel := context.WithTimeout(context.Background(), sb.sendTimeout)
+	defer cancel()
+	return sb.sendWireMessage(ctx, targetPeerID, msg)
 }
 
 // Subscribe registers a subscriber channel for a given event type. When a
@@ -287,11 +359,11 @@ func (sb *SyncBroadcaster) Broadcast(eventType string, payload any) error {
 		return nil
 	}
 
-	ctx := context.Background()
 	for _, peer := range peers {
+		ctx, cancel := context.WithTimeout(context.Background(), sb.sendTimeout)
 		err := sb.sendWireMessage(ctx, peer, msg)
+		cancel()
 		if err != nil {
-			// Log and continue — don't let one peer failure block the rest.
 			_ = err
 		}
 	}
@@ -353,10 +425,11 @@ func (sb *SyncBroadcaster) handleStream(stream network.Stream) {
 // ─── Wire helpers ──────────────────────────────────────────────────────────
 
 // sendWireMessage opens a stream to the target peer, writes a varint-prefixed
-// JSON WireMessage, and closes the stream. It uses a short timeout to avoid
-// blocking indefinitely on unresponsive nodes.
+// JSON WireMessage, and closes the stream. The caller-supplied ctx bounds
+// stream open + writes; SendToNode wraps it with sb.sendTimeout. Broadcast
+// uses an unbounded context (per-peer failures are logged and skipped).
 func (sb *SyncBroadcaster) sendWireMessage(ctx context.Context, target peer.ID, msg WireMessage) error {
-	stream, err := sb.host.NewStream(ctx, target, ControlProtocol)
+	stream, err := sb.host.NewStream(ctx, target, sb.protocolID)
 	if err != nil {
 		return fmt.Errorf("syncbroadcaster: open stream to %s: %w", target.ShortString(), err)
 	}
@@ -366,7 +439,6 @@ func (sb *SyncBroadcaster) sendWireMessage(ctx context.Context, target peer.ID, 
 		return fmt.Errorf("syncbroadcaster: write message to %s: %w", target.ShortString(), err)
 	}
 
-	// Signal end of write side.
 	if c, ok := stream.(interface{ CloseWrite() error }); ok {
 		_ = c.CloseWrite()
 	}

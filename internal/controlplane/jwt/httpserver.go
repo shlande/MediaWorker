@@ -8,18 +8,22 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
+	"github.com/shlande/mediaworker/internal/node/monitor"
 	sjwt "github.com/shlande/mediaworker/internal/shared/jwt"
 	"github.com/shlande/mediaworker/internal/types"
 )
 
 // JWTHTTPServer serves POST /v1/node/jwt for JWT credential signing.
 // It can additionally host an optional, separately-registered handler for
-// GET /v1/blob-locations/{hash} (used by the control-plane location query API,
-// T9). Reusing the same mux avoids a new listening port (plan line 176).
+// GET /v1/blob-locations/{hash} (T9) and GET /metrics (T20). Reusing the
+// same mux avoids a new listening port (plan line 176 / 275).
 type JWTHTTPServer struct {
 	service         *JWTService
 	locationHandler http.Handler
+	metricsHandler  http.Handler
+	metrics         *monitor.Metrics
 }
 
 // NewJWTHTTPServer creates a JWTHTTPServer backed by the given JWTService.
@@ -36,18 +40,40 @@ func (s *JWTHTTPServer) RegisterLocationHandler(h http.Handler) {
 	s.locationHandler = h
 }
 
+// RegisterMetricsHandler mounts GET /metrics on the JWT server's mux (T20).
+// Pass the same Metrics instance that is wired into the PinOrchestrator so
+// the /metrics scrape reflects counters incremented across the CP. If never
+// called, /metrics is not mounted.
+func (s *JWTHTTPServer) RegisterMetricsHandler(metrics *monitor.Metrics) {
+	s.metrics = metrics
+	if metrics != nil {
+		s.metricsHandler = metrics.HTTPHandler()
+	}
+}
+
 // Serve starts the HTTP server on listenAddr and blocks until ctx is
 // cancelled, at which point it performs a graceful shutdown.
-func (s *JWTHTTPServer) Serve(ctx context.Context, listenAddr string) error {
+//
+// A zero readTimeout or writeTimeout disables that timeout (matching
+// net/http semantics); main.go normalises empty config strings to
+// DefaultJWTHTTPTimeout (10s) before calling this.
+func (s *JWTHTTPServer) Serve(ctx context.Context, listenAddr string, readTimeout, writeTimeout time.Duration) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/node/jwt", s.handleJWTRequest)
 	if s.locationHandler != nil {
 		mux.Handle("GET /v1/blob-locations/{hash}", s.locationHandler)
 	}
+	if s.metricsHandler != nil {
+		// No auth — /metrics is intended for the operator/scraper network
+		// behind the same ACL as the JWT port (plan line 275 — intranet).
+		mux.Handle("GET /metrics", s.metricsHandler)
+	}
 
 	srv := &http.Server{
-		Addr:    listenAddr,
-		Handler: mux,
+		Addr:         listenAddr,
+		Handler:      mux,
+		ReadTimeout:  readTimeout,
+		WriteTimeout: writeTimeout,
 	}
 
 	errCh := make(chan error, 1)
@@ -70,6 +96,10 @@ func (s *JWTHTTPServer) Serve(ctx context.Context, listenAddr string) error {
 }
 
 const shutdownTimeout = 5 * 1e9 // 5 seconds (time.Duration literal)
+
+// DefaultJWTHTTPTimeout is the fallback for empty/unparseable JWTHTTPConfig
+// ReadTimeout / WriteTimeout strings. Matches the documented config default.
+const DefaultJWTHTTPTimeout = 10 * time.Second
 
 // extractRemoteIP derives the client IP from X-Forwarded-For or RemoteAddr.
 func extractRemoteIP(req *http.Request) string {
@@ -97,6 +127,9 @@ func (s *JWTHTTPServer) handleJWTRequest(w http.ResponseWriter, req *http.Reques
 	var jwtReq types.JWTRequest
 	if err := json.NewDecoder(req.Body).Decode(&jwtReq); err != nil {
 		writeHTTPError(w, http.StatusBadRequest, "invalid JSON body")
+		if s.metrics != nil {
+			s.metrics.RecordCPJWTIssued(monitor.CPJWTOutcomeInternalError)
+		}
 		return
 	}
 
@@ -104,6 +137,18 @@ func (s *JWTHTTPServer) handleJWTRequest(w http.ResponseWriter, req *http.Reques
 
 	resp, err := s.service.HandleJWTRequest(jwtReq, remoteIP)
 	if err != nil {
+		if s.metrics != nil {
+			switch {
+			case errors.Is(err, sjwt.ErrInvalidPeerID):
+				s.metrics.RecordCPJWTIssued(monitor.CPJWTOutcomeInvalidPeerID)
+			case errors.Is(err, sjwt.ErrInvalidSignature):
+				s.metrics.RecordCPJWTIssued(monitor.CPJWTOutcomeInvalidSig)
+			case errors.Is(err, sjwt.ErrRateLimited):
+				s.metrics.RecordCPJWTIssued(monitor.CPJWTOutcomeRateLimited)
+			default:
+				s.metrics.RecordCPJWTIssued(monitor.CPJWTOutcomeInternalError)
+			}
+		}
 		switch {
 		case errors.Is(err, sjwt.ErrInvalidPeerID):
 			writeHTTPError(w, http.StatusBadRequest, err.Error())
@@ -115,6 +160,10 @@ func (s *JWTHTTPServer) handleJWTRequest(w http.ResponseWriter, req *http.Reques
 			writeHTTPError(w, http.StatusInternalServerError, "internal error")
 		}
 		return
+	}
+
+	if s.metrics != nil {
+		s.metrics.RecordCPJWTIssued(monitor.CPJWTOutcomeSuccess)
 	}
 
 	w.Header().Set("Content-Type", "application/json")

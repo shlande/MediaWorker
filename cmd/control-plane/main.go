@@ -20,6 +20,7 @@ import (
 	"github.com/shlande/mediaworker/internal/storage/metadata"
 	"github.com/shlande/mediaworker/internal/controlplane/pinstrategy"
 	"github.com/shlande/mediaworker/internal/controlplane/syncbroadcaster"
+	"github.com/shlande/mediaworker/internal/node/monitor"
 	"github.com/shlande/mediaworker/internal/shared/identity"
 	"github.com/shlande/mediaworker/internal/types"
 )
@@ -62,6 +63,11 @@ func run(configPath string) error {
 	rateLimiter := cpjwt.NewRateLimiter(cpjwt.DefaultRateLimitInterval)
 	auditLog := cpjwt.NewAuditLog(os.Stdout)
 
+	// 4b. Metrics (T20). Constructed once per process and shared across the
+	// JWT HTTP server, PinOrchestrator, and SyncBroadcaster subscribe loop.
+	// Mounted on the JWT HTTP server's mux (no separate port — plan line 275).
+	metrics := monitor.NewMetrics()
+
 	// 5. JWT service + HTTP server.
 	jwtSvc := cpjwt.NewJWTService(privKey, ps, rateLimiter, auditLog, cfg.JWTPolicy)
 	httpServer := cpjwt.NewJWTHTTPServer(jwtSvc)
@@ -85,7 +91,18 @@ func run(configPath string) error {
 	}
 
 	// 9. SyncBroadcaster on bootstrap host.
-	sb := syncbroadcaster.New(bootHost.Host())
+	sbOpts := []syncbroadcaster.Option{}
+	if cfg.SyncBroadcaster.ProtocolID != "" {
+		sbOpts = append(sbOpts, syncbroadcaster.WithProtocolID(cfg.SyncBroadcaster.ProtocolID))
+	}
+	if cfg.SyncBroadcaster.SendTimeout != "" {
+		if d, err := time.ParseDuration(cfg.SyncBroadcaster.SendTimeout); err == nil && d > 0 {
+			sbOpts = append(sbOpts, syncbroadcaster.WithSendTimeout(d))
+		} else {
+			return fmt.Errorf("parse sync_broadcaster.send_timeout %q: %w", cfg.SyncBroadcaster.SendTimeout, err)
+		}
+	}
+	sb := syncbroadcaster.New(bootHost.Host(), sbOpts...)
 
 	// 10. MetadataClient (gracefully degrade if PG unavailable — PinOrchestrator
 	//     uses cached state via NodeStatusReport channels).
@@ -107,13 +124,29 @@ func run(configPath string) error {
 	}
 	httpServer.RegisterLocationHandler(locationsvc.NewHandler(jwtSvc.PubKey(), mcBlob))
 
+	// 10c. /metrics endpoint (T20). Mounted on the same mux as /v1/node/jwt
+	//      and /v1/blob-locations/{hash}. No auth — intranet assumption
+	//      (plan line 275).
+	httpServer.RegisterMetricsHandler(metrics)
+
 	// 11. PinOrchestrator.
 	po := pinstrategy.NewPinOrchestrator(mc, mc, sb)
 	po.RegisterStrategy("dash_video", &pinstrategy.DashPinStrategy{})
+	po.SetMetrics(metrics)
 
 	rebalanceIntv, err := time.ParseDuration(cfg.PinOrchestrator.RebalanceInterval)
 	if err != nil {
 		return fmt.Errorf("parse rebalance_interval %q: %w", cfg.PinOrchestrator.RebalanceInterval, err)
+	}
+
+	// Parse JWT HTTP timeouts (empty string → default 10s).
+	readTimeout, err := parseJWTHTTPDuration(cfg.JWT.ReadTimeout, "jwt_http.read_timeout")
+	if err != nil {
+		return err
+	}
+	writeTimeout, err := parseJWTHTTPDuration(cfg.JWT.WriteTimeout, "jwt_http.write_timeout")
+	if err != nil {
+		return err
 	}
 
 	// 12. Context + signal handling.
@@ -127,8 +160,8 @@ func run(configPath string) error {
 	slog.Info("control-plane starting")
 
 	go func() {
-		slog.Info("JWT HTTP listening", "addr", cfg.JWT.Listen)
-		if err := httpServer.Serve(ctx, cfg.JWT.Listen); err != nil {
+		slog.Info("JWT HTTP listening", "addr", cfg.JWT.Listen, "read_timeout", readTimeout, "write_timeout", writeTimeout)
+		if err := httpServer.Serve(ctx, cfg.JWT.Listen, readTimeout, writeTimeout); err != nil {
 			slog.Error("JWT HTTP serve", "err", err)
 		}
 	}()
@@ -141,8 +174,8 @@ func run(configPath string) error {
 		"namespace", cfg.DHTBootstrap.Namespace,
 	)
 
-	go po.Run(ctx, rebalanceIntv)
-	slog.Info("PinOrchestrator started", "interval", rebalanceIntv)
+	go po.Run(ctx, rebalanceIntv, cfg.PinOrchestrator.TopContentsLimit)
+	slog.Info("PinOrchestrator started", "interval", rebalanceIntv, "top_contents_limit", cfg.PinOrchestrator.TopContentsLimit)
 
 	// 14. Subscribe to reverse channels.
 	statusCh := sb.Subscribe("NODE_STATUS_REPORT")
@@ -162,10 +195,10 @@ func run(configPath string) error {
 		for evt := range ingestCh {
 			var evtData types.ContentIngestedEvent
 			if err := json.Unmarshal(evt.Payload, &evtData); err != nil {
-				slog.Warn("failed to decode CONTENT_INGESTED", "err", err)
-				continue
-			}
-			po.OnContentIngested(evtData)
+			slog.Warn("failed to decode CONTENT_INGESTED", "err", err)
+			continue
+		}
+		po.OnContentIngested(evtData)
 		}
 	}()
 
@@ -206,4 +239,22 @@ func run(configPath string) error {
 	}
 
 	return nil
+}
+
+// parseJWTHTTPDuration parses a JWTHTTPConfig duration string. An empty string
+// yields cpjwt.DefaultJWTHTTPTimeout (10s). A non-empty but unparseable string
+// returns an error naming the field so operators can locate the bad value
+// (plan line 243: failure = invalid duration → startup error names field).
+func parseJWTHTTPDuration(s string, fieldName string) (time.Duration, error) {
+	if s == "" {
+		return cpjwt.DefaultJWTHTTPTimeout, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, fmt.Errorf("parse %s %q: %w", fieldName, s, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("%s must be positive, got %q", fieldName, s)
+	}
+	return d, nil
 }

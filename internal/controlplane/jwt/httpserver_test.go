@@ -45,7 +45,7 @@ func TestJWTHTTPServer_validJWTRequest_returns200(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- server.Serve(ctx, listenAddr)
+		errCh <- server.Serve(ctx, listenAddr, 0, 0)
 	}()
 
 	// Wait for the server to start.
@@ -118,7 +118,7 @@ func TestJWTHTTPServer_invalidSignature_returns403(t *testing.T) {
 
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- server.Serve(ctx, listenAddr)
+		errCh <- server.Serve(ctx, listenAddr, 0, 0)
 	}()
 
 	waitForServer(t, listenAddr)
@@ -458,7 +458,7 @@ func TestRegisterLocationHandler_MountsGetRouteOnServe(t *testing.T) {
 	defer cancel()
 
 	go func() {
-		_ = server.Serve(ctx, listenAddr)
+		_ = server.Serve(ctx, listenAddr, 0, 0)
 	}()
 	waitForServer(t, listenAddr)
 
@@ -496,7 +496,7 @@ func TestRegisterLocationHandler_NoRegistrationMeansRouteMissing(t *testing.T) {
 	defer cancel()
 
 	go func() {
-		_ = server.Serve(ctx, listenAddr)
+		_ = server.Serve(ctx, listenAddr, 0, 0)
 	}()
 	waitForServer(t, listenAddr)
 

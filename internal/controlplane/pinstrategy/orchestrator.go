@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hashicorp/golang-lru/v2"
+	"github.com/shlande/mediaworker/internal/node/monitor"
 	"github.com/shlande/mediaworker/internal/storage/metadata"
 	"github.com/shlande/mediaworker/internal/types"
 )
@@ -51,8 +52,22 @@ type PinOrchestrator struct {
 	blobCache *lru.Cache[string, *ContentBlobCacheEntry]
 	bcMu      sync.RWMutex
 
+	// topContentsLimit caps the popularity.GetTopContents query during rebalance.
+	// Set by Run; rebalance() reads it. A zero value falls back to
+	// DefaultTopContentsLimit at use time.
+	topContentsLimit int
+
+	// metrics (T20, optional) — when set, sendNodePinPlan increments
+	// cp_pin_plan_dispatched_total.
+	metrics *monitor.Metrics
+
 	seq atomic.Uint64
 }
+
+// DefaultTopContentsLimit is the fallback cap for popularity.GetTopContents
+// when config.PinOrchestrator.TopContentsLimit is zero or unset. Matches the
+// pre-T16 hardcoded 5000.
+const DefaultTopContentsLimit = 5000
 
 // NewPinOrchestrator creates a PinOrchestrator with the given content metadata
 // and popularity clients, plus a broadcaster for sending pin plans to nodes.
@@ -77,6 +92,13 @@ func NewPinOrchestrator(
 // Must be called before the orchestrator processes events.
 func (po *PinOrchestrator) RegisterStrategy(contentType string, strategy PinStrategy) {
 	po.strategies[contentType] = strategy
+}
+
+// SetMetrics wires a Metrics instance for PinPlan dispatch instrumentation
+// (T20). Optional — a nil receiver (the zero value) disables instrumentation.
+// Idempotent.
+func (po *PinOrchestrator) SetMetrics(m *monitor.Metrics) {
+	po.metrics = m
 }
 
 // ─── Event handlers ───
@@ -131,11 +153,21 @@ func (po *PinOrchestrator) OnNodeStatusReport(report types.NodeStatusReport) {
 // ─── Periodic rebalancing ───
 
 // Run starts the periodic rebalance loop with the given interval. It fetches
-// the top 5000 contents by popularity and calls the registered strategy's
-// AdjustPin for each, delivering per-node PinPlans. Panics during a rebalance
-// round are recovered so subsequent rounds continue uninterrupted. If interval
-// is <= 0, the rebalance loop is disabled and Run blocks until ctx is cancelled.
-func (po *PinOrchestrator) Run(ctx context.Context, interval time.Duration) {
+// the top topContentsLimit contents by popularity and calls the registered
+// strategy's AdjustPin for each, delivering per-node PinPlans. Panics during a
+// rebalance round are recovered so subsequent rounds continue uninterrupted.
+// If interval is <= 0, the rebalance loop is disabled and Run blocks until ctx
+// is cancelled.
+//
+// topContentsLimit is the cap passed to popularity.GetTopContents. A zero or
+// negative value falls back to DefaultTopContentsLimit (5000) — matches the
+// pre-T16 hardcoded behaviour bit-for-bit when config omits the field.
+func (po *PinOrchestrator) Run(ctx context.Context, interval time.Duration, topContentsLimit int) {
+	if topContentsLimit <= 0 {
+		topContentsLimit = DefaultTopContentsLimit
+	}
+	po.topContentsLimit = topContentsLimit
+
 	if interval <= 0 {
 		<-ctx.Done()
 		return
@@ -164,7 +196,11 @@ func (po *PinOrchestrator) safeRebalance(ctx context.Context) {
 
 func (po *PinOrchestrator) rebalance(ctx context.Context) {
 	// Step 1: Get top-N popular contents from the popularity service.
-	popular, err := po.popularity.GetTopContents(ctx, 5000)
+	limit := po.topContentsLimit
+	if limit <= 0 {
+		limit = DefaultTopContentsLimit
+	}
+	popular, err := po.popularity.GetTopContents(ctx, limit)
 	if err != nil {
 		return
 	}

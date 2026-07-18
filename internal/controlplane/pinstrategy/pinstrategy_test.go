@@ -58,9 +58,17 @@ type mockPopularityClient struct {
 	topContents    []metadata.TopContent
 	topContentsErr error
 	popularity     map[string]float64
+
+	// lastTopContentsLimit captures the limit arg passed to the most recent
+	// GetTopContents call. Useful for asserting that Run/rebalance parameterize
+	// the popularity query with the configured TopContentsLimit.
+	lastTopContentsLimit int
+	topContentsCalls     atomic.Int64
 }
 
 func (m *mockPopularityClient) GetTopContents(ctx context.Context, limit int) ([]metadata.TopContent, error) {
+	m.lastTopContentsLimit = limit
+	m.topContentsCalls.Add(1)
 	if m.topContentsErr != nil {
 		return nil, m.topContentsErr
 	}
@@ -792,5 +800,77 @@ func TestPinOrchestrator_OnContentIngested_NoStrategy(t *testing.T) {
 
 	if bcast.sentCount() != 0 {
 		t.Fatalf("expected 0 plans without strategy, got %d", bcast.sentCount())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// T16: top_contents_limit parameterization
+// ---------------------------------------------------------------------------
+
+// TestRebalance_TopContentsLimit_PropagatesToPopularityQuery asserts that when
+// Run is called with topContentsLimit=7, the rebalance loop's popularity
+// query receives limit=7 (not the hardcoded legacy 5000).
+func TestRebalance_TopContentsLimit_PropagatesToPopularityQuery(t *testing.T) {
+	cm := &mockContentMetaClient{
+		contentBlobs: makeTestBlobs(),
+		contentRoles: makeTestRoles(),
+	}
+	pop := &mockPopularityClient{
+		topContents: []metadata.TopContent{
+			{ContentMeta: types.ContentMeta{ContentID: "vid-1", ContentType: "dash"}, Popularity: 500},
+		},
+	}
+	bcast := &mockBroadcaster{}
+	po := NewPinOrchestrator(cm, pop, bcast)
+	po.RegisterStrategy("dash", &DashPinStrategy{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Run with topContentsLimit=7 and a short interval so one rebalance fires.
+	go po.Run(ctx, 50*time.Millisecond, 7)
+
+	// Wait for at least one GetTopContents call.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && pop.topContentsCalls.Load() == 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if pop.topContentsCalls.Load() == 0 {
+		t.Fatal("expected at least one GetTopContents call within 2s")
+	}
+
+	if pop.lastTopContentsLimit != 7 {
+		t.Fatalf("expected popularity query limit=7, got %d", pop.lastTopContentsLimit)
+	}
+}
+
+// TestRebalance_TopContentsLimit_ZeroFallsBackToDefault asserts that a zero
+// topContentsLimit (config field omitted) falls back to DefaultTopContentsLimit
+// (5000) — preserves pre-T16 behaviour bit-for-bit.
+func TestRebalance_TopContentsLimit_ZeroFallsBackToDefault(t *testing.T) {
+	cm := &mockContentMetaClient{}
+	pop := &mockPopularityClient{
+		topContentsErr: errors.New("intentional error to short-circuit after query"),
+	}
+	bcast := &mockBroadcaster{}
+	po := NewPinOrchestrator(cm, pop, bcast)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go po.Run(ctx, 50*time.Millisecond, 0)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) && pop.topContentsCalls.Load() == 0 {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	if pop.topContentsCalls.Load() == 0 {
+		t.Fatal("expected at least one GetTopContents call within 2s")
+	}
+
+	if pop.lastTopContentsLimit != DefaultTopContentsLimit {
+		t.Fatalf("expected default limit=%d, got %d", DefaultTopContentsLimit, pop.lastTopContentsLimit)
 	}
 }

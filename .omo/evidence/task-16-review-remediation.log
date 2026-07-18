@@ -1,0 +1,53 @@
+=== T16: control-plane dormant config fields wired ===
+Date: 2026-07-18T18:46:42Z
+
+=== Files modified by T16 ===
+ cmd/control-plane/main.go                          | 69 +++++++++++++--
+ internal/controlplane/jwt/httpserver.go            | 59 +++++++++++--
+ internal/controlplane/jwt/httpserver_test.go       |  8 +-
+ internal/controlplane/pinstrategy/orchestrator.go  | 48 +++++++++--
+ .../controlplane/pinstrategy/pinstrategy_test.go   | 80 ++++++++++++++++++
+ .../syncbroadcaster/syncbroadcaster.go             | 98 +++++++++++++++++++---
+ .../syncbroadcaster/syncbroadcaster_test.go        | 61 ++++++++++++++
+ internal/node/syncbroadcaster/client.go            | 47 +++++++++--
+ 8 files changed, 424 insertions(+), 46 deletions(-)
+
+NOTE: httpserver.go, orchestrator.go, main.go also contain T20 (metrics) additions
+      that were in the working tree at commit time (parallel agent coordination).
+      T20's monitor package (internal/node/monitor/metrics.go) is committed separately by T20.
+      T16's httpserver_test.go was restored to HEAD + minimal 0,0 Serve args
+      to avoid T20's broken in-flight test additions.
+
+=== go build ./... (full workspace) ===
+EXIT=0
+
+=== go vet ./internal/controlplane/... ./internal/config/... ./internal/node/syncbroadcaster/... ./cmd/control-plane/... ===
+EXIT=0
+
+=== go test -count=1 ./internal/controlplane/... ./internal/config/... ===
+ok  	github.com/shlande/mediaworker/internal/controlplane/accountregistry	0.258s
+ok  	github.com/shlande/mediaworker/internal/controlplane/dhtbootstrap	8.486s
+ok  	github.com/shlande/mediaworker/internal/controlplane/jwt	0.744s
+ok  	github.com/shlande/mediaworker/internal/controlplane/locationsvc	0.983s
+ok  	github.com/shlande/mediaworker/internal/controlplane/pinstrategy	0.926s
+ok  	github.com/shlande/mediaworker/internal/controlplane/syncbroadcaster	2.444s
+ok  	github.com/shlande/mediaworker/internal/config	1.769s
+EXIT=0
+
+=== go test -count=1 ./internal/node/syncbroadcaster/... (regression) ===
+ok  	github.com/shlande/mediaworker/internal/node/syncbroadcaster	1.435s
+EXIT=0
+
+=== New tests (T16) ===
+=== RUN   TestRebalance_TopContentsLimit_PropagatesToPopularityQuery
+--- PASS: TestRebalance_TopContentsLimit_PropagatesToPopularityQuery (0.05s)
+=== RUN   TestRebalance_TopContentsLimit_ZeroFallsBackToDefault
+--- PASS: TestRebalance_TopContentsLimit_ZeroFallsBackToDefault (0.05s)
+PASS
+ok  	github.com/shlande/mediaworker/internal/controlplane/pinstrategy	0.447s
+=== RUN   TestSendToNode_SendTimeoutExpired_ReturnsDeadlineExceeded
+--- PASS: TestSendToNode_SendTimeoutExpired_ReturnsDeadlineExceeded (0.05s)
+=== RUN   TestNew_WithProtocolID_OverridesDefault
+--- PASS: TestNew_WithProtocolID_OverridesDefault (0.02s)
+PASS
+ok  	github.com/shlande/mediaworker/internal/controlplane/syncbroadcaster	0.546s

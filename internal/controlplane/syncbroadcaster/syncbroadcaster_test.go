@@ -3,6 +3,7 @@ package syncbroadcaster_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
+	"github.com/libp2p/go-libp2p/core/protocol"
 
 	"github.com/shlande/mediaworker/internal/shared/identity"
 
@@ -550,4 +552,63 @@ func TestSnapshotStore_ConcurrentAccess(t *testing.T) {
 
 	wg.Wait()
 	// No panics = pass
+}
+
+// ---------------------------------------------------------------------------
+// T16: send_timeout parameterization
+// ---------------------------------------------------------------------------
+
+// TestSendToNode_SendTimeoutExpired_ReturnsDeadlineExceeded asserts that a
+// very short WithSendTimeout causes SendToNode to fail with an error whose
+// Unwrap chain contains context.DeadlineExceeded.
+func TestSendToNode_SendTimeoutExpired_ReturnsDeadlineExceeded(t *testing.T) {
+	cpHost, _, _, cleanup := spawnTwoHosts(t)
+	defer cleanup()
+
+	broadcaster := sb.New(cpHost, sb.WithSendTimeout(1*time.Nanosecond))
+
+	_, nodeHost, nodePeer, _ := spawnTwoHosts(t)
+	defer nodeHost.Close()
+
+	err := broadcaster.SendToNode(nodePeer.String(), "PIN_PLAN_UPDATE", nil)
+	if err == nil {
+		t.Fatal("expected error from 1ns send timeout, got nil")
+	}
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected error chain to contain context.DeadlineExceeded, got: %v", err)
+	}
+}
+
+// TestNew_WithProtocolID_OverridesDefault asserts that WithProtocolID /
+// WithSendTimeout change the broadcaster's configured values, and that empty /
+// zero overrides preserve the defaults.
+func TestNew_WithProtocolID_OverridesDefault(t *testing.T) {
+	cpHost, _, _, cleanup := spawnTwoHosts(t)
+	defer cleanup()
+
+	b1 := sb.New(cpHost)
+	if b1.ProtocolID() != sb.ControlProtocol {
+		t.Fatalf("expected default protocol %q, got %q", sb.ControlProtocol, b1.ProtocolID())
+	}
+	if b1.SendTimeout() != sb.DefaultSendTimeout {
+		t.Fatalf("expected default send timeout %v, got %v", sb.DefaultSendTimeout, b1.SendTimeout())
+	}
+
+	b2 := sb.New(cpHost, sb.WithProtocolID("/custom/proto/9.9.9"))
+	if b2.ProtocolID() != protocol.ID("/custom/proto/9.9.9") {
+		t.Fatalf("expected custom protocol, got %q", b2.ProtocolID())
+	}
+
+	b3 := sb.New(cpHost, sb.WithSendTimeout(5*time.Second))
+	if b3.SendTimeout() != 5*time.Second {
+		t.Fatalf("expected 5s send timeout, got %v", b3.SendTimeout())
+	}
+
+	b4 := sb.New(cpHost, sb.WithProtocolID(""), sb.WithSendTimeout(0))
+	if b4.ProtocolID() != sb.ControlProtocol {
+		t.Fatalf("expected empty override to preserve default, got %q", b4.ProtocolID())
+	}
+	if b4.SendTimeout() != sb.DefaultSendTimeout {
+		t.Fatalf("expected zero override to preserve default, got %v", b4.SendTimeout())
+	}
 }
