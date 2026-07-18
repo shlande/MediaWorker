@@ -11,9 +11,11 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -852,4 +854,126 @@ func unwrapAsBanSignal(err error, target **types.BanSignalError) bool {
 		}
 		err = u.Unwrap()
 	}
+}
+
+// TestHTTPLocationClient_WiredIntoLocalDataPlane verifies the T10 client
+// satisfies the dataplane.BlobLocationClient interface at the
+// NewLocalDataPlane assembly point and drives an end-to-end FetchBlobLocal
+// when the CP location API is mocked via httptest.
+//
+// This is the integration counterpart to the unit tests in
+// internal/storage/dataplane/httplocclient_test.go: those verify the client
+// in isolation; this one verifies the wiring at the assembly point the plan
+// calls out (grep NewLocalDataPlane → test/integration is one such site).
+//
+// Plan line 185: edge main keeps LocalDataPlane nil for now — this test is
+// the only place a real HTTPLocationClient is assembled into the chain until
+// L4 dataplane wiring lands.
+func TestHTTPLocationClient_WiredIntoLocalDataPlane(t *testing.T) {
+	const (
+		blobHash = "cp-located-blob"
+		fileID   = "cp-file-42"
+		jwt      = "fake.cp.signed.jwt"
+	)
+
+	// CP location API mock.
+	downloadTS := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("blob bytes from cp-located storage"))
+	}))
+	defer downloadTS.Close()
+
+	cpTS := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("Authorization"); got != "Bearer "+jwt {
+			t.Errorf("CP mock: Authorization = %q, want %q", got, "Bearer "+jwt)
+		}
+		if !strings.HasPrefix(r.URL.Path, "/v1/blob-locations/") {
+			t.Errorf("CP mock: path = %q, want /v1/blob-locations/ prefix", r.URL.Path)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"locations": []map[string]string{
+				{"blob_hash": blobHash, "backend_id": "115:acct-from-cp", "file_id": fileID},
+			},
+		})
+	}))
+	defer cpTS.Close()
+
+	// jwtProvider closure mirrors the edge main wiring:
+	// `func() string { return string(jwtClient.CurrentJWT()) }`.
+	locClient := dataplane.NewHTTPLocationClient(cpTS.URL, func() string { return jwt })
+
+	acct := &accountpool.Account{
+		Vendor:    types.Vendor115,
+		AccountID: "acct-from-cp",
+		Driver:    &mockIntegrationDriver{vendor: types.Vendor115},
+	}
+	selector := &mockIntegrationSelector{acct: acct}
+	linkFetcher := &mockIntegrationLinkFetcher{url: downloadTS.URL}
+
+	// ASSEMBLY POINT: HTTPLocationClient satisfies dataplane.BlobLocationClient.
+	dp := dataplane.NewLocalDataPlane(selector, linkFetcher, locClient, http.DefaultClient)
+
+	reader, err := dp.FetchBlobLocal(context.Background(), blobHash)
+	if err != nil {
+		t.Fatalf("FetchBlobLocal: unexpected error: %v", err)
+	}
+	defer reader.Close()
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		t.Fatalf("read body: %v", err)
+	}
+	if string(body) != "blob bytes from cp-located storage" {
+		t.Errorf("body = %q, want %q", string(body), "blob bytes from cp-located storage")
+	}
+}
+
+// mockIntegrationSelector is a minimal AccountSelector for the
+// HTTPLocationClient wiring test — avoids the heavy accountpool setup the
+// rest of the file uses.
+type mockIntegrationSelector struct {
+	acct *accountpool.Account
+}
+
+func (m *mockIntegrationSelector) SelectForRead(_ context.Context, _ string) (*accountpool.Account, error) {
+	return m.acct, nil
+}
+
+// mockIntegrationLinkFetcher is a minimal LinkFetcher returning a fixed URL.
+type mockIntegrationLinkFetcher struct {
+	url string
+}
+
+func (m *mockIntegrationLinkFetcher) GetOrFetch(_ context.Context, _ driver.Driver, _ types.Vendor, _, _ string) (*types.DownloadLink, error) {
+	return &types.DownloadLink{URL: m.url}, nil
+}
+
+// mockIntegrationDriver is a no-op driver.Driver for the wiring test.
+type mockIntegrationDriver struct {
+	vendor types.Vendor
+}
+
+func (m *mockIntegrationDriver) Vendor() types.Vendor { return m.vendor }
+func (m *mockIntegrationDriver) List(_ context.Context, _ string, _ int) ([]types.FileInfo, error) {
+	return nil, nil
+}
+func (m *mockIntegrationDriver) Get(_ context.Context, _ string) (types.FileInfo, error) {
+	return types.FileInfo{}, nil
+}
+func (m *mockIntegrationDriver) GetLink(_ context.Context, _ string) (*types.DownloadLink, error) {
+	return nil, nil
+}
+func (m *mockIntegrationDriver) Put(_ context.Context, _ string, _ string, _ io.Reader, _ int64) (*types.FileInfo, error) {
+	return nil, nil
+}
+func (m *mockIntegrationDriver) Remove(_ context.Context, _ string) error { return nil }
+func (m *mockIntegrationDriver) Mkdir(_ context.Context, _ string, _ string) (*types.FileInfo, error) {
+	return nil, nil
+}
+func (m *mockIntegrationDriver) HealthCheck(_ context.Context) types.HealthState {
+	return types.HealthState{State: "healthy"}
+}
+func (m *mockIntegrationDriver) RateLimitConfig() types.RateLimitConfig {
+	return types.RateLimitConfig{ConcurrentLimit: 10}
 }
