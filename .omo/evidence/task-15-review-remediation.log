@@ -1,0 +1,67 @@
+=== T15 Review Remediation Evidence ===
+Date: 2026-07-18T18:48:46Z
+Task: 15. 配置接线批 A（edge 节点侧死字段 → 生效）
+
+=== Build ===
+BUILD EXIT=0
+
+=== go vet ===
+VET EXIT=0
+
+=== Tests: internal/config ===
+ok  	github.com/shlande/mediaworker/internal/config	0.278s
+
+=== Tests: internal/node (full) ===
+ok  	github.com/shlande/mediaworker/internal/node/backhaul	0.383s
+ok  	github.com/shlande/mediaworker/internal/node/cache	0.564s
+ok  	github.com/shlande/mediaworker/internal/node/dht	12.344s
+ok  	github.com/shlande/mediaworker/internal/node/gossippop	8.716s
+ok  	github.com/shlande/mediaworker/internal/node/hashring	5.255s
+ok  	github.com/shlande/mediaworker/internal/node/icp	2.426s
+ok  	github.com/shlande/mediaworker/internal/node/jwt	3.067s
+ok  	github.com/shlande/mediaworker/internal/node/libp2phost	6.956s
+ok  	github.com/shlande/mediaworker/internal/node/monitor	1.858s
+ok  	github.com/shlande/mediaworker/internal/node/peerstore	2.715s
+ok  	github.com/shlande/mediaworker/internal/node/pinstore	8.153s
+?   	github.com/shlande/mediaworker/internal/node/pinstrategy	[no test files]
+ok  	github.com/shlande/mediaworker/internal/node/routing	3.143s
+ok  	github.com/shlande/mediaworker/internal/node/syncbroadcaster	5.721s
+
+=== Tests: cmd/edge-node ===
+ok  	github.com/shlande/mediaworker/cmd/edge-node	0.717s
+
+=== Race tests on changed packages ===
+ok  	github.com/shlande/mediaworker/internal/config	1.303s
+ok  	github.com/shlande/mediaworker/internal/node/peerstore	2.290s
+ok  	github.com/shlande/mediaworker/internal/node/dht	13.885s
+ok  	github.com/shlande/mediaworker/internal/node/libp2phost	2.281s
+ok  	github.com/shlande/mediaworker/cmd/edge-node	2.869s
+
+=== T15 wiring summary ===
+(a) advertise_interval: NewEdgeDiscovery takes advertiseInterval param, heartbeatLoop uses it (T15 fallback to TTL/2 when zero)
+    Test: TestDHT_AdvertiseIntervalWired (3+ heartbeats at 500ms interval)
+(b) gc_interval: PeerEntryStore.StartValueLogGC(ctx, interval) launches Badger RunValueLogGC ticker; stops on Close()
+    Test: TestPeerEntryStore_StartValueLogGC_TickerFires, _StopsOnClose, _StopsOnContextCancel, _ZeroIntervalNoop
+(c) CacheConfig.Enabled: warm/prefix/cold cache gates ×3 in main.go (pinstore not built when prefix disabled)
+    Test: TestLoadConfig_CacheEnabledDefaults (config-side)
+(d) nat_traversal: NATOptions struct + ResolveNATOptions helper; NewEdgeHostWithNAT gates libp2p options
+    Tests: TestNewEdgeHostWithNAT_DefaultPreservesCurrentBehaviour, _AllExplicitTrue, _AllExplicitFalse, _Mixed
+           TestResolveNATOptions (4 sub-cases)
+
+=== Files modified ===
+ cmd/edge-node/main.go                     | 211 +++++++++++++-----
+ cmd/ingest-worker/main.go                 |  28 ++-
+ internal/config/config.go                 | 103 ++++++++-
+ internal/config/config_test.go            | 356 +++++++++++++++++++++++++++++-
+ internal/node/backhaul/backhaul.go        |  39 ++++
+ internal/node/backhaul/l4.go              |   4 +
+ internal/node/backhaul/nol4.go            |   4 +
+ internal/node/dht/discovery.go            |  55 +++--
+ internal/node/dht/discovery_test.go       | 116 +++++++++-
+ internal/node/libp2phost/host.go          | 156 ++++++++++---
+ internal/node/libp2phost/host_test.go     | 112 ++++++++++
+ internal/node/monitor/metrics.go          | 166 +++++++++++++-
+ internal/node/monitor/monitor_test.go     |  20 +-
+ internal/node/peerstore/peerentry.go      |  73 +++++-
+ internal/node/peerstore/peerentry_test.go | 102 +++++++++
+ 15 files changed, 1415 insertions(+), 130 deletions(-)
