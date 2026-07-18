@@ -1,7 +1,8 @@
 // Ingest-worker standalone deployment: HTTP service that receives content
 // upload requests, runs ContentIngester processing (DashIngester/ImageIngester),
 // uploads blobs to cloud drives, writes metadata transactions to PG, and
-// publishes ContentIngestedEvent via log (no SyncBroadcaster).
+// publishes ContentIngestedEvent to the control-plane SyncBroadcaster over
+// libp2p sync channel (T8: 事件回路接通).
 package main
 
 import (
@@ -22,6 +23,7 @@ import (
 	"github.com/shlande/mediaworker/internal/config"
 	"github.com/shlande/mediaworker/internal/storage/metadata"
 	"github.com/shlande/mediaworker/internal/ingest"
+	"github.com/shlande/mediaworker/internal/ingest/syncpub"
 	"github.com/shlande/mediaworker/internal/storage/accountpool"
 	"github.com/shlande/mediaworker/internal/storage/auth"
 	"github.com/shlande/mediaworker/internal/storage/circuitbreaker"
@@ -69,11 +71,35 @@ func run(configPath string) error {
 	selector := &ingestAccountPoolAdapter{pool: pool}
 	backendPool := ingest.NewAccountPoolBackend(selector, cfg.Ingest.Redundancy)
 
-	// 5. Event publisher (log-only for standalone).
-	eventBus := ingest.NewLogPublisher()
+	// 5. Event publisher — libp2p sync channel to control plane (T8).
+	//    The worker joins the PSK mesh as an infrastructure identity (no
+	//    DHT/GossipSub/JWT, plan line 167). PSK admission is enforced at the
+	//    transport layer; the worker never dials anyone but the CP.
+	syncPub, err := syncpub.NewSyncPublisher(
+		cfg.ControlPlane.Multiaddr,
+		cfg.ControlPlane.PrivKeyPath,
+		"LIBP2P_PSK",
+	)
+	if err != nil {
+		return fmt.Errorf("sync publisher: %w", err)
+	}
+	defer syncPub.Close()
+
+	// Fail closed: if the CP is unreachable at startup, refuse to serve
+	// traffic rather than silently dropping every event (plan line 48 —
+	// PinOrchestrator would starve).
+	dialCtx, dialCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if err := syncPub.CheckConnectivity(dialCtx); err != nil {
+		dialCancel()
+		return fmt.Errorf("control plane unreachable at startup: %w", err)
+	}
+	dialCancel()
+	slog.Info("control plane reachable",
+		"cp_peer", syncPub.CPPeer().ShortString(),
+	)
 
 	// 6. Build pipeline with registered ingesters.
-	pipeline := ingest.NewIngestPipeline(backendPool, mc, eventBus, cfg.Ingest.Redundancy)
+	pipeline := ingest.NewIngestPipeline(backendPool, mc, syncPub, cfg.Ingest.Redundancy)
 	pipeline.RegisterIngester(ingest.NewDashIngester(cfg.Ingest.FFmpegPath, cfg.Ingest.WorkDir))
 	pipeline.RegisterIngester(ingest.NewImageIngester(cfg.Ingest.WorkDir))
 
