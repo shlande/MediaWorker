@@ -14,8 +14,12 @@ import (
 )
 
 // JWTHTTPServer serves POST /v1/node/jwt for JWT credential signing.
+// It can additionally host an optional, separately-registered handler for
+// GET /v1/blob-locations/{hash} (used by the control-plane location query API,
+// T9). Reusing the same mux avoids a new listening port (plan line 176).
 type JWTHTTPServer struct {
-	service *JWTService
+	service         *JWTService
+	locationHandler http.Handler
 }
 
 // NewJWTHTTPServer creates a JWTHTTPServer backed by the given JWTService.
@@ -23,11 +27,23 @@ func NewJWTHTTPServer(service *JWTService) *JWTHTTPServer {
 	return &JWTHTTPServer{service: service}
 }
 
+// RegisterLocationHandler registers a handler for GET /v1/blob-locations/{hash}.
+// The handler must perform its own JWT authentication and capability checks.
+// If never called, the route is simply not mounted. Calling it more than once
+// replaces the previously-registered handler. Serve must not have started yet
+// when this is called — mounting happens at Serve-time.
+func (s *JWTHTTPServer) RegisterLocationHandler(h http.Handler) {
+	s.locationHandler = h
+}
+
 // Serve starts the HTTP server on listenAddr and blocks until ctx is
 // cancelled, at which point it performs a graceful shutdown.
 func (s *JWTHTTPServer) Serve(ctx context.Context, listenAddr string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/node/jwt", s.handleJWTRequest)
+	if s.locationHandler != nil {
+		mux.Handle("GET /v1/blob-locations/{hash}", s.locationHandler)
+	}
 
 	srv := &http.Server{
 		Addr:    listenAddr,

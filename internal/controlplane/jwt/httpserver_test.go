@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -423,5 +424,90 @@ func TestGrantMatrix_PolicyOverridesTTLAndQuota(t *testing.T) {
 	}
 	if payload.Exp-payload.Iat != 1800 {
 		t.Errorf("Exp-Iat = %d, want 1800 (30m)", payload.Exp-payload.Iat)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Location handler registration (T9)
+// ---------------------------------------------------------------------------
+
+// TestRegisterLocationHandler_MountsGetRouteOnServe verifies that when a
+// handler is registered via RegisterLocationHandler, the resulting mux
+// dispatches GET /v1/blob-locations/{hash} to it.
+func TestRegisterLocationHandler_MountsGetRouteOnServe(t *testing.T) {
+	_, privKey, err := sjwt.GenerateEd25519Key()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	whitelist := jwt.NewPeerIdSet()
+	rateLimiter := jwt.NewRateLimiter(1 * time.Millisecond)
+	auditLog := jwt.NewAuditLog(io.Discard)
+
+	service := jwt.NewJWTService(privKey, whitelist, rateLimiter, auditLog, defaultTestPolicy())
+	server := jwt.NewJWTHTTPServer(service)
+
+	// Register a stub location handler that echoes the hash back.
+	server.RegisterLocationHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hash := r.PathValue("hash")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, "loc:%s", hash)
+	}))
+
+	listenAddr := pickFreeAddr(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		_ = server.Serve(ctx, listenAddr)
+	}()
+	waitForServer(t, listenAddr)
+
+	resp, err := http.Get("http://" + listenAddr + "/v1/blob-locations/deadbeef")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200, got %d", resp.StatusCode)
+	}
+	if string(body) != "loc:deadbeef" {
+		t.Fatalf("expected body 'loc:deadbeef', got %q", string(body))
+	}
+}
+
+// TestRegisterLocationHandler_NoRegistrationMeans405Or404 confirms that
+// without registration, the route simply isn't mounted (existing JWT-only
+// behaviour preserved).
+func TestRegisterLocationHandler_NoRegistrationMeansRouteMissing(t *testing.T) {
+	_, privKey, err := sjwt.GenerateEd25519Key()
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	whitelist := jwt.NewPeerIdSet()
+	rateLimiter := jwt.NewRateLimiter(1 * time.Millisecond)
+	auditLog := jwt.NewAuditLog(io.Discard)
+
+	server := jwt.NewJWTHTTPServer(jwt.NewJWTService(privKey, whitelist, rateLimiter, auditLog, defaultTestPolicy()))
+
+	listenAddr := pickFreeAddr(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	go func() {
+		_ = server.Serve(ctx, listenAddr)
+	}()
+	waitForServer(t, listenAddr)
+
+	resp, err := http.Get("http://" + listenAddr + "/v1/blob-locations/deadbeef")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	defer resp.Body.Close()
+
+	// Go 1.22+ mux returns 404 for unregistered patterns.
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("expected 404 (route not mounted), got %d", resp.StatusCode)
 	}
 }
