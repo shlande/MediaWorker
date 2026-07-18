@@ -1,9 +1,12 @@
 package config
 
 import (
+	"bytes"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -67,47 +70,20 @@ node:
 edge:
   prefix_cache: { enabled: true, path: "/data/prefix", size_gb: 2000 }
   warm_cache:   { enabled: true, path: "/data/warm",   size_gb: 50000 }
-  cold_cache:   { enabled: true, path: "/data/cold",   size_gb: 100000 }
+  # cold_cache: removed in T17 (deprecated — LoadConfig emits Warn if present)
 access_layer:
   data_plane:
     enabled: true
-    subscribe_control: true
-    drivers: ["115", "baidu", "quark", "onedrive", "aliyundrive"]
+    # subscribe_control: removed in T17 (deprecated)
+    # drivers: removed in T17 (deprecated)
     link_pool: { max_entries: 10000 }
-    rate_limit_local: true
-  fetch_segment_server:
-    enabled: true
-  vendor_profiles:
-    "115":       { weight: 3.0, base_latency_ms: 100, bandwidth_mbps: 50 }
-    baidu:       { weight: 2.0, base_latency_ms: 200, bandwidth_mbps: 80 }
-    quark:       { weight: 1.0, base_latency_ms: 300, bandwidth_mbps: 30 }
-    onedrive:    { weight: 2.0, base_latency_ms: 80,  bandwidth_mbps: 40 }
-    aliyundrive: { weight: 2.5, base_latency_ms: 90,  bandwidth_mbps: 40 }
-  rate_limits:
-    "115":       { qps: 1.0,  burst: 2,  concurrent: 5  }
-    baidu:       { qps: 2.0,  burst: 4,  concurrent: 8  }
-    quark:       { qps: 0.5,  burst: 1,  concurrent: 5  }
-    onedrive:    { qps: 10.0, burst: 20, concurrent: 16 }
-    aliyundrive: { qps: 5.0,  burst: 10, concurrent: 10 }
-  health_check:
-    interval: "30s"
-  cloud_accounts:
-    - vendor: baidu
-      account_id: "baidu_acct_01"
-      client_id: "baidu_client_id_sample"
-      client_secret: "baidu_client_secret_sample"
-      refresh_token: "baidu_refresh_token_sample"
-      redirect_uri: "http://localhost:8080/auth/callback/baidu"
-      region: "cn"
-      enabled: true
-    - vendor: onedrive
-      account_id: "onedrive_acct_01"
-      client_id: "onedrive_client_id_sample"
-      client_secret: "onedrive_client_secret_sample"
-      refresh_token: "onedrive_refresh_token_sample"
-      redirect_uri: "http://localhost:8080/auth/callback/onedrive"
-      region: "global"
-      enabled: true
+    # rate_limit_local: removed in T17 (deprecated)
+  # fetch_segment_server: removed in T17 (deprecated)
+  # fetch_segment_client: removed in T17 (deprecated)
+  # vendor_profiles: removed in T17 (deprecated — see ingest-worker.yaml for the live tree)
+  # rate_limits: removed in T17 (deprecated — see ingest-worker.yaml for the live tree)
+  # health_check: removed in T17 (deprecated)
+  # cloud_accounts: removed in T17 (deprecated — see ingest-worker.yaml for the live tree)
 hash_ring:
   replicas: 150
 `
@@ -171,19 +147,10 @@ func TestLoadConfig_L4Node(t *testing.T) {
 	if !cfg.Edge.PrefixCache.Enabled || cfg.Edge.PrefixCache.SizeGB != 2000 {
 		t.Error("prefix_cache misconfigured")
 	}
-	if !cfg.Edge.ColdCache.Enabled || cfg.Edge.ColdCache.SizeGB != 100000 {
-		t.Error("cold_cache misconfigured")
-	}
 
 	// Access layer
 	if !cfg.Access.DataPlane.Enabled {
 		t.Error("data_plane.enabled expected true")
-	}
-	if len(cfg.Access.DataPlane.Drivers) != 5 {
-		t.Errorf("drivers = %d, want 5", len(cfg.Access.DataPlane.Drivers))
-	}
-	if !cfg.Access.FetchSegmentServer.Enabled {
-		t.Error("fetch_segment_server.enabled expected true")
 	}
 
 	// Hash ring
@@ -240,8 +207,7 @@ edge:
 access_layer:
   data_plane:
     enabled: false
-  fetch_segment_client:
-    enabled: true
+  # fetch_segment_client: removed in T17 (deprecated)
 hash_ring:
   replicas: 150
 `
@@ -271,161 +237,17 @@ func TestLoadConfig_EdgeNode(t *testing.T) {
 	if cfg.Access.DataPlane.Enabled {
 		t.Error("data_plane.enabled expected false for edge node")
 	}
-
-	// fetch_segment_server should be zero-value (not present in YAML)
-	if cfg.Access.FetchSegmentServer.Enabled {
-		t.Error("fetch_segment_server should be disabled for edge node")
-	}
-
-	// fetch_segment_client.enabled = true
-	if !cfg.Access.FetchSegmentClient.Enabled {
-		t.Error("fetch_segment_client.enabled expected true")
-	}
-
-	// No cold_cache in edge node config
-	if cfg.Edge.ColdCache.Enabled {
-		t.Error("cold_cache should be disabled for edge node (not in YAML)")
-	}
 }
 
 // ---------------------------------------------------------------------------
 // Extended config: vendor_profiles, rate_limits, health_check, cloud_accounts
 // ---------------------------------------------------------------------------
-
-func TestLoadConfig_VendorProfiles(t *testing.T) {
-	path := writeTempYAML(t, l4ConfigYAML)
-
-	cfg, err := LoadConfig(path)
-	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
-	}
-
-	// Verify all 5 vendor profiles loaded
-	const vendCount = 5
-	if len(cfg.Access.VendorProfiles) != vendCount {
-		t.Fatalf("VendorProfiles count = %d, want %d", len(cfg.Access.VendorProfiles), vendCount)
-	}
-
-	tests := []struct {
-		vendor    string
-		wantW     float64
-		wantLat   int
-		wantBW    int
-	}{
-		{"115",       3.0, 100, 50},
-		{"baidu",     2.0, 200, 80},
-		{"quark",     1.0, 300, 30},
-		{"onedrive",  2.0,  80, 40},
-		{"aliyundrive", 2.5, 90, 40},
-	}
-
-	for _, tt := range tests {
-		p, ok := cfg.Access.VendorProfiles[tt.vendor]
-		if !ok {
-			t.Errorf("VendorProfiles[%q] missing", tt.vendor)
-			continue
-		}
-		if p.Weight != tt.wantW {
-			t.Errorf("VendorProfiles[%q].Weight = %v, want %v", tt.vendor, p.Weight, tt.wantW)
-		}
-		if p.BaseLatencyMs != tt.wantLat {
-			t.Errorf("VendorProfiles[%q].BaseLatencyMs = %d, want %d", tt.vendor, p.BaseLatencyMs, tt.wantLat)
-		}
-		if p.BandwidthMbps != tt.wantBW {
-			t.Errorf("VendorProfiles[%q].BandwidthMbps = %d, want %d", tt.vendor, p.BandwidthMbps, tt.wantBW)
-		}
-	}
-}
-
-func TestLoadConfig_RateLimits(t *testing.T) {
-	path := writeTempYAML(t, l4ConfigYAML)
-
-	cfg, err := LoadConfig(path)
-	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
-	}
-
-	const vendCount = 5
-	if len(cfg.Access.RateLimits) != vendCount {
-		t.Fatalf("RateLimits count = %d, want %d", len(cfg.Access.RateLimits), vendCount)
-	}
-
-	tests := []struct {
-		vendor string
-		wantQPS float64
-		wantBurst int
-		wantConcurrent int
-	}{
-		{"115",      1.0,  2,  5},
-		{"baidu",    2.0,  4,  8},
-		{"quark",    0.5,  1,  5},
-		{"onedrive", 10.0, 20, 16},
-		{"aliyundrive", 5.0, 10, 10},
-	}
-
-	for _, tt := range tests {
-		r, ok := cfg.Access.RateLimits[tt.vendor]
-		if !ok {
-			t.Errorf("RateLimits[%q] missing", tt.vendor)
-			continue
-		}
-		if r.QPS != tt.wantQPS {
-			t.Errorf("RateLimits[%q].QPS = %v, want %v", tt.vendor, r.QPS, tt.wantQPS)
-		}
-		if r.Burst != tt.wantBurst {
-			t.Errorf("RateLimits[%q].Burst = %d, want %d", tt.vendor, r.Burst, tt.wantBurst)
-		}
-		if r.Concurrent != tt.wantConcurrent {
-			t.Errorf("RateLimits[%q].Concurrent = %d, want %d", tt.vendor, r.Concurrent, tt.wantConcurrent)
-		}
-	}
-}
-
-func TestLoadConfig_HealthCheck(t *testing.T) {
-	path := writeTempYAML(t, l4ConfigYAML)
-
-	cfg, err := LoadConfig(path)
-	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
-	}
-
-	if cfg.Access.HealthCheck.Interval != "30s" {
-		t.Errorf("HealthCheck.Interval = %q, want %q", cfg.Access.HealthCheck.Interval, "30s")
-	}
-}
-
-func TestLoadConfig_CloudAccounts(t *testing.T) {
-	path := writeTempYAML(t, l4ConfigYAML)
-
-	cfg, err := LoadConfig(path)
-	if err != nil {
-		t.Fatalf("LoadConfig failed: %v", err)
-	}
-
-	const acctCount = 2
-	if len(cfg.Access.CloudAccounts) != acctCount {
-		t.Fatalf("CloudAccounts count = %d, want %d", len(cfg.Access.CloudAccounts), acctCount)
-	}
-
-	// baidu account
-	if cfg.Access.CloudAccounts[0].Vendor != "baidu" {
-		t.Errorf("CloudAccounts[0].Vendor = %q, want %q", cfg.Access.CloudAccounts[0].Vendor, "baidu")
-	}
-	if cfg.Access.CloudAccounts[0].AccountID != "baidu_acct_01" {
-		t.Errorf("CloudAccounts[0].AccountID = %q", cfg.Access.CloudAccounts[0].AccountID)
-	}
-	if !cfg.Access.CloudAccounts[0].Enabled {
-		t.Error("CloudAccounts[0].Enabled expected true")
-	}
-
-	// onedrive account
-	if cfg.Access.CloudAccounts[1].Vendor != "onedrive" {
-		t.Errorf("CloudAccounts[1].Vendor = %q, want %q", cfg.Access.CloudAccounts[1].Vendor, "onedrive")
-	}
-	if cfg.Access.CloudAccounts[1].Region != "global" {
-		t.Errorf("CloudAccounts[1].Region = %q", cfg.Access.CloudAccounts[1].Region)
-	}
-}
+//
+// The AccessConfig-side tests for vendor_profiles / rate_limits / health_check
+// / cloud_accounts were removed in T17 — those fields were deleted from
+// AccessConfig (never consumed by edge-node production code). The standalone
+// LoadVendorProfiles function (used by ingest-worker) is still covered by the
+// TestLoadVendorProfiles_* tests below.
 
 func TestLoadVendorProfiles_FromStandaloneFile(t *testing.T) {
 	// LoadVendorProfiles reads a standalone YAML file whose top-level key
@@ -1160,7 +982,7 @@ node:
 edge:
   prefix_cache: { path: "/data/prefix", size_gb: 100 }
   warm_cache:   { path: "/data/warm",   size_gb: 50 }
-  cold_cache:   { path: "/data/cold",   size_gb: 200, enabled: false }
+  # cold_cache: removed in T17 (deprecated)
 `
 	path := writeTempYAML(t, yaml)
 	cfg, err := LoadConfig(path)
@@ -1173,7 +995,129 @@ edge:
 	if cfg.Edge.WarmCache.Enabled {
 		t.Errorf("WarmCache.Enabled = true, want false when omitted")
 	}
-	if cfg.Edge.ColdCache.Enabled {
-		t.Errorf("ColdCache.Enabled = true, want false when explicit false")
+}
+
+// ---------------------------------------------------------------------------
+// T17: deprecated-key Warn scanner
+// ---------------------------------------------------------------------------
+
+// captureSlogWarns swaps the default slog logger for a text handler writing to
+// a buffer, runs fn, then restores the original logger. Returns the buffered
+// text. Each call is serialized via the package-level slogLoggerMu so parallel
+// tests don't clobber each other's default logger.
+var slogLoggerMu sync.Mutex
+
+func captureSlogWarns(t *testing.T, fn func()) string {
+	t.Helper()
+	slogLoggerMu.Lock()
+	defer slogLoggerMu.Unlock()
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	handler := slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})
+	slog.SetDefault(slog.New(handler))
+	defer slog.SetDefault(prev)
+
+	fn()
+	return buf.String()
+}
+
+// TestLoadConfig_DeprecatedKeysEmitWarns loads an edge-node YAML that includes
+// every deprecated key removed in T17 and asserts that LoadConfig (a) still
+// succeeds, (b) emits a slog.Warn for each deprecated key path. This is the
+// "old configs still load (with warnings) instead of breaking" contract.
+func TestLoadConfig_DeprecatedKeysEmitWarns(t *testing.T) {
+	const yaml = `
+node:
+  identity: { priv_key_path: "/data/key" }
+  declared_capabilities: { edge: true }
+  libp2p:
+    listen: ["/ip4/0.0.0.0/tcp/9001"]
+    dht: { namespace: "edge", mode: "client" }
+  jwt_service:
+    endpoint: "http://cp/v1/node/jwt"
+edge:
+  prefix_cache: { path: "/data/prefix", size_gb: 100 }
+  warm_cache:   { path: "/data/warm",   size_gb: 50 }
+  cold_cache:   { enabled: true, path: "/data/cold", size_gb: 200 }
+access_layer:
+  data_plane:
+    enabled: false
+    subscribe_control: true
+    drivers: ["115", "baidu"]
+    rate_limit_local: true
+  fetch_segment_server: { enabled: true }
+  fetch_segment_client: { enabled: true }
+  vendor_profiles:
+    baidu: { weight: 2.0 }
+  rate_limits:
+    baidu: { qps: 2.0, burst: 4, concurrent: 8 }
+  health_check: { interval: "30s" }
+  cloud_accounts:
+    - vendor: baidu
+      account_id: "baidu_acct_01"
+      enabled: true
+`
+	path := writeTempYAML(t, yaml)
+
+	out := captureSlogWarns(t, func() {
+		cfg, err := LoadConfig(path)
+		if err != nil {
+			t.Fatalf("LoadConfig with deprecated keys failed: %v", err)
+		}
+		if cfg.Access.DataPlane.Enabled {
+			t.Error("DataPlane.Enabled should be false")
+		}
+	})
+
+	deprecatedKeys := []string{
+		"edge.cold_cache",
+		"access_layer.fetch_segment_server",
+		"access_layer.fetch_segment_client",
+		"access_layer.vendor_profiles",
+		"access_layer.rate_limits",
+		"access_layer.health_check",
+		"access_layer.cloud_accounts",
+		"access_layer.data_plane.subscribe_control",
+		"access_layer.data_plane.drivers",
+		"access_layer.data_plane.rate_limit_local",
+	}
+	for _, k := range deprecatedKeys {
+		want := "key=" + k
+		if !strings.Contains(out, want) {
+			t.Errorf("expected slog.Warn for deprecated key %q in output:\n%s", k, out)
+		}
+	}
+}
+
+// TestLoadConfig_CleanYAMLEmitsNoWarns loads a minimal edge-node YAML with no
+// deprecated keys and asserts that LoadConfig emits zero slog.Warn lines. This
+// is the plan's "QA happy = clean YAML → no Warn" gate (plan line 252).
+func TestLoadConfig_CleanYAMLEmitsNoWarns(t *testing.T) {
+	const yaml = `
+node:
+  identity: { priv_key_path: "/data/key" }
+  declared_capabilities: { edge: true }
+  libp2p:
+    listen: ["/ip4/0.0.0.0/tcp/9001"]
+    dht: { namespace: "edge", mode: "client" }
+  jwt_service:
+    endpoint: "http://cp/v1/node/jwt"
+edge:
+  prefix_cache: { path: "/data/prefix", size_gb: 100 }
+  warm_cache:   { path: "/data/warm",   size_gb: 50 }
+access_layer:
+  data_plane: { enabled: false }
+`
+	path := writeTempYAML(t, yaml)
+
+	out := captureSlogWarns(t, func() {
+		_, err := LoadConfig(path)
+		if err != nil {
+			t.Fatalf("LoadConfig clean YAML failed: %v", err)
+		}
+	})
+	if strings.Contains(out, "level=WARN") {
+		t.Errorf("expected zero WARN lines for clean YAML, got:\n%s", out)
 	}
 }

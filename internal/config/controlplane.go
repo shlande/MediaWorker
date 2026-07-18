@@ -142,9 +142,13 @@ type SyncBroadcasterConfig struct {
 // ---------------------------------------------------------------------------
 
 // MetadataConfig controls database connectivity for content metadata.
+//
+// popularity_query_interval was removed in T17 — synchronous query already
+// satisfies current scale, so the periodic background poll was never wired.
+// Operators with stale YAML still load fine: LoadControlPlaneConfig emits a
+// deprecated-key Warn via scanDeprecatedConfigKeys.
 type MetadataConfig struct {
-	PGDSN                   string `yaml:"pg_dsn"`                     // Postgres DSN
-	PopularityQueryInterval string `yaml:"popularity_query_interval"` // e.g. "10m"
+	PGDSN string `yaml:"pg_dsn"` // Postgres DSN
 }
 
 // ---------------------------------------------------------------------------
@@ -166,10 +170,19 @@ type ControlPlaneIdentityConfig struct {
 // Loading
 // ---------------------------------------------------------------------------
 
+// deprecatedControlPlaneKeys is the set of YAML keys removed from the
+// ControlPlaneConfig tree in T17. Same tolerance contract as
+// deprecatedConfigKeys in config.go: tolerated in operator YAML, emit a
+// slog.Warn per occurrence, never error.
+var deprecatedControlPlaneKeys = []string{
+	"metadata.popularity_query_interval",
+}
+
 // LoadControlPlaneConfig reads a YAML file at path, unmarshals it into
 // ControlPlaneConfig and returns the parsed result. It returns an error
 // if the file cannot be read, the YAML is invalid, or a required field
-// is empty.
+// is empty. Deprecated YAML keys (removed in T17) are tolerated and emit
+// a slog.Warn per occurrence — they do NOT cause a load failure.
 func LoadControlPlaneConfig(path string) (*ControlPlaneConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -180,6 +193,8 @@ func LoadControlPlaneConfig(path string) (*ControlPlaneConfig, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse control-plane config file: %w", err)
 	}
+
+	scanDeprecatedConfigKeys(data, deprecatedControlPlaneKeys)
 
 	applyJWTPolicyDefaults(&cfg.JWTPolicy)
 

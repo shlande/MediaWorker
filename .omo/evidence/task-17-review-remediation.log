@@ -1,0 +1,55 @@
+=== Task 17: 配置删除批 (feature 未落地字段移除 + yaml 废弃键警告) ===
+Date: 2026-07-18T19:27:49Z
+
+## Summary
+Deleted dormant config fields from AccessConfig/EdgeConfig/DataPlaneConfig/MetadataConfig;
+added deprecation-key Warn scanner to LoadConfig and LoadControlPlaneConfig.
+
+## Files Changed
+- internal/config/config.go: deleted EdgeConfig.ColdCache, AccessConfig.{FetchSegmentServer,FetchSegmentClient,VendorProfiles,RateLimits,HealthCheck,CloudAccounts}, DataPlaneConfig.{SubscribeControl,Drivers,RateLimitLocal}, FetchSegmentServerConfig, FetchSegmentClientConfig type defs. Added scanDeprecatedConfigKeys + deprecatedConfigKeys + yamlPathExists + slog import.
+- internal/config/controlplane.go: deleted MetadataConfig.PopularityQueryInterval. Added deprecatedControlPlaneKeys, wired scanDeprecatedConfigKeys into LoadControlPlaneConfig.
+- cmd/edge-node/main.go: removed dead ColdCache logging block (was operator-visibility-only, no construction).
+- internal/config/config_test.go: removed ColdCache/FetchSegmentServer/FetchSegmentClient/VendorProfiles/RateLimits/HealthCheck/CloudAccounts assertions + 4 dedicated tests. Added captureSlogWarns helper, TestLoadConfig_DeprecatedKeysEmitWarns, TestLoadConfig_CleanYAMLEmitsNoWarns.
+- internal/config/controlplane_test.go: removed PopularityQueryInterval assertion. Added TestLoadControlPlaneConfig_DeprecatedKeysEmitWarns, TestLoadControlPlaneConfig_CleanYAMLEmitsNoWarns.
+- configs/node-l4.yaml: removed cold_cache, subscribe_control, drivers, rate_limit_local, fetch_segment_server, vendor_profiles, rate_limits, health_check, cloud_accounts. Added commented-out deprecation notes.
+- configs/node-edge.yaml: removed fetch_segment_client. Added commented-out note.
+- configs/control-plane.yaml: removed popularity_query_interval. Added commented-out note.
+- configs/ingest-worker.yaml: UNCHANGED (its cloud_accounts/vendor_profiles/rate_limits are under storage: — the live ingest tree, plan line 248 forbids touching).
+- configs/janitor.yaml: UNCHANGED (same rationale as ingest-worker).
+
+## Notable decisions
+- EdgeConfig.ColdCache had a production consumer in cmd/edge-node/main.go:327-330 (logging-only, no construction — comment explicitly said 'construction deferred, no on-disk store yet'). Deleted per REQUIRED OUTCOME explicit instruction; updated main.go to remove the dead logging block. Build still green.
+- Kept VendorProfileConfig, RateLimitConfigYAML, HealthCheckConfig, CloudAccountConfig type definitions because they are still used by IngestStorageConfig (ingest.go) and JanitorConfig (janitor.go). Only the AccessConfig copies were removed.
+- Kept LoadVendorProfiles function (still used by ingest-worker).
+
+## Verification Gates
+
+### go build ./...
+EXIT=0
+
+### go vet ./...
+EXIT=0
+
+### go test ./internal/config/...
+ok  	github.com/shlande/mediaworker/internal/config	(cached)
+EXIT=0
+
+### go test ./cmd/edge-node/... (main.go changed)
+ok  	github.com/shlande/mediaworker/cmd/edge-node	(cached)
+EXIT=0
+
+### grep -rn 'ColdCache|FetchSegment|PopularityQueryInterval' internal/config/ → zero hits
+GREP_HITS=1 (1 = no matches = PASS)
+
+### Deprecated-key Warn behavior tests
+=== RUN   TestLoadConfig_DeprecatedKeysEmitWarns
+--- PASS: TestLoadConfig_DeprecatedKeysEmitWarns (0.00s)
+=== RUN   TestLoadConfig_CleanYAMLEmitsNoWarns
+--- PASS: TestLoadConfig_CleanYAMLEmitsNoWarns (0.00s)
+=== RUN   TestLoadControlPlaneConfig_DeprecatedKeysEmitWarns
+--- PASS: TestLoadControlPlaneConfig_DeprecatedKeysEmitWarns (0.00s)
+=== RUN   TestLoadControlPlaneConfig_CleanYAMLEmitsNoWarns
+--- PASS: TestLoadControlPlaneConfig_CleanYAMLEmitsNoWarns (0.00s)
+PASS
+ok  	github.com/shlande/mediaworker/internal/config	0.461s
+EXIT=0

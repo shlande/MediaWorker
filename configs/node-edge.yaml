@@ -47,8 +47,7 @@ edge:
 access_layer:
   data_plane:
     enabled: false
-  fetch_segment_client:
-    enabled: true
+  # fetch_segment_client: removed in T17 (deprecated)
 
 hash_ring:
   replicas: 150

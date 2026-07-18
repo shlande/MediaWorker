@@ -4,6 +4,7 @@ import (
 	"crypto/ed25519"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -48,7 +49,7 @@ sync_broadcaster:
   send_timeout: "30s"
 metadata:
   pg_dsn: "postgres://user:pass@localhost:5432/mw?sslmode=disable"
-  popularity_query_interval: "10m"
+  # popularity_query_interval: removed in T17 (deprecated)
 identity:
   priv_key_path: "/data/controlplane/ed25519-jwt.key"
   libp2p_priv_key_path: "/data/controlplane/ed25519-libp2p.key"
@@ -114,9 +115,6 @@ func TestLoadControlPlaneConfig_Valid(t *testing.T) {
 	// Metadata
 	if cfg.Metadata.PGDSN != "postgres://user:pass@localhost:5432/mw?sslmode=disable" {
 		t.Errorf("Metadata.PGDSN = %q", cfg.Metadata.PGDSN)
-	}
-	if cfg.Metadata.PopularityQueryInterval != "10m" {
-		t.Errorf("Metadata.PopularityQueryInterval = %q", cfg.Metadata.PopularityQueryInterval)
 	}
 
 	// Identity
@@ -318,5 +316,59 @@ func TestLoadOrGenerateControlPlaneKey_InvalidFile(t *testing.T) {
 	_, err := LoadOrGenerateControlPlaneKey(path)
 	if err == nil {
 		t.Fatal("expected error for invalid key file, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// T17: deprecated-key Warn scanner (control plane)
+// ---------------------------------------------------------------------------
+
+// TestLoadControlPlaneConfig_DeprecatedKeysEmitWarns loads a control-plane
+// YAML that includes the removed popularity_query_interval key and asserts
+// that LoadControlPlaneConfig still succeeds AND emits a slog.Warn for it.
+func TestLoadControlPlaneConfig_DeprecatedKeysEmitWarns(t *testing.T) {
+	const yaml = `
+jwt_http:
+  listen: ":8443"
+dht_bootstrap:
+  namespace: "edge"
+metadata:
+  pg_dsn: "postgres://localhost/mw"
+  popularity_query_interval: "10m"
+identity:
+  priv_key_path: "/key"
+  libp2p_priv_key_path: "/key2"
+`
+	path := writeTempControlPlaneYAML(t, yaml)
+
+	out := captureSlogWarns(t, func() {
+		cfg, err := LoadControlPlaneConfig(path)
+		if err != nil {
+			t.Fatalf("LoadControlPlaneConfig with deprecated key failed: %v", err)
+		}
+		if cfg.Metadata.PGDSN != "postgres://localhost/mw" {
+			t.Errorf("PGDSN mismatch: %q", cfg.Metadata.PGDSN)
+		}
+	})
+
+	want := "key=metadata.popularity_query_interval"
+	if !strings.Contains(out, want) {
+		t.Errorf("expected slog.Warn for deprecated key %q in output:\n%s", want, out)
+	}
+}
+
+// TestLoadControlPlaneConfig_CleanYAMLEmitsNoWarns asserts that a control-plane
+// YAML with no deprecated keys produces zero slog.Warn lines.
+func TestLoadControlPlaneConfig_CleanYAMLEmitsNoWarns(t *testing.T) {
+	path := writeTempControlPlaneYAML(t, validControlPlaneYAML)
+
+	out := captureSlogWarns(t, func() {
+		_, err := LoadControlPlaneConfig(path)
+		if err != nil {
+			t.Fatalf("LoadControlPlaneConfig clean YAML failed: %v", err)
+		}
+	})
+	if strings.Contains(out, "level=WARN") {
+		t.Errorf("expected zero WARN lines for clean control-plane YAML, got:\n%s", out)
 	}
 }

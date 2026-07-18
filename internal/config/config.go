@@ -5,6 +5,7 @@ package config
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
@@ -184,11 +185,14 @@ const (
 // Edge cache
 // ---------------------------------------------------------------------------
 
-// EdgeConfig describes the three-tier edge cache configuration.
+// EdgeConfig describes the edge cache configuration.
+//
+// cold_cache was removed in T17 — the on-disk cold-store was never wired (see
+// cmd/edge-node/main.go history). Operators with stale YAML still load fine:
+// LoadConfig emits a deprecated-key Warn via scanDeprecatedConfigKeys.
 type EdgeConfig struct {
 	PrefixCache CacheConfig `yaml:"prefix_cache"`
 	WarmCache   CacheConfig `yaml:"warm_cache"`
-	ColdCache   CacheConfig `yaml:"cold_cache"`
 }
 
 // CacheConfig describes a single on-disk cache tier.
@@ -202,26 +206,27 @@ type CacheConfig struct {
 // Access layer (data plane & fetch segment)
 // ---------------------------------------------------------------------------
 
-// AccessConfig groups data-plane and fetch-segment configuration, plus
-// multi-account pool settings (vendor profiles, rate limits, health check,
-// cloud account credentials).
+// AccessConfig groups data-plane configuration for the edge node.
+//
+// The multi-account pool fields that used to live here (vendor_profiles,
+// rate_limits, health_check, cloud_accounts, fetch_segment_server,
+// fetch_segment_client) were removed in T17 — they were never consumed by
+// any production code path on the edge node. The ingest-worker and janitor
+// have their own copies under IngestStorageConfig (which IS consumed).
+// Operators with stale YAML still load fine: LoadConfig emits a
+// deprecated-key Warn via scanDeprecatedConfigKeys for each removed field.
 type AccessConfig struct {
-	DataPlane           DataPlaneConfig           `yaml:"data_plane"`
-	FetchSegmentServer  FetchSegmentServerConfig  `yaml:"fetch_segment_server"`
-	FetchSegmentClient  FetchSegmentClientConfig  `yaml:"fetch_segment_client"`
-	VendorProfiles      map[string]VendorProfileConfig `yaml:"vendor_profiles"`
-	RateLimits          map[string]RateLimitConfigYAML `yaml:"rate_limits"`
-	HealthCheck         HealthCheckConfig              `yaml:"health_check"`
-	CloudAccounts       []CloudAccountConfig           `yaml:"cloud_accounts"`
+	DataPlane DataPlaneConfig `yaml:"data_plane"`
 }
 
 // DataPlaneConfig controls the local data-plane (driver backends for L4 nodes).
+//
+// subscribe_control / drivers / rate_limit_local were removed in T17 — they
+// were never consumed by any production code path. Operators with stale YAML
+// still load fine: LoadConfig emits a deprecated-key Warn.
 type DataPlaneConfig struct {
-	Enabled          bool          `yaml:"enabled"`
-	SubscribeControl bool          `yaml:"subscribe_control"`
-	Drivers          []string      `yaml:"drivers"`
-	LinkPool         LinkPoolConfig `yaml:"link_pool"`
-	RateLimitLocal   bool          `yaml:"rate_limit_local"`
+	Enabled  bool           `yaml:"enabled"`
+	LinkPool LinkPoolConfig `yaml:"link_pool"`
 }
 
 // LinkPoolConfig controls the max number of cached driver-link entries.
@@ -229,19 +234,15 @@ type LinkPoolConfig struct {
 	MaxEntries int `yaml:"max_entries"`
 }
 
-// FetchSegmentServerConfig controls exposing FetchSegment for sibling peers.
-type FetchSegmentServerConfig struct {
-	Enabled bool `yaml:"enabled"`
-}
-
-// FetchSegmentClientConfig controls fetching segments from sibling peers.
-type FetchSegmentClientConfig struct {
-	Enabled bool `yaml:"enabled"`
-}
-
 // ---------------------------------------------------------------------------
 // Vendor profiles, rate limits, health check & cloud accounts
 // ---------------------------------------------------------------------------
+//
+// The standalone types below (VendorProfileConfig, RateLimitConfigYAML,
+// HealthCheckConfig, CloudAccountConfig) are still used by the ingest-worker
+// and janitor config trees (see ingest.go / janitor.go). They are NOT used by
+// the edge-node AccessConfig anymore — the AccessConfig copies were removed
+// in T17 (see AccessConfig docstring above).
 
 // VendorProfileConfig is the YAML representation of a vendor capability profile.
 // Weight, BaseLatencyMs and BandwidthMbps are used by the AccountPool selection
@@ -295,9 +296,81 @@ type HashRingConfig struct {
 // Loading
 // ---------------------------------------------------------------------------
 
+// deprecatedConfigKeys is the set of YAML keys removed from the edge-node
+// Config tree in T17. They are still tolerated in operator YAML (we never
+// call Decoder.KnownFields(true), per plan line 248) but each occurrence
+// emits a slog.Warn at load time so operators notice and clean up.
+//
+// Paths are dotted; nested keys use the form "parent.child". A path matches
+// if the leaf key exists at the dotted path in the parsed YAML tree. We do
+// not error — old configs must continue to load (plan line 248).
+var deprecatedConfigKeys = []string{
+	"edge.cold_cache",
+	"access_layer.fetch_segment_server",
+	"access_layer.fetch_segment_client",
+	"access_layer.vendor_profiles",
+	"access_layer.rate_limits",
+	"access_layer.health_check",
+	"access_layer.cloud_accounts",
+	"access_layer.data_plane.subscribe_control",
+	"access_layer.data_plane.drivers",
+	"access_layer.data_plane.rate_limit_local",
+}
+
+// scanDeprecatedConfigKeys re-parses data as a generic YAML tree and emits a
+// slog.Warn for each deprecated key path that is present. Errors during the
+// generic re-parse are silently ignored — the structured parse already
+// succeeded (or will report a real error), and the deprecation scan is a
+// best-effort operator visibility feature, not a correctness gate.
+func scanDeprecatedConfigKeys(data []byte, paths []string) {
+	var root map[string]any
+	if err := yaml.Unmarshal(data, &root); err != nil {
+		return
+	}
+	for _, path := range paths {
+		if yamlPathExists(root, path) {
+			slog.Warn("deprecated config key ignored", "key", path)
+		}
+	}
+}
+
+// yamlPathExists walks a generic YAML map tree following a dotted path and
+// reports whether the leaf key exists. Intermediate segments must be maps;
+// a missing intermediate or a non-map intermediate returns false.
+func yamlPathExists(root map[string]any, path string) bool {
+	segs := splitDotted(path)
+	cur := any(root)
+	for _, s := range segs {
+		m, ok := cur.(map[string]any)
+		if !ok {
+			return false
+		}
+		v, ok := m[s]
+		if !ok {
+			return false
+		}
+		cur = v
+	}
+	return true
+}
+
+func splitDotted(s string) []string {
+	var out []string
+	start := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == '.' {
+			out = append(out, s[start:i])
+			start = i + 1
+		}
+	}
+	out = append(out, s[start:])
+	return out
+}
+
 // LoadConfig reads a YAML file at path, unmarshals it into Config and returns
 // the parsed result. It returns an error if the file cannot be read or the
-// YAML is invalid.
+// YAML is invalid. Deprecated YAML keys (removed in T17) are tolerated and
+// emit a slog.Warn per occurrence — they do NOT cause a load failure.
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -308,6 +381,8 @@ func LoadConfig(path string) (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse config file: %w", err)
 	}
+
+	scanDeprecatedConfigKeys(data, deprecatedConfigKeys)
 
 	// Basic required-field validation.
 	if cfg.Node.Identity.PrivKeyPath == "" {
