@@ -347,7 +347,6 @@ func main() {
 		log.Fatalf("create gossipsub: %v", err)
 	}
 	mergedPop := gossippop.NewMergedPopularity()
-	_ = mergedPop // used via HandlePopularityMessage subscriber
 
 	// Subscribe to the popularity topic.
 	popTopic, err := gossippop.JoinTopic(rootCtx, gs, gossippop.PopularityTopic)
@@ -358,6 +357,50 @@ func main() {
 		rootCtx, popTopic,
 		gossippop.NewLocalPopularity(), nodeIdentity.PeerID, edPriv,
 	)
+
+	// Wire gossip popularity into cache eviction:
+	//   - PinChecker: PinStore.IsPinned protects pinned blobs from eviction.
+	//   - PopSource: adapter closure converts mergedPop.Snapshot() into the
+	//     []*cache.VideoMeta shape that Evict expects (one VideoMeta per blob
+	//     hash with a single SegmentMeta carrying the same hash so Evict's
+	//     index.Get(seg.BlobHash) lookup in evict.go:80 succeeds).
+	warmCache.SetPinChecker(pinStore.IsPinned)
+	warmCache.SetPopSource(func() []*cache.VideoMeta {
+		heat := mergedPop.Snapshot()
+		out := make([]*cache.VideoMeta, 0, len(heat))
+		for h, p := range heat {
+			out = append(out, &cache.VideoMeta{
+				BlobHash:   h,
+				Popularity: p,
+				Segments:   []*cache.SegmentMeta{{BlobHash: h}},
+			})
+		}
+		return out
+	})
+
+	// Receive loop: process incoming gossip popularity updates so the local
+	// merged view stays fresh. Exits when rootCtx is cancelled.
+	go func() {
+		sub, err := popTopic.Subscribe()
+		if err != nil {
+			logger.Error("popularity topic subscribe failed", "err", err)
+			return
+		}
+		defer sub.Cancel()
+		hostAdapter := ed25519PeerstoreAdapter{h: h}
+		for {
+			msg, err := sub.Next(rootCtx)
+			if err != nil {
+				if rootCtx.Err() != nil {
+					return
+				}
+				logger.Debug("popularity sub next error", "err", err)
+				continue
+			}
+			gossippop.HandlePopularityMessage(mergedPop, scorer, msg, hostAdapter)
+		}
+	}()
+
 	logger.Info("gossipsub popularity sync started", "topic", gossippop.PopularityTopic)
 
 	// -------------------------------------------------------------------
@@ -526,6 +569,37 @@ func (r *byteReadCloser) Read(p []byte) (int, error) {
 func (r *byteReadCloser) Close() error {
 	r.offset = 0
 	return nil
+}
+
+// ed25519PeerstoreAdapter adapts a libp2p host.Host to the narrow interface
+// expected by gossippop.HandlePopularityMessage. libp2p's Peerstore.PubKey
+// returns the generic ic.PubKey interface; HandlePopularityMessage wants an
+// ed25519.PublicKey directly so it can call ed25519.Verify without a type
+// assertion. The adapter bridges this by extracting the raw Ed25519 bytes via
+// gossippop.Ed25519PubKey (which itself uses peer.ID.ExtractPublicKey).
+//
+// If a peer.ID does not embed an Ed25519 key (e.g. RSA or Secp256k1 host),
+// PubKey returns nil and HandlePopularityMessage drops the message.
+type ed25519PeerstoreAdapter struct {
+	h host.Host
+}
+
+func (a ed25519PeerstoreAdapter) Peerstore() interface {
+	PubKey(peer.ID) ed25519.PublicKey
+} {
+	return ed25519PopKeyView{h: a.h}
+}
+
+type ed25519PopKeyView struct {
+	h host.Host
+}
+
+func (v ed25519PopKeyView) PubKey(id peer.ID) ed25519.PublicKey {
+	raw := gossippop.Ed25519PubKey(id)
+	if raw == nil {
+		return nil
+	}
+	return ed25519.PublicKey(raw)
 }
 
 // backhaulWarmCache adapts *cache.WarmCache to backhaul.CacheReader and

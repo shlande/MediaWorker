@@ -1,0 +1,137 @@
+=== Task 18: WarmCache PinChecker/PopSource 接线 + gossip 订阅循环 ===
+Date: 2026-07-18T18:28:51Z
+
+=== Verification gates ===
+
+--- Gate 1: grep -n '_ = mergedPop' cmd/edge-node/main.go (expect zero hits) ---
+PASS: zero hits
+
+--- Gate 2: go build ./internal/node/cache/... ./internal/node/gossippop/... ---
+EXIT=0
+
+--- Gate 3: go vet ./internal/node/cache/... ./internal/node/gossippop/... ---
+EXIT=0
+
+--- Gate 4: go test -race ./internal/node/cache/... ./internal/node/gossippop/... ---
+=== RUN   TestMemoryIndex_PutGet
+--- PASS: TestMemoryIndex_PutGet (0.00s)
+=== RUN   TestPrefixCache_PutGet
+--- PASS: TestPrefixCache_PutGet (0.00s)
+=== RUN   TestPrefixCache_NoEvict
+--- PASS: TestPrefixCache_NoEvict (0.00s)
+=== RUN   TestWarmCache_PutGet
+--- PASS: TestWarmCache_PutGet (0.00s)
+=== RUN   TestWarmCache_PutEvict_LowPopFirst
+--- PASS: TestWarmCache_PutEvict_LowPopFirst (0.00s)
+=== RUN   TestEvict_HighBitrateFirst
+--- PASS: TestEvict_HighBitrateFirst (0.00s)
+=== RUN   TestEvict_SkipPinned
+--- PASS: TestEvict_SkipPinned (0.00s)
+=== RUN   TestEvict_HighLatencyProtection
+--- PASS: TestEvict_HighLatencyProtection (0.00s)
+=== RUN   TestEvict_FallbackAllHighLatency
+--- PASS: TestEvict_FallbackAllHighLatency (0.00s)
+=== RUN   TestMemoryIndex_UpdateLatency
+--- PASS: TestMemoryIndex_UpdateLatency (0.00s)
+=== RUN   TestWarmCache_ErrCacheFull
+--- PASS: TestWarmCache_ErrCacheFull (0.00s)
+=== RUN   TestColdCache_PutGet_Evict
+--- PASS: TestColdCache_PutGet_Evict (0.00s)
+=== RUN   TestPrefixCache_RemoveAndMissing
+--- PASS: TestPrefixCache_RemoveAndMissing (0.00s)
+=== RUN   TestWarmCache_HasAndMissing
+--- PASS: TestWarmCache_HasAndMissing (0.00s)
+=== RUN   TestPrefixCache_Available
+--- PASS: TestPrefixCache_Available (0.00s)
+=== RUN   TestCache_DiskPersistence
+--- PASS: TestCache_DiskPersistence (0.00s)
+=== RUN   TestMemoryIndex_Has
+--- PASS: TestMemoryIndex_Has (0.00s)
+=== RUN   TestMemoryIndex_All
+--- PASS: TestMemoryIndex_All (0.00s)
+=== RUN   TestWarmCache_NilInjectionsSafe
+--- PASS: TestWarmCache_NilInjectionsSafe (0.00s)
+=== RUN   TestWarmCache_Put_EmptyPopSource
+--- PASS: TestWarmCache_Put_EmptyPopSource (0.00s)
+=== RUN   TestWarmCache_SetPinChecker_ReplacesDefault
+--- PASS: TestWarmCache_SetPinChecker_ReplacesDefault (0.00s)
+=== RUN   TestWarmCache_SetPopSource_ReplacesDefault
+--- PASS: TestWarmCache_SetPopSource_ReplacesDefault (0.00s)
+=== RUN   TestWarmCache_Setters_ConcurrentSafety
+--- PASS: TestWarmCache_Setters_ConcurrentSafety (0.00s)
+=== RUN   TestWarmCache_SetPinChecker_NilInstallsDefault
+--- PASS: TestWarmCache_SetPinChecker_NilInstallsDefault (0.00s)
+=== RUN   TestWarmCache_SetPopSource_NilInstallsDefault
+--- PASS: TestWarmCache_SetPopSource_NilInstallsDefault (0.00s)
+PASS
+ok  	github.com/shlande/mediaworker/internal/node/cache	1.251s
+=== RUN   TestLocalPopularity_HitSnapshot
+--- PASS: TestLocalPopularity_HitSnapshot (0.00s)
+=== RUN   TestLocalPopularity_SnapshotEmpty
+--- PASS: TestLocalPopularity_SnapshotEmpty (0.00s)
+=== RUN   TestPeerScorer_ICPSuccess
+--- PASS: TestPeerScorer_ICPSuccess (0.00s)
+=== RUN   TestPeerScorer_ICPTimeout
+--- PASS: TestPeerScorer_ICPTimeout (0.00s)
+=== RUN   TestPeerScorer_Misbehavior
+2026/07/19 02:28:53 WARN peer graylisted due to misbehavior component=peer_scorer peer=peerC kind=1 score=-20 threshold=-20
+--- PASS: TestPeerScorer_Misbehavior (0.00s)
+=== RUN   TestPeerScorer_BandwidthContributed
+--- PASS: TestPeerScorer_BandwidthContributed (0.00s)
+=== RUN   TestMergedPopularity_WeightedMerge
+--- PASS: TestMergedPopularity_WeightedMerge (0.01s)
+=== RUN   TestMergedPopularity_LowScoreDropped
+--- PASS: TestMergedPopularity_LowScoreDropped (0.00s)
+=== RUN   TestMergedPopularity_BelowMinTrustedWeight
+--- PASS: TestMergedPopularity_BelowMinTrustedWeight (0.00s)
+=== RUN   TestGossipSub_2NodePopularitySync
+2026/07/19 02:28:53 INFO peer connected component=libp2p_host self="<peer.ID 12*4LPnZv>" peer="<peer.ID 12*isQ4mk>" direction=outbound
+2026/07/19 02:28:53 INFO peer connected component=libp2p_host self="<peer.ID 12*isQ4mk>" peer="<peer.ID 12*4LPnZv>" direction=inbound
+2026/07/19 02:28:55 INFO peer disconnected component=libp2p_host self="<peer.ID 12*isQ4mk>" peer="<peer.ID 12*4LPnZv>"
+2026/07/19 02:28:55 INFO peer disconnected component=libp2p_host self="<peer.ID 12*4LPnZv>" peer="<peer.ID 12*isQ4mk>"
+--- PASS: TestGossipSub_2NodePopularitySync (2.05s)
+=== RUN   TestGossipSub_3NodePoisoningDefense
+2026/07/19 02:28:55 INFO peer connected component=libp2p_host self="<peer.ID 12*5XaxES>" peer="<peer.ID 12*oGsgHe>" direction=outbound
+2026/07/19 02:28:55 INFO peer connected component=libp2p_host self="<peer.ID 12*oGsgHe>" peer="<peer.ID 12*5XaxES>" direction=inbound
+2026/07/19 02:28:55 INFO peer connected component=libp2p_host self="<peer.ID 12*5XaxES>" peer="<peer.ID 12*eZN4Mo>" direction=outbound
+2026/07/19 02:28:55 INFO peer connected component=libp2p_host self="<peer.ID 12*eZN4Mo>" peer="<peer.ID 12*5XaxES>" direction=inbound
+2026/07/19 02:28:55 INFO peer connected component=libp2p_host self="<peer.ID 12*oGsgHe>" peer="<peer.ID 12*eZN4Mo>" direction=outbound
+2026/07/19 02:28:55 INFO peer connected component=libp2p_host self="<peer.ID 12*eZN4Mo>" peer="<peer.ID 12*oGsgHe>" direction=inbound
+2026/07/19 02:28:55 WARN peer graylisted due to misbehavior component=peer_scorer peer=12D3KooWKubU45BPwVCzNUyXqAjkvPoUKuN5gerEhoDSoYeZN4Mo kind=0 score=-20 threshold=-20
+    gossippop_test.go:504: update 0 from 12D3KooWKubU45BPwVCzNUyXqAjkvPoUKuN5gerEhoDSoYeZN4Mo rejected: gossippop: score_too_low
+    gossippop_test.go:506: update 1 from 12D3KooWLeATp9y8K8nkvD6X9sFR6Lidr29QfdvVbS6pMh5XaxES accepted, counts=map[blob1:10]
+2026/07/19 02:28:57 INFO peer disconnected component=libp2p_host self="<peer.ID 12*oGsgHe>" peer="<peer.ID 12*eZN4Mo>"
+2026/07/19 02:28:57 INFO peer disconnected component=libp2p_host self="<peer.ID 12*eZN4Mo>" peer="<peer.ID 12*oGsgHe>"
+2026/07/19 02:28:57 INFO peer disconnected component=libp2p_host self="<peer.ID 12*5XaxES>" peer="<peer.ID 12*eZN4Mo>"
+2026/07/19 02:28:57 INFO peer disconnected component=libp2p_host self="<peer.ID 12*eZN4Mo>" peer="<peer.ID 12*5XaxES>"
+2026/07/19 02:28:57 INFO peer disconnected component=libp2p_host self="<peer.ID 12*5XaxES>" peer="<peer.ID 12*oGsgHe>"
+2026/07/19 02:28:57 INFO peer disconnected component=libp2p_host self="<peer.ID 12*oGsgHe>" peer="<peer.ID 12*5XaxES>"
+--- PASS: TestGossipSub_3NodePoisoningDefense (2.08s)
+=== RUN   TestMergedPopularity_Snapshot_ThresholdFilter
+--- PASS: TestMergedPopularity_Snapshot_ThresholdFilter (0.00s)
+=== RUN   TestMergedPopularity_Snapshot_Empty
+--- PASS: TestMergedPopularity_Snapshot_Empty (0.00s)
+=== RUN   TestMergedPopularity_Snapshot_IndependentCopy
+--- PASS: TestMergedPopularity_Snapshot_IndependentCopy (0.00s)
+=== RUN   TestMergedPopularity_Snapshot_ConcurrentWithUpdate
+--- PASS: TestMergedPopularity_Snapshot_ConcurrentWithUpdate (0.00s)
+=== RUN   TestGossipSub_Snapshot_PropagatesAcrossHosts
+2026/07/19 02:28:57 INFO peer connected component=libp2p_host self="<peer.ID 12*HeMvvD>" peer="<peer.ID 12*6bfqX8>" direction=outbound
+2026/07/19 02:28:57 INFO peer connected component=libp2p_host self="<peer.ID 12*6bfqX8>" peer="<peer.ID 12*HeMvvD>" direction=inbound
+2026/07/19 02:28:59 INFO peer disconnected component=libp2p_host self="<peer.ID 12*HeMvvD>" peer="<peer.ID 12*6bfqX8>"
+2026/07/19 02:28:59 INFO peer disconnected component=libp2p_host self="<peer.ID 12*6bfqX8>" peer="<peer.ID 12*HeMvvD>"
+--- PASS: TestGossipSub_Snapshot_PropagatesAcrossHosts (2.05s)
+PASS
+ok  	github.com/shlande/mediaworker/internal/node/gossippop	7.601s
+EXIT=0
+
+--- Gate 5: files changed ---
+ cmd/edge-node/main.go                |  96 +++++++++++++++++++++-
+ cmd/edge-node/main_test.go           | 155 +++++++++++++++++++++++++++++++++++
+ internal/node/cache/warm.go          |  44 +++++++++-
+ internal/node/gossippop/mergedpop.go |  22 +++++
+ 4 files changed, 313 insertions(+), 4 deletions(-)
+
+--- Gate 6: new test files ---
+-rw-r--r--@ 1 shlande  staff  4529 Jul 19 02:25 internal/node/cache/warm_setters_test.go
+-rw-r--r--@ 1 shlande  staff  6123 Jul 19 02:26 internal/node/gossippop/mergedpop_test.go
