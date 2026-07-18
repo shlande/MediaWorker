@@ -54,3 +54,15 @@ ingest:
   ffmpeg_path: "/usr/bin/ffmpeg"
   work_dir: "/data/ingest"
   redundancy: 2
+
+# control_plane wires the ingest-worker into the libp2p sync mesh so it can
+# publish ContentIngestedEvent directly to the control-plane SyncBroadcaster
+# (T8). Both fields are required — the worker fail-closes at startup if the
+# control-plane is unreachable.
+control_plane:
+  # Full libp2p multiaddr of a control-plane bootstrap host, including the
+  # /p2p/<peerID> suffix.
+  multiaddr: "/ip4/10.0.0.5/tcp/4001/p2p/12D3KooWReplaceWithRealControlPlanePeerID"
+  # Filesystem path to the ingest-worker's own libp2p identity (protobuf
+  # Ed25519, 0600). A missing key is generated in place.
+  priv_key_path: "/data/identity/ingest-worker-libp2p.key"
