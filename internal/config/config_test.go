@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -157,6 +158,12 @@ func TestLoadConfig_L4Node(t *testing.T) {
 	// JWT
 	if cfg.Node.JWTService.Endpoint != "https://control-plane.example.com/v1/node/jwt" {
 		t.Errorf("JWT endpoint = %q", cfg.Node.JWTService.Endpoint)
+	}
+	if cfg.Node.JWTService.ParsedRefreshInterval != 5*time.Minute {
+		t.Errorf("ParsedRefreshInterval = %v, want 5m", cfg.Node.JWTService.ParsedRefreshInterval)
+	}
+	if cfg.Node.JWTService.ParsedRefreshBeforeExpiry != 5*time.Minute {
+		t.Errorf("ParsedRefreshBeforeExpiry = %v, want 5m", cfg.Node.JWTService.ParsedRefreshBeforeExpiry)
 	}
 
 	// Edge caches
@@ -627,6 +634,104 @@ ingest:
 			}
 			if cfg.HTTP.MaxUploadBytes != 10<<30 {
 				t.Errorf("MaxUploadBytes = %d, want %d (10 GiB default)", cfg.HTTP.MaxUploadBytes, 10<<30)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// JWT refresh duration parsing & defaults
+// ---------------------------------------------------------------------------
+
+func TestLoadConfig_JWTRefreshDurationDefaults(t *testing.T) {
+	cases := []struct {
+		name      string
+		yamlBody  string
+		wantInter time.Duration
+		wantBefore time.Duration
+	}{
+		{
+			name: "explicit values",
+			yamlBody: `
+node:
+  identity: { priv_key_path: "/data/key" }
+  declared_capabilities: { edge: true }
+  libp2p:
+    listen: ["/ip4/0.0.0.0/tcp/9001"]
+    dht: { namespace: "edge", mode: "client" }
+  jwt_service:
+    endpoint: "http://cp/v1/node/jwt"
+    refresh_interval: "10m"
+    refresh_before_expiry: "2m"
+`,
+			wantInter:  10 * time.Minute,
+			wantBefore: 2 * time.Minute,
+		},
+		{
+			name: "missing stanza falls back to 5m defaults",
+			yamlBody: `
+node:
+  identity: { priv_key_path: "/data/key" }
+  declared_capabilities: { edge: true }
+  libp2p:
+    listen: ["/ip4/0.0.0.0/tcp/9001"]
+    dht: { namespace: "edge", mode: "client" }
+  jwt_service:
+    endpoint: "http://cp/v1/node/jwt"
+`,
+			wantInter:  5 * time.Minute,
+			wantBefore: 5 * time.Minute,
+		},
+		{
+			name: "invalid value falls back to 5m default",
+			yamlBody: `
+node:
+  identity: { priv_key_path: "/data/key" }
+  declared_capabilities: { edge: true }
+  libp2p:
+    listen: ["/ip4/0.0.0.0/tcp/9001"]
+    dht: { namespace: "edge", mode: "client" }
+  jwt_service:
+    endpoint: "http://cp/v1/node/jwt"
+    refresh_interval: "not-a-duration"
+    refresh_before_expiry: ""
+`,
+			wantInter:  5 * time.Minute,
+			wantBefore: 5 * time.Minute,
+		},
+		{
+			name: "zero/negative falls back to default",
+			yamlBody: `
+node:
+  identity: { priv_key_path: "/data/key" }
+  declared_capabilities: { edge: true }
+  libp2p:
+    listen: ["/ip4/0.0.0.0/tcp/9001"]
+    dht: { namespace: "edge", mode: "client" }
+  jwt_service:
+    endpoint: "http://cp/v1/node/jwt"
+    refresh_interval: "0s"
+    refresh_before_expiry: "-5m"
+`,
+			wantInter:  5 * time.Minute,
+			wantBefore: 5 * time.Minute,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeTempYAML(t, tc.yamlBody)
+			cfg, err := LoadConfig(path)
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if cfg.Node.JWTService.ParsedRefreshInterval != tc.wantInter {
+				t.Errorf("ParsedRefreshInterval = %v, want %v",
+					cfg.Node.JWTService.ParsedRefreshInterval, tc.wantInter)
+			}
+			if cfg.Node.JWTService.ParsedRefreshBeforeExpiry != tc.wantBefore {
+				t.Errorf("ParsedRefreshBeforeExpiry = %v, want %v",
+					cfg.Node.JWTService.ParsedRefreshBeforeExpiry, tc.wantBefore)
 			}
 		})
 	}

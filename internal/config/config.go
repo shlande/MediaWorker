@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/shlande/mediaworker/internal/types"
 	"gopkg.in/yaml.v3"
@@ -104,11 +105,24 @@ type ConnGaterConfig struct {
 
 // JWTServiceConfig holds the control-plane JWT signing endpoint and refresh
 // parameters.
+//
+// RefreshInterval / RefreshBeforeExpiry are string durations parsed into the
+// corresponding *Parsed fields by LoadConfig (default 5m when empty/zero/invalid).
+// Callers should prefer the Parsed fields over re-parsing the strings.
 type JWTServiceConfig struct {
-	Endpoint           string `yaml:"endpoint"`
-	RefreshInterval    string `yaml:"refresh_interval"`     // e.g. "5m"
+	Endpoint            string `yaml:"endpoint"`
+	RefreshInterval     string `yaml:"refresh_interval"`      // e.g. "5m"
 	RefreshBeforeExpiry string `yaml:"refresh_before_expiry"` // e.g. "5m"
+
+	// Parsed fields populated by LoadConfig; safe to read after LoadConfig returns.
+	ParsedRefreshInterval     time.Duration `yaml:"-"`
+	ParsedRefreshBeforeExpiry time.Duration `yaml:"-"`
 }
+
+const (
+	defaultJWTRefreshInterval     = 5 * time.Minute
+	defaultJWTRefreshBeforeExpiry = 5 * time.Minute
+)
 
 // ---------------------------------------------------------------------------
 // Edge cache
@@ -253,7 +267,30 @@ func LoadConfig(path string) (*Config, error) {
 		return nil, fmt.Errorf("config: node.jwt_service.endpoint is required")
 	}
 
+	normalizeJWTRefreshDurations(&cfg.Node.JWTService)
+
 	return &cfg, nil
+}
+
+// normalizeJWTRefreshDurations parses RefreshInterval / RefreshBeforeExpiry
+// strings (e.g. "5m") into the Parsed* fields, applying 5m defaults for
+// empty/zero/invalid values. Invalid values do NOT fail config loading — they
+// fall back to defaults and are logged by the caller (matches the plan's
+// "invalid duration → use default" contract from T7 §c).
+func normalizeJWTRefreshDurations(j *JWTServiceConfig) {
+	j.ParsedRefreshInterval = parseDurationOrDefault(j.RefreshInterval, defaultJWTRefreshInterval)
+	j.ParsedRefreshBeforeExpiry = parseDurationOrDefault(j.RefreshBeforeExpiry, defaultJWTRefreshBeforeExpiry)
+}
+
+func parseDurationOrDefault(s string, def time.Duration) time.Duration {
+	if s == "" {
+		return def
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return def
+	}
+	return d
 }
 
 // LoadVendorProfiles reads a YAML file at path, unmarshals the top-level
