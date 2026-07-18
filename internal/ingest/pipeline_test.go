@@ -56,13 +56,15 @@ func (m *mockBackendUploader) Put(_ context.Context, blobHash string, reader io.
 	return BackendLocation{BackendID: m.backendID, FileID: blobHash + "_file"}, nil
 }
 
-// mockBackendPool returns fixed mock uploaders.
+// mockBackendPool returns fixed mock uploaders and records the last K requested.
 type mockBackendPool struct {
 	err       error
 	uploaders []*mockBackendUploader
+	gotK      int // last K passed to SelectKForUpload
 }
 
-func (m *mockBackendPool) SelectKForUpload(_ int) ([]BackendUploader, error) {
+func (m *mockBackendPool) SelectKForUpload(k int) ([]BackendUploader, error) {
+	m.gotK = k
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -127,11 +129,12 @@ func buildPipeline(
 	poolErr error,
 	storeErr error,
 	eventBus *mockEventPublisher,
+	redundancy int,
 ) *IngestPipeline {
 	t.Helper()
 	store := &mockBlobStoreWriter{err: storeErr}
 	pool := &mockBackendPool{uploaders: backends, err: poolErr}
-	p := NewIngestPipeline(pool, store, eventBus)
+	p := NewIngestPipeline(pool, store, eventBus, redundancy)
 	p.RegisterIngester(&stubIngester{contentType: contentType, result: result, err: ingestErr})
 	return p
 }
@@ -172,7 +175,7 @@ func TestIngest_Success(t *testing.T) {
 	done := make(chan struct{})
 	eventBus := &mockEventPublisher{done: done}
 
-	p := buildPipeline(t, "dash_video", result, nil, backends, nil, nil, eventBus)
+	p := buildPipeline(t, "dash_video", result, nil, backends, nil, nil, eventBus, 2)
 
 	contentID, err := p.Ingest(context.Background(), "dash_video", strings.NewReader("dummy"), ProcessOptions{})
 	if err != nil {
@@ -243,7 +246,7 @@ func TestIngest_Success(t *testing.T) {
 func TestIngest_UnsupportedContentType(t *testing.T) {
 	backends := []*mockBackendUploader{{backendID: "115:acct_01"}}
 	eventBus := &mockEventPublisher{}
-	p := buildPipeline(t, "dash_video", nil, nil, backends, nil, nil, eventBus)
+	p := buildPipeline(t, "dash_video", nil, nil, backends, nil, nil, eventBus, 2)
 	_, err := p.Ingest(context.Background(), "nonexistent_type", strings.NewReader("x"), ProcessOptions{})
 	if err == nil {
 		t.Fatal("expected error for unsupported content type")
@@ -256,7 +259,7 @@ func TestIngest_UnsupportedContentType(t *testing.T) {
 func TestIngest_ProcessFails(t *testing.T) {
 	backends := []*mockBackendUploader{{backendID: "115:acct_01"}}
 	eventBus := &mockEventPublisher{}
-	p := buildPipeline(t, "dash_video", nil, fmt.Errorf("proc boom"), backends, nil, nil, eventBus)
+	p := buildPipeline(t, "dash_video", nil, fmt.Errorf("proc boom"), backends, nil, nil, eventBus, 2)
 	_, err := p.Ingest(context.Background(), "dash_video", strings.NewReader("x"), ProcessOptions{})
 	if err == nil {
 		t.Fatal("expected error from Process")
@@ -287,7 +290,7 @@ func TestIngest_UploadPartialFailure(t *testing.T) {
 	}
 	eventBus := &mockEventPublisher{}
 
-	p := buildPipeline(t, "dash_video", result, nil, backends, nil, nil, eventBus)
+	p := buildPipeline(t, "dash_video", result, nil, backends, nil, nil, eventBus, 2)
 
 	_, err := p.Ingest(context.Background(), "dash_video", strings.NewReader("x"), ProcessOptions{})
 	if err != nil {
@@ -326,7 +329,7 @@ func TestIngest_UploadAllFail(t *testing.T) {
 	}
 	eventBus := &mockEventPublisher{}
 
-	p := buildPipeline(t, "dash_video", result, nil, backends, nil, nil, eventBus)
+	p := buildPipeline(t, "dash_video", result, nil, backends, nil, nil, eventBus, 2)
 
 	_, err := p.Ingest(context.Background(), "dash_video", strings.NewReader("x"), ProcessOptions{})
 	if err == nil {
@@ -355,7 +358,7 @@ func TestIngest_WriteTransactionFails(t *testing.T) {
 	backends := []*mockBackendUploader{{backendID: "115:acct_01"}}
 	eventBus := &mockEventPublisher{}
 
-	p := buildPipeline(t, "dash_video", result, nil, backends, nil, errors.New("store boom"), eventBus)
+	p := buildPipeline(t, "dash_video", result, nil, backends, nil, errors.New("store boom"), eventBus, 2)
 
 	_, err := p.Ingest(context.Background(), "dash_video", strings.NewReader("x"), ProcessOptions{})
 	if err == nil {
@@ -363,5 +366,87 @@ func TestIngest_WriteTransactionFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "store boom") {
 		t.Errorf("error = %v, want to contain 'store boom'", err)
+	}
+}
+
+func TestIngest_RedundancyK3(t *testing.T) {
+	// Verify that when redundancy=3, SelectKForUpload receives k=3.
+	tmpDir := t.TempDir()
+	fileA := mustCreateFile(t, tmpDir, "blob_a.m4s", []byte("init content"))
+
+	blobs := []types.BlobDescriptor{
+		simpleBlob("sha256:aaa", "mp4_init_segment", 100),
+	}
+	result := &ProcessResult{
+		ContentID:   "cid-k3",
+		ContentType: "dash_video",
+		Blobs:       blobs,
+		Roles:       []types.BlobRole{{BlobHash: "sha256:aaa", Role: "init", SortOrder: 0}},
+		BlobFiles:   map[string]string{"sha256:aaa": fileA},
+	}
+
+	backends := []*mockBackendUploader{
+		{backendID: "115:a"},
+		{backendID: "115:b"},
+		{backendID: "115:c"},
+	}
+	eventBus := &mockEventPublisher{}
+
+	p := buildPipeline(t, "dash_video", result, nil, backends, nil, nil, eventBus, 3)
+
+	_, err := p.Ingest(context.Background(), "dash_video", strings.NewReader("x"), ProcessOptions{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	pool := p.backends.(*mockBackendPool)
+	if pool.gotK != 3 {
+		t.Errorf("SelectKForUpload called with k=%d, want 3", pool.gotK)
+	}
+}
+
+func TestIngest_RedundancyNormalizesTo2(t *testing.T) {
+	// Verify that when redundancy <= 0, the pipeline normalizes to 2.
+	tests := []struct {
+		name       string
+		redundancy int
+	}{
+		{"zero", 0},
+		{"negative", -1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			fileA := mustCreateFile(t, tmpDir, "blob_a.m4s", []byte("init content"))
+
+			blobs := []types.BlobDescriptor{
+				simpleBlob("sha256:aaa", "mp4_init_segment", 100),
+			}
+			result := &ProcessResult{
+				ContentID:   "cid-normalize-" + tt.name,
+				ContentType: "dash_video",
+				Blobs:       blobs,
+				Roles:       []types.BlobRole{{BlobHash: "sha256:aaa", Role: "init", SortOrder: 0}},
+				BlobFiles:   map[string]string{"sha256:aaa": fileA},
+			}
+
+			backends := []*mockBackendUploader{
+				{backendID: "115:x"},
+				{backendID: "115:y"},
+			}
+			eventBus := &mockEventPublisher{}
+
+			p := buildPipeline(t, "dash_video", result, nil, backends, nil, nil, eventBus, tt.redundancy)
+
+			_, err := p.Ingest(context.Background(), "dash_video", strings.NewReader("x"), ProcessOptions{})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+
+			pool := p.backends.(*mockBackendPool)
+			if pool.gotK != 2 {
+				t.Errorf("SelectKForUpload called with k=%d, want 2 (normalized from %d)", pool.gotK, tt.redundancy)
+			}
+		})
 	}
 }

@@ -16,19 +16,26 @@ import (
 // blobs redundantly, writes metadata in a single transaction, and publishes
 // the ingestion event asynchronously.
 type IngestPipeline struct {
-	ingesters map[string]ContentIngester
-	backends  BackendPool
-	blobStore BlobStoreWriter
-	eventBus  EventPublisher
+	ingesters   map[string]ContentIngester
+	backends    BackendPool
+	blobStore   BlobStoreWriter
+	eventBus    EventPublisher
+	redundancy  int
 }
 
 // NewIngestPipeline returns a ready-to-use IngestPipeline.
-func NewIngestPipeline(backends BackendPool, blobStore BlobStoreWriter, eventBus EventPublisher) *IngestPipeline {
+// redundancy is the target K for redundant blob uploads;
+// values ≤ 0 are normalized to 2.
+func NewIngestPipeline(backends BackendPool, blobStore BlobStoreWriter, eventBus EventPublisher, redundancy int) *IngestPipeline {
+	if redundancy <= 0 {
+		redundancy = 2
+	}
 	return &IngestPipeline{
-		ingesters: make(map[string]ContentIngester),
-		backends:  backends,
-		blobStore: blobStore,
-		eventBus:  eventBus,
+		ingesters:  make(map[string]ContentIngester),
+		backends:   backends,
+		blobStore:  blobStore,
+		eventBus:   eventBus,
+		redundancy: redundancy,
 	}
 }
 
@@ -58,9 +65,12 @@ func (p *IngestPipeline) Ingest(
 	if err != nil {
 		return "", fmt.Errorf("process: %w", err)
 	}
+	if result.WorkDir != "" {
+		defer os.RemoveAll(result.WorkDir)
+	}
 
-	// Upload every blob redundantly (K=2).
-	locations, err := p.uploadAllBlobs(ctx, result.Blobs, result.BlobFiles, 2)
+	// Upload every blob redundantly (K = p.redundancy).
+	locations, err := p.uploadAllBlobs(ctx, result.Blobs, result.BlobFiles, p.redundancy)
 	if err != nil {
 		return "", fmt.Errorf("blob upload: %w", err)
 	}

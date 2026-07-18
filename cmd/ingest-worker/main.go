@@ -10,7 +10,9 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
+	"path/filepath"
 	"net/http"
 	"os"
 	"os/signal"
@@ -48,7 +50,10 @@ func run(configPath string) error {
 		return fmt.Errorf("load config: %w", err)
 	}
 
-	// 2. Metadata client (PG).
+	// 2. Sweep stale temp workdirs from previous runs.
+	sweepStaleWorkDir(cfg.Ingest.WorkDir)
+
+	// 3. Metadata client (PG).
 	mc, err := metadata.NewPGMetadataClient(cfg.Metadata.PGDSN)
 	if err != nil {
 		return fmt.Errorf("metadata client: %w", err)
@@ -66,7 +71,7 @@ func run(configPath string) error {
 	eventBus := ingest.NewLogPublisher()
 
 	// 6. Build pipeline with registered ingesters.
-	pipeline := ingest.NewIngestPipeline(backendPool, mc, eventBus)
+	pipeline := ingest.NewIngestPipeline(backendPool, mc, eventBus, cfg.Ingest.Redundancy)
 	pipeline.RegisterIngester(ingest.NewDashIngester(cfg.Ingest.FFmpegPath, cfg.Ingest.WorkDir))
 	pipeline.RegisterIngester(ingest.NewImageIngester(cfg.Ingest.WorkDir))
 
@@ -120,6 +125,52 @@ func run(configPath string) error {
 	}
 	slog.Info("ingest-worker shutdown complete")
 	return nil
+}
+
+// ─── Startup sweep ──────────────────────────────────────────────────────
+
+// sweepStaleWorkDir removes first-level subdirectories and src.mp4 files in
+// workDir whose mtime is before the current time. These are orphaned from
+// previous runs. Failures are logged as warnings only — they never block startup.
+func sweepStaleWorkDir(workDir string) {
+	startupTime := time.Now()
+	entries, err := os.ReadDir(workDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return
+		}
+		slog.Warn("sweep workdir read", "dir", workDir, "err", err)
+		return
+	}
+	for _, entry := range entries {
+		path := filepath.Join(workDir, entry.Name())
+		if entry.IsDir() {
+			info, err := entry.Info()
+			if err != nil {
+				slog.Warn("sweep stat dir", "path", path, "err", err)
+				continue
+			}
+			if info.ModTime().Before(startupTime) {
+				if err := os.RemoveAll(path); err != nil {
+					slog.Warn("sweep remove dir", "path", path, "err", err)
+				}
+			}
+			continue
+		}
+		// Match *_src.mp4 files.
+		if strings.HasSuffix(entry.Name(), "_src.mp4") {
+			info, err := entry.Info()
+			if err != nil {
+				slog.Warn("sweep stat file", "path", path, "err", err)
+				continue
+			}
+			if info.ModTime().Before(startupTime) {
+				if err := os.RemoveAll(path); err != nil {
+					slog.Warn("sweep remove file", "path", path, "err", err)
+				}
+			}
+		}
+	}
 }
 
 // ─── HTTP handler ──────────────────────────────────────────────────────
