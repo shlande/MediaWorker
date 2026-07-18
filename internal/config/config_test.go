@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -575,6 +576,9 @@ ingest:
   ffmpeg_path: "/usr/bin/ffmpeg"
   work_dir: "/tmp/work"
   redundancy: 2
+control_plane:
+  multiaddr: "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWFakePeerIDForTestingOnlyXYZ"
+  priv_key_path: "/tmp/ingest-worker.key"
 `
 
 func TestLoadIngestWorkerConfig_MaxUploadBytes_Explicit(t *testing.T) {
@@ -587,6 +591,9 @@ ingest:
   ffmpeg_path: "/usr/bin/ffmpeg"
   work_dir: "/tmp/work"
   redundancy: 2
+control_plane:
+  multiaddr: "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWFakePeerIDForTestingOnlyXYZ"
+  priv_key_path: "/tmp/ingest-worker.key"
 `)
 	cfg, err := LoadIngestWorkerConfig(path)
 	if err != nil {
@@ -627,6 +634,9 @@ ingest:
   ffmpeg_path: "/usr/bin/ffmpeg"
   work_dir: "/tmp/work"
   redundancy: 2
+control_plane:
+  multiaddr: "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWFakePeerIDForTestingOnlyXYZ"
+  priv_key_path: "/tmp/ingest-worker.key"
 `)
 			cfg, err := LoadIngestWorkerConfig(path)
 			if err != nil {
@@ -636,6 +646,83 @@ ingest:
 				t.Errorf("MaxUploadBytes = %d, want %d (10 GiB default)", cfg.HTTP.MaxUploadBytes, 10<<30)
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Ingest-worker config: control_plane validation (T8)
+// ---------------------------------------------------------------------------
+
+func TestLoadIngestWorkerConfig_ControlPlane_Required(t *testing.T) {
+	cases := []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{
+			name: "missing_multiaddr",
+			yaml: `http:
+  listen: ":8080"
+metadata:
+  pg_dsn: "postgres://localhost:5432/test"
+ingest:
+  ffmpeg_path: "/usr/bin/ffmpeg"
+  work_dir: "/tmp/work"
+control_plane:
+  priv_key_path: "/tmp/ingest-worker.key"
+`,
+			want: "control_plane.multiaddr is required",
+		},
+		{
+			name: "missing_priv_key_path",
+			yaml: `http:
+  listen: ":8080"
+metadata:
+  pg_dsn: "postgres://localhost:5432/test"
+ingest:
+  ffmpeg_path: "/usr/bin/ffmpeg"
+  work_dir: "/tmp/work"
+control_plane:
+  multiaddr: "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWFake"
+`,
+			want: "control_plane.priv_key_path is required",
+		},
+	}
+	for _, tt := range cases {
+		t.Run(tt.name, func(t *testing.T) {
+			path := writeTempYAML(t, tt.yaml)
+			_, err := LoadIngestWorkerConfig(path)
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("error %q does not contain %q", err.Error(), tt.want)
+			}
+		})
+	}
+}
+
+func TestLoadIngestWorkerConfig_ControlPlane_Populated(t *testing.T) {
+	path := writeTempYAML(t, `http:
+  listen: ":8080"
+metadata:
+  pg_dsn: "postgres://localhost:5432/test"
+ingest:
+  ffmpeg_path: "/usr/bin/ffmpeg"
+  work_dir: "/tmp/work"
+control_plane:
+  multiaddr: "/ip4/10.0.0.5/tcp/4001/p2p/12D3KooWRealPeerID"
+  priv_key_path: "/var/lib/mediaworker/ingest-worker.key"
+`)
+	cfg, err := LoadIngestWorkerConfig(path)
+	if err != nil {
+		t.Fatalf("LoadIngestWorkerConfig failed: %v", err)
+	}
+	if cfg.ControlPlane.Multiaddr != "/ip4/10.0.0.5/tcp/4001/p2p/12D3KooWRealPeerID" {
+		t.Errorf("Multiaddr = %q", cfg.ControlPlane.Multiaddr)
+	}
+	if cfg.ControlPlane.PrivKeyPath != "/var/lib/mediaworker/ingest-worker.key" {
+		t.Errorf("PrivKeyPath = %q", cfg.ControlPlane.PrivKeyPath)
 	}
 }
 
