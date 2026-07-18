@@ -3,7 +3,9 @@ package dht
 import (
 	"context"
 	"crypto/rand"
+	"log/slog"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -109,13 +111,13 @@ func TestDHT_AdvertiseFindPeers(t *testing.T) {
 	connectMutual(t, ctx, hostA, hostB)
 	populateRoutingTables(ctx, dhtA, dhtB, hostA.ID(), hostB.ID())
 
-	discA := NewEdgeDiscovery(hostA, storeA, nil, "edge", 15*time.Minute, kaddht.ModeServer)
+	discA := NewEdgeDiscovery(hostA, storeA, nil, "edge", 15*time.Minute, 0, kaddht.ModeServer)
 	discA.dht = dhtA
 	discA.routingDisc = discoveryrouting.NewRoutingDiscovery(dhtA)
 
 	discB := NewEdgeDiscovery(hostB, storeB,
 		[]peer.AddrInfo{{ID: hostA.ID(), Addrs: hostA.Addrs()}},
-		"edge", 15*time.Minute, kaddht.ModeServer)
+		"edge", 15*time.Minute, 0, kaddht.ModeServer)
 	discB.dht = dhtB
 	discB.routingDisc = discoveryrouting.NewRoutingDiscovery(dhtB)
 
@@ -183,7 +185,7 @@ func TestDHT_AdvertiseTTLReturned(t *testing.T) {
 	connectMutual(t, ctx, hostA, hostB)
 	populateRoutingTables(ctx, dhtA, dhtB, hostA.ID(), hostB.ID())
 
-	discA := NewEdgeDiscovery(hostA, storeA, nil, "edge", 15*time.Minute, kaddht.ModeServer)
+	discA := NewEdgeDiscovery(hostA, storeA, nil, "edge", 15*time.Minute, 0, kaddht.ModeServer)
 	discA.dht = dhtA
 	discA.routingDisc = discoveryrouting.NewRoutingDiscovery(dhtA)
 
@@ -218,7 +220,7 @@ func TestDHT_BootstrapUnreachable(t *testing.T) {
 	disc := NewEdgeDiscovery(
 		h, store,
 		[]peer.AddrInfo{unreachable},
-		"edge", 15*time.Minute,
+		"edge", 15*time.Minute, 0,
 		kaddht.ModeClient,
 	)
 
@@ -253,7 +255,7 @@ func TestDHT_HeartbeatLoop(t *testing.T) {
 	connectMutual(t, ctx, hostA, hostB)
 	populateRoutingTables(ctx, dhtA, dhtB, hostA.ID(), hostB.ID())
 
-	discA := NewEdgeDiscovery(hostA, storeA, nil, "edge", 1*time.Second, kaddht.ModeServer)
+	discA := NewEdgeDiscovery(hostA, storeA, nil, "edge", 1*time.Second, 0, kaddht.ModeServer)
 	discA.dht = dhtA
 	discA.routingDisc = discoveryrouting.NewRoutingDiscovery(dhtA)
 
@@ -285,7 +287,7 @@ func TestDHT_PeX(t *testing.T) {
 	disc := NewEdgeDiscovery(
 		h, store,
 		nil,
-		"edge", 15*time.Minute,
+		"edge", 15*time.Minute, 0,
 		kaddht.ModeServer,
 	)
 
@@ -311,4 +313,106 @@ func TestDHT_PeX(t *testing.T) {
 		t.Errorf("PeX peer stored but LastSeen is zero")
 	}
 	t.Logf("PeX peer stored: peer=%s addrs=%v last_seen=%d", entry.PeerID, entry.Addrs, entry.LastSeen)
+}
+
+// TestDHT_AdvertiseIntervalWired verifies that the advertiseInterval parameter
+// (T15) actually drives the heartbeat re-advertise ticker — i.e., the dormant
+// config field is now wired through. We construct an EdgeDiscovery with a
+// short advertiseInterval and a long advertiseTTL, run the heartbeat loop,
+// and confirm that re-advertise fires at the interval (not at TTL/2).
+func TestDHT_AdvertiseIntervalWired(t *testing.T) {
+	psk := testPSK(t)
+	hostA := testHost(t, psk)
+	hostB := testHost(t, psk)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	storeA := tempPeerStore(t)
+
+	dhtA, err := kaddht.New(ctx, hostA, kaddht.Mode(kaddht.ModeServer))
+	if err != nil {
+		t.Fatalf("create dht A: %v", err)
+	}
+	dhtB, err := kaddht.New(ctx, hostB, kaddht.Mode(kaddht.ModeServer))
+	if err != nil {
+		t.Fatalf("create dht B: %v", err)
+	}
+
+	connectMutual(t, ctx, hostA, hostB)
+	populateRoutingTables(ctx, dhtA, dhtB, hostA.ID(), hostB.ID())
+
+	// TTL of 30m (so TTL/2 = 15m — would not fire within the test window).
+	// advertiseInterval of 500ms — should drive the heartbeat ticker.
+	const (
+		longTTL    = 30 * time.Minute
+		shortInter = 500 * time.Millisecond
+	)
+
+	discA := NewEdgeDiscovery(hostA, storeA, nil, "edge", longTTL, shortInter, kaddht.ModeServer)
+	discA.dht = dhtA
+	discA.routingDisc = discoveryrouting.NewRoutingDiscovery(dhtA)
+
+	// Count re-advertises by capturing the logger. The count is atomic
+	// because the heartbeat goroutine writes while the test reads.
+	var heartbeats atomic.Uint64
+	countingLogger := slog.New(slog.NewTextHandler(&countingWriter{count: &heartbeats},
+		&slog.HandlerOptions{Level: slog.LevelDebug}))
+	discA.logger = countingLogger.With("component", "dht")
+
+	go discA.heartbeatLoop(ctx)
+
+	// Poll for ≥3 heartbeats at 500ms each. Bounded by a 2s deadline.
+	deadline := time.After(2 * time.Second)
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if heartbeats.Load() >= 3 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Errorf("expected ≥3 heartbeat re-advertise log lines at interval=%v, got %d",
+				shortInter, heartbeats.Load())
+			return
+		case <-ticker.C:
+		}
+	}
+	t.Logf("heartbeats observed in 2s at interval=%v: %d", shortInter, heartbeats.Load())
+}
+
+// countingWriter is an io.Writer that counts lines written. Each Advertise
+// log entry produces one line containing "heartbeat re-advertised" or
+// "advertised in DHT namespace".
+type countingWriter struct {
+	count *atomic.Uint64
+}
+
+func (w *countingWriter) Write(p []byte) (int, error) {
+	if bytes := string(p); bytes != "" {
+		if containsAdvertiseMsg(bytes) {
+			w.count.Add(1)
+		}
+	}
+	return len(p), nil
+}
+
+func containsAdvertiseMsg(s string) bool {
+	// Match either "advertised in DHT namespace" (success) or
+	// "heartbeat re-advertise" (success or failure). The wiring assertion
+	// is "the ticker fired and called Advertise" — the result is irrelevant
+	// for proving the dormant field now drives the loop.
+	return contains(s, "advertised in DHT namespace") || contains(s, "heartbeat re-advertise")
+}
+
+func contains(s, sub string) bool {
+	if len(sub) == 0 {
+		return true
+	}
+	for i := 0; i+len(sub) <= len(s); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
 }

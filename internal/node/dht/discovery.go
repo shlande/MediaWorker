@@ -21,36 +21,43 @@ import (
 // libp2p layer, with RoutingDiscovery for Advertise/FindPeers and an
 // application-level PeerEntryStore for peer metadata persistence.
 type EdgeDiscovery struct {
-	host           host.Host
-	dht            *kaddht.IpfsDHT
-	routingDisc    *discoveryrouting.RoutingDiscovery
-	peerEntryStore *peerstore.PeerEntryStore
-	namespace      string
-	bootstrapAddrs []peer.AddrInfo
-	advertiseTTL   time.Duration
-	dhtMode        kaddht.ModeOpt
-	logger         *slog.Logger
+	host              host.Host
+	dht               *kaddht.IpfsDHT
+	routingDisc       *discoveryrouting.RoutingDiscovery
+	peerEntryStore    *peerstore.PeerEntryStore
+	namespace         string
+	bootstrapAddrs    []peer.AddrInfo
+	advertiseTTL      time.Duration
+	advertiseInterval time.Duration
+	dhtMode           kaddht.ModeOpt
+	logger            *slog.Logger
 }
 
 // NewEdgeDiscovery creates a new EdgeDiscovery. bootstrapAddrs is the list
 // of self-hosted DHT bootstrap peers. dhtMode controls whether this node
 // operates as ModeServer (publicly reachable) or ModeClient (NAT).
+//
+// advertiseInterval drives the heartbeat re-advertise ticker. When zero or
+// negative, the heartbeat falls back to advertiseTTL/2 (the pre-T15
+// behaviour) so callers passing a legacy zero value preserve old semantics.
 func NewEdgeDiscovery(
 	h host.Host,
 	store *peerstore.PeerEntryStore,
 	bootstrapAddrs []peer.AddrInfo,
 	namespace string,
 	advertiseTTL time.Duration,
+	advertiseInterval time.Duration,
 	dhtMode kaddht.ModeOpt,
 ) *EdgeDiscovery {
 	return &EdgeDiscovery{
-		host:           h,
-		peerEntryStore: store,
-		bootstrapAddrs: bootstrapAddrs,
-		namespace:      namespace,
-		advertiseTTL:   advertiseTTL,
-		dhtMode:        dhtMode,
-		logger:         slog.Default().With("component", "dht"),
+		host:              h,
+		peerEntryStore:    store,
+		bootstrapAddrs:    bootstrapAddrs,
+		namespace:         namespace,
+		advertiseTTL:      advertiseTTL,
+		advertiseInterval: advertiseInterval,
+		dhtMode:           dhtMode,
+		logger:            slog.Default().With("component", "dht"),
 	}
 }
 
@@ -133,10 +140,20 @@ func (d *EdgeDiscovery) Start(ctx context.Context) error {
 }
 
 // heartbeatLoop periodically re-advertises in the DHT namespace. The interval
-// is half the configured TTL to ensure the record never expires.
+// is the configured advertiseInterval when positive; otherwise it falls back
+// to half the advertiseTTL (pre-T15 behaviour) so the record never expires.
+//
+// When the interval comes from the advertiseInterval config field (operator
+// intent), it is respected as-is. When it falls back to advertiseTTL/2
+// (legacy behaviour), a 30s floor protects against pathological TTLs that
+// would hammer the DHT.
 func (d *EdgeDiscovery) heartbeatLoop(ctx context.Context) {
-	interval := d.advertiseTTL / 2
-	if interval < 30*time.Second {
+	interval := d.advertiseInterval
+	fromConfig := interval > 0
+	if !fromConfig {
+		interval = d.advertiseTTL / 2
+	}
+	if !fromConfig && interval < 30*time.Second {
 		interval = 30 * time.Second
 	}
 	ticker := time.NewTicker(interval)
