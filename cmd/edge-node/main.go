@@ -371,9 +371,9 @@ func main() {
 		// after cache miss + ICP miss (until data plane is wired).
 		backhaulMgr = backhaul.NewBackhaulManager(
 			backhaulWarmCache{warmCache},
-			nil,                         // dataPlane — TBD
-			backhaulICPFetcher{h: h},    // ICP: fetch from sibling caches
-			nil,                         // l4Fetcher — this IS an L4 node
+			nil,                                       // dataPlane — TBD
+			backhaulICPFetcher{h: h, ring: ring, self: nodeIdentity.PeerID},
+			nil,                                       // l4Fetcher — this IS an L4 node
 		)
 		logger.Info("backhaul manager created (L4 mode, data plane TBD)")
 
@@ -383,9 +383,9 @@ func main() {
 		// l4Fetcher is nil for now — L4 stream protocol not yet defined.
 		backhaulMgr = backhaul.NewBackhaulManager(
 			backhaulWarmCache{warmCache},
-			nil,                         // dataPlane — disabled
-			backhaulICPFetcher{h: h},    // ICP: fetch from sibling caches
-			nil,                         // l4Fetcher — not yet implemented
+			nil,                                       // dataPlane — disabled
+			backhaulICPFetcher{h: h, ring: ring, self: nodeIdentity.PeerID},
+			nil,                                       // l4Fetcher — not yet implemented
 		)
 		logger.Info("backhaul manager created (edge mode, no L4)")
 	}
@@ -528,7 +528,10 @@ func (r *byteReadCloser) Close() error {
 	return nil
 }
 
-// backhaulWarmCache adapts *cache.WarmCache to backhaul.CacheReader.
+// backhaulWarmCache adapts *cache.WarmCache to backhaul.CacheReader and
+// backhaul.CacheWriter (via its Put method). The adapter is necessary because
+// backhaul.BackhaulManager accepts the narrow CacheReader/CacheWriter
+// interfaces rather than *cache.WarmCache directly.
 type backhaulWarmCache struct {
 	wc *cache.WarmCache
 }
@@ -537,16 +540,44 @@ func (c backhaulWarmCache) Get(blobHash string) ([]byte, bool) {
 	return c.wc.Get(blobHash)
 }
 
+func (c backhaulWarmCache) Put(blobHash string, data []byte, bitrate int) error {
+	return c.wc.Put(blobHash, data, bitrate)
+}
+
 // backhaulICPFetcher adapts ICP FetchFromPeer to backhaul.ICPFetcher.
-// TODO: Determine target peer from hash ring when hashring integration is complete.
+//
+// Routing: ring.Get(blobHash) returns the primary peer for this blob.
+//   - empty ring (target == "")        → return (nil, false, nil): fall back
+//     to local backhaul (data plane / L4 stream). Zero network calls.
+//   - target == self (we are primary)  → return (nil, false, nil): same
+//     fall-back; avoids looping a fetch to ourselves.
+//   - target is a sibling              → call icp.FetchFromPeer once
+//     (single ICP request, no retry storm per plan line 203) and return
+//     its (io.ReadCloser, bool, error) as-is.
 type backhaulICPFetcher struct {
-	h host.Host
+	h    host.Host
+	ring *hashring.HashRing
+	self types.PeerId
 }
 
 func (f backhaulICPFetcher) FetchFromPeer(ctx context.Context, blobHash string) (interface{}, bool, error) {
-	// Needs a target peer. Once hashring.Get() is wired for ICP routing,
-	// this will determine sibling nodes and call icp.FetchFromPeer.
-	return nil, false, nil
+	if f.ring == nil {
+		// Ring not wired — preserve legacy stub behaviour: fall back to local.
+		return nil, false, nil
+	}
+	target := f.ring.Get(blobHash)
+	if target == "" || target == f.self {
+		return nil, false, nil
+	}
+	// types.PeerId is the base58-encoded string form; peer.Decode reverses
+	// the encoding to recover the raw-multihash peer.ID that libp2p APIs
+	// expect. A plain peer.ID(target) cast would treat the ASCII bytes of
+	// the base58 string as the peer ID and produce a different identity.
+	targetID, err := peer.Decode(string(target))
+	if err != nil {
+		return nil, false, fmt.Errorf("backhaul icp: decode target peer %q: %w", target, err)
+	}
+	return icp.FetchFromPeer(ctx, f.h, targetID, blobHash)
 }
 
 // ---------------------------------------------------------------------------

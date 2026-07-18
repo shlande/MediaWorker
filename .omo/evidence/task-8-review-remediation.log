@@ -1,0 +1,139 @@
+=== Task 8: Review Remediation — 事件回路接通 ===
+Date: 2026-07-18T18:05:45Z
+HEAD: 8a4c96d12999329e69e0069e6d3c2907d62bee24
+Branch: main
+
+## Files changed (T8 scope)
+ M cmd/ingest-worker/main.go
+ M internal/config/config_test.go
+ M internal/config/ingest.go
+?? internal/ingest/syncpub/
+
+## Gate 1: go build ./cmd/ingest-worker
+EXIT=0
+
+## Gate 2: go vet (changed packages)
+VET_EXIT=0
+
+## Gate 3: go test ./internal/ingest/...
+=== RUN   TestDashIngester_ContentType
+--- PASS: TestDashIngester_ContentType (0.00s)
+=== RUN   TestDashIngester_Process_WithFFmpeg
+    dash_test.go:22: ffmpeg not in PATH
+--- SKIP: TestDashIngester_Process_WithFFmpeg (0.00s)
+=== RUN   TestDashIngester_scanDashOutput_RegexParsing
+--- PASS: TestDashIngester_scanDashOutput_RegexParsing (0.00s)
+=== RUN   TestImageIngester_ContentType
+--- PASS: TestImageIngester_ContentType (0.00s)
+=== RUN   TestImageIngester_Process_JPEG
+--- PASS: TestImageIngester_Process_JPEG (0.00s)
+=== RUN   TestResizeNearestNeighbor
+--- PASS: TestResizeNearestNeighbor (0.00s)
+=== RUN   TestResizeNearestNeighbor_NoUpscale
+--- PASS: TestResizeNearestNeighbor_NoUpscale (0.00s)
+=== RUN   TestExtractOrientation_NoJPEG
+--- PASS: TestExtractOrientation_NoJPEG (0.00s)
+=== RUN   TestExtractOrientation_JPEGNoExif
+--- PASS: TestExtractOrientation_JPEGNoExif (0.00s)
+=== RUN   TestExtractOrientation_JPEGWithExif
+--- PASS: TestExtractOrientation_JPEGWithExif (0.00s)
+=== RUN   TestIngest_Success
+--- PASS: TestIngest_Success (0.00s)
+=== RUN   TestIngest_UnsupportedContentType
+--- PASS: TestIngest_UnsupportedContentType (0.00s)
+=== RUN   TestIngest_ProcessFails
+--- PASS: TestIngest_ProcessFails (0.00s)
+=== RUN   TestIngest_UploadPartialFailure
+--- PASS: TestIngest_UploadPartialFailure (0.00s)
+=== RUN   TestIngest_UploadAllFail
+--- PASS: TestIngest_UploadAllFail (0.00s)
+=== RUN   TestIngest_WriteTransactionFails
+--- PASS: TestIngest_WriteTransactionFails (0.00s)
+=== RUN   TestIngest_RedundancyK3
+--- PASS: TestIngest_RedundancyK3 (0.00s)
+=== RUN   TestIngest_RedundancyNormalizesTo2
+=== RUN   TestIngest_RedundancyNormalizesTo2/zero
+=== RUN   TestIngest_RedundancyNormalizesTo2/negative
+--- PASS: TestIngest_RedundancyNormalizesTo2 (0.00s)
+    --- PASS: TestIngest_RedundancyNormalizesTo2/zero (0.00s)
+    --- PASS: TestIngest_RedundancyNormalizesTo2/negative (0.00s)
+=== RUN   TestIngest_WorkDirDeletedOnSuccess
+--- PASS: TestIngest_WorkDirDeletedOnSuccess (0.00s)
+=== RUN   TestIngest_WorkDirDeletedOnUploadFailure
+--- PASS: TestIngest_WorkDirDeletedOnUploadFailure (0.00s)
+PASS
+ok  	github.com/shlande/mediaworker/internal/ingest	0.237s
+=== RUN   TestSyncPublisher_EndToEnd_WithPSK
+2026/07/19 02:05:47 INFO syncpub initialized self_peer="<peer.ID 12*QNotEm>" cp_peer="<peer.ID 12*DmCVmQ>" cp_addrs=[/ip4/127.0.0.1/tcp/65265]
+--- PASS: TestSyncPublisher_EndToEnd_WithPSK (0.01s)
+=== RUN   TestSyncPublisher_EndToEnd_NoPSK
+2026/07/19 02:05:47 INFO syncpub initialized self_peer="<peer.ID 12*RhU8AN>" cp_peer="<peer.ID 12*CRsFvF>" cp_addrs=[/ip4/127.0.0.1/tcp/65267]
+--- PASS: TestSyncPublisher_EndToEnd_NoPSK (0.01s)
+=== RUN   TestSyncPublisher_PSKMismatch_FailsClosed
+2026/07/19 02:05:47 INFO syncpub initialized self_peer="<peer.ID 12*5y7Mzj>" cp_peer="<peer.ID 12*1zCe7w>" cp_addrs=[/ip4/127.0.0.1/tcp/65269]
+    syncpub_test.go:196: PSK mismatch correctly rejected: syncpub: control plane <peer.ID 12*1zCe7w> unreachable: failed to dial: failed to dial 12D3KooWQ7RnzLgYLVmB4Se9TJcJy8WJX2U63Aa6hgdg3e1zCe7w: all dials failed
+          * [/ip4/127.0.0.1/tcp/65269] failed to negotiate security protocol: incoming message was too large
+--- PASS: TestSyncPublisher_PSKMismatch_FailsClosed (0.00s)
+=== RUN   TestSyncPublisher_BadMultiaddr
+    syncpub_test.go:208: malformed multiaddr correctly rejected: syncpub: parse control-plane multiaddr "not-a-multiaddr": failed to parse multiaddr "not-a-multiaddr": must begin with /
+--- PASS: TestSyncPublisher_BadMultiaddr (0.00s)
+=== RUN   TestSyncPublisher_PublishFailure_IncrementsCounter
+2026/07/19 02:05:47 INFO syncpub initialized self_peer="<peer.ID 12*Cxk62q>" cp_peer="<peer.ID 12*qCWL6u>" cp_addrs=[/ip4/127.0.0.1/tcp/65271]
+2026/07/19 02:05:47 WARN syncpub publish attempt failed attempt=1 content_id=cnt_fail_001 err="node/syncbroadcaster: open stream to CP <peer.ID 12*qCWL6u>: failed to dial: failed to dial 12D3KooWNT2V5ZzMVbh5YC1PJNqKzX23h7hJXffE32mKK6qCWL6u: all dials failed\n  * [/ip4/127.0.0.1/tcp/65271] dial tcp4 127.0.0.1:65271: connect: connection refused"
+2026/07/19 02:05:47 WARN syncpub publish attempt failed attempt=2 content_id=cnt_fail_001 err="node/syncbroadcaster: open stream to CP <peer.ID 12*qCWL6u>: failed to dial: failed to dial 12D3KooWNT2V5ZzMVbh5YC1PJNqKzX23h7hJXffE32mKK6qCWL6u: all dials failed\n  * [/ip4/127.0.0.1/tcp/65271] dial backoff"
+2026/07/19 02:05:48 WARN syncpub publish attempt failed attempt=3 content_id=cnt_fail_001 err="node/syncbroadcaster: open stream to CP <peer.ID 12*qCWL6u>: failed to dial: failed to dial 12D3KooWNT2V5ZzMVbh5YC1PJNqKzX23h7hJXffE32mKK6qCWL6u: all dials failed\n  * [/ip4/127.0.0.1/tcp/65271] dial backoff"
+2026/07/19 02:05:48 ERROR syncpub publish permanently failed content_id=cnt_fail_001 attempts=3 err="node/syncbroadcaster: open stream to CP <peer.ID 12*qCWL6u>: failed to dial: failed to dial 12D3KooWNT2V5ZzMVbh5YC1PJNqKzX23h7hJXffE32mKK6qCWL6u: all dials failed\n  * [/ip4/127.0.0.1/tcp/65271] dial backoff" publish_failures_total=1
+    syncpub_test.go:253: publishFailures: before=0 after=1 (delta=1)
+--- PASS: TestSyncPublisher_PublishFailure_IncrementsCounter (0.61s)
+PASS
+ok  	github.com/shlande/mediaworker/internal/ingest/syncpub	0.965s
+
+## Gate 4: go test ./internal/config/...
+ok  	github.com/shlande/mediaworker/internal/config	0.251s
+
+## syncpub tests with -race (T8 specific)
+=== RUN   TestSyncPublisher_EndToEnd_WithPSK
+2026/07/19 02:05:50 INFO syncpub initialized self_peer="<peer.ID 12*QWS77G>" cp_peer="<peer.ID 12*Af9wAd>" cp_addrs=[/ip4/127.0.0.1/tcp/65273]
+--- PASS: TestSyncPublisher_EndToEnd_WithPSK (0.04s)
+=== RUN   TestSyncPublisher_EndToEnd_NoPSK
+2026/07/19 02:05:50 INFO syncpub initialized self_peer="<peer.ID 12*xWqfE8>" cp_peer="<peer.ID 12*2SJRmC>" cp_addrs=[/ip4/127.0.0.1/tcp/65275]
+--- PASS: TestSyncPublisher_EndToEnd_NoPSK (0.03s)
+=== RUN   TestSyncPublisher_PSKMismatch_FailsClosed
+2026/07/19 02:05:50 INFO syncpub initialized self_peer="<peer.ID 12*WwR3h7>" cp_peer="<peer.ID 12*kPcoLX>" cp_addrs=[/ip4/127.0.0.1/tcp/65277]
+    syncpub_test.go:196: PSK mismatch correctly rejected: syncpub: control plane <peer.ID 12*kPcoLX> unreachable: failed to dial: failed to dial 12D3KooWC1xD9GX8dEP1oVxtPNwvofR1RZitcB129gGCDQkPcoLX: all dials failed
+          * [/ip4/127.0.0.1/tcp/65277] failed to negotiate security protocol: incoming message was too large
+--- PASS: TestSyncPublisher_PSKMismatch_FailsClosed (0.02s)
+=== RUN   TestSyncPublisher_BadMultiaddr
+    syncpub_test.go:208: malformed multiaddr correctly rejected: syncpub: parse control-plane multiaddr "not-a-multiaddr": failed to parse multiaddr "not-a-multiaddr": must begin with /
+--- PASS: TestSyncPublisher_BadMultiaddr (0.01s)
+=== RUN   TestSyncPublisher_PublishFailure_IncrementsCounter
+2026/07/19 02:05:50 INFO syncpub initialized self_peer="<peer.ID 12*tzmqhK>" cp_peer="<peer.ID 12*49coAC>" cp_addrs=[/ip4/127.0.0.1/tcp/65279]
+2026/07/19 02:05:50 WARN syncpub publish attempt failed attempt=1 content_id=cnt_fail_001 err="node/syncbroadcaster: open stream to CP <peer.ID 12*49coAC>: failed to dial: failed to dial 12D3KooWCLM4bm9hxbaPfswQMtqQAcRycA9t3rrefacZ7Z49coAC: all dials failed\n  * [/ip4/127.0.0.1/tcp/65279] dial tcp4 127.0.0.1:65279: connect: connection refused"
+2026/07/19 02:05:51 WARN syncpub publish attempt failed attempt=2 content_id=cnt_fail_001 err="node/syncbroadcaster: open stream to CP <peer.ID 12*49coAC>: failed to dial: failed to dial 12D3KooWCLM4bm9hxbaPfswQMtqQAcRycA9t3rrefacZ7Z49coAC: all dials failed\n  * [/ip4/127.0.0.1/tcp/65279] dial backoff"
+2026/07/19 02:05:51 WARN syncpub publish attempt failed attempt=3 content_id=cnt_fail_001 err="node/syncbroadcaster: open stream to CP <peer.ID 12*49coAC>: failed to dial: failed to dial 12D3KooWCLM4bm9hxbaPfswQMtqQAcRycA9t3rrefacZ7Z49coAC: all dials failed\n  * [/ip4/127.0.0.1/tcp/65279] dial backoff"
+2026/07/19 02:05:51 ERROR syncpub publish permanently failed content_id=cnt_fail_001 attempts=3 err="node/syncbroadcaster: open stream to CP <peer.ID 12*49coAC>: failed to dial: failed to dial 12D3KooWCLM4bm9hxbaPfswQMtqQAcRycA9t3rrefacZ7Z49coAC: all dials failed\n  * [/ip4/127.0.0.1/tcp/65279] dial backoff" publish_failures_total=1
+    syncpub_test.go:253: publishFailures: before=0 after=1 (delta=1)
+--- PASS: TestSyncPublisher_PublishFailure_IncrementsCounter (0.63s)
+PASS
+ok  	github.com/shlande/mediaworker/internal/ingest/syncpub	2.171s
+
+## Pre-existing race confirmation (NOT introduced by T8)
+Verifying TestIngest_Success race exists at HEAD...
+--- FAIL: TestIngest_Success (0.00s)
+    testing.go:1712: race detected during execution of test
+FAIL
+FAIL	github.com/shlande/mediaworker/internal/ingest	0.244s
+FAIL
+
+## Summary
+- SyncPublisher implements ingest.EventPublisher (Publish method).
+- Constructor: NewSyncPublisher(cpMultiaddr, privKeyPath, pskEnvName).
+- CheckConnectivity: dial CP once at startup; fail closed on error.
+- Publish: 3x retry with 100ms * 2^attempt backoff; final failure
+  → slog.Error (content_id + attempts + err + publish_failures_total)
+  → atomic publishFailures counter increment (exposed via PublishFailures()).
+- PSK admission: hex-decoded from LIBP2P_PSK env (32 bytes).
+- Host: libp2p.NoListenAddrs (pure client of sync channel).
+- 5 new tests: EndToEnd_WithPSK, EndToEnd_NoPSK, PSKMismatch_FailsClosed,
+  BadMultiaddr, PublishFailure_IncrementsCounter.
+- LogPublisher kept in adapters.go for existing pipeline tests.
