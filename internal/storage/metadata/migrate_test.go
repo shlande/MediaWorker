@@ -42,6 +42,8 @@ func TestMigrateAll_ExecutesInOrder(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`DROP TABLE IF EXISTS blob_index`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`ALTER TABLE blob ADD COLUMN IF NOT EXISTS deleted_at`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	if err := MigrateAll(db); err != nil {
 		t.Fatalf("MigrateAll: %v", err)
@@ -86,6 +88,8 @@ func TestMigrateAll_WithExistingTables(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`DROP TABLE IF EXISTS blob_index`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`ALTER TABLE blob ADD COLUMN IF NOT EXISTS deleted_at`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	if err := MigrateAll(db); err != nil {
 		t.Fatalf("MigrateAll (idempotent): %v", err)
@@ -129,6 +133,8 @@ func TestMigrateAll_SQLParsesCorrectly(t *testing.T) {
 	mock.ExpectExec(`ALTER TABLE blob_location_v2`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`DROP TABLE IF EXISTS blob_index`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`ALTER TABLE blob ADD COLUMN IF NOT EXISTS deleted_at`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	if err := MigrateAll(db); err != nil {
