@@ -72,25 +72,78 @@ type PrivateNetworkConfig struct {
 }
 
 // DHTConfig controls the private DHT discovery settings.
+//
+// AdvertiseTTL / AdvertiseInterval are string durations parsed into the
+// corresponding Parsed fields by LoadConfig. ParsedAdvertiseInterval defaults
+// to 5m when empty/zero/invalid; ParsedAdvertiseTTL stays zero when the
+// string is empty (caller decides fallback) but is parsed when set.
 type DHTConfig struct {
-	Mode              string   `yaml:"mode"`              // "server" or "client"
-	Namespace         string   `yaml:"namespace"`         // fixed lookup namespace
-	AdvertiseTTL      string   `yaml:"advertise_ttl"`     // e.g. "15m"
-	AdvertiseInterval string   `yaml:"advertise_interval"` // e.g. "5m"
-	BootstrapPeers    []string `yaml:"bootstrap_peers"`   // multiaddr + /p2p/ suffix
+	Mode              string        `yaml:"mode"`                        // "server" or "client"
+	Namespace         string        `yaml:"namespace"`                   // fixed lookup namespace
+	AdvertiseTTL      string        `yaml:"advertise_ttl"`               // e.g. "15m"
+	AdvertiseInterval string        `yaml:"advertise_interval"`          // e.g. "5m"
+	BootstrapPeers    []string      `yaml:"bootstrap_peers"`             // multiaddr + /p2p/ suffix
+
+	// Parsed fields populated by LoadConfig; safe to read after LoadConfig returns.
+	ParsedAdvertiseTTL      time.Duration `yaml:"-"`
+	ParsedAdvertiseInterval time.Duration `yaml:"-"`
 }
 
 // NATTraversalConfig controls AutoNAT, AutoRelay and DCUtR behaviour.
+//
+// The fields are *bool so we can distinguish "field omitted" (nil → preserve
+// current host behaviour, which enables all three) from "field explicitly
+// false" (disable that specific NAT traversal feature). LoadConfig normalises
+// nil pointers to true via normaliseNATTraversal.
+//
+// Effective accessors: AutoNATEffective(), AutoRelayEffective(), DCUtREffective()
+// — callers MUST use these rather than dereferencing the pointers directly.
 type NATTraversalConfig struct {
-	AutoNAT   bool `yaml:"autonat"`
-	AutoRelay bool `yaml:"auto_relay"`
-	DCUtR     bool `yaml:"dcutr"`
+	AutoNAT   *bool `yaml:"autonat"`
+	AutoRelay *bool `yaml:"auto_relay"`
+	DCUtR     *bool `yaml:"dcutr"`
+}
+
+// AutoNATEffective returns the resolved AutoNAT setting: true when the field
+// is omitted (nil) — preserving the pre-T15 host behaviour — or when the
+// operator explicitly sets it to true. False only when explicitly set false.
+func (n NATTraversalConfig) AutoNATEffective() bool {
+	if n.AutoNAT == nil {
+		return true
+	}
+	return *n.AutoNAT
+}
+
+// AutoRelayEffective returns the resolved AutoRelay setting: true when the
+// field is omitted (nil) — preserving the pre-T15 host behaviour — or when
+// the operator explicitly sets it to true. False only when explicitly set false.
+func (n NATTraversalConfig) AutoRelayEffective() bool {
+	if n.AutoRelay == nil {
+		return true
+	}
+	return *n.AutoRelay
+}
+
+// DCUtREffective returns the resolved DCUtR setting: true when the field is
+// omitted (nil) — preserving the pre-T15 host behaviour — or when the
+// operator explicitly sets it to true. False only when explicitly set false.
+func (n NATTraversalConfig) DCUtREffective() bool {
+	if n.DCUtR == nil {
+		return true
+	}
+	return *n.DCUtR
 }
 
 // PeerStoreConfig controls the persistent BadgerDB peer store.
+//
+// GCInterval is a string duration parsed into ParsedGCInterval by LoadConfig
+// (default 1h when empty/zero/invalid).
 type PeerStoreConfig struct {
-	Path       string `yaml:"path"`
-	GCInterval string `yaml:"gc_interval"` // e.g. "1h"
+	Path       string        `yaml:"path"`
+	GCInterval string        `yaml:"gc_interval"` // e.g. "1h"
+
+	// Parsed field populated by LoadConfig; safe to read after LoadConfig returns.
+	ParsedGCInterval time.Duration `yaml:"-"`
 }
 
 // ConnGaterConfig controls connection gating limits.
@@ -122,6 +175,9 @@ type JWTServiceConfig struct {
 const (
 	defaultJWTRefreshInterval     = 5 * time.Minute
 	defaultJWTRefreshBeforeExpiry = 5 * time.Minute
+
+	defaultDHTAdvertiseInterval = 5 * time.Minute
+	defaultPeerStoreGCInterval  = time.Hour
 )
 
 // ---------------------------------------------------------------------------
@@ -268,8 +324,35 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	normalizeJWTRefreshDurations(&cfg.Node.JWTService)
+	normaliseDHTDurations(&cfg.Node.Libp2p.DHT)
+	normalisePeerStoreGCInterval(&cfg.Node.Libp2p.PeerStore)
 
 	return &cfg, nil
+}
+
+// normaliseDHTDurations parses AdvertiseTTL / AdvertiseInterval strings into
+// the Parsed* fields. AdvertiseInterval defaults to 5m for empty/zero/invalid
+// values. AdvertiseTTL is parsed when set; empty/invalid falls back to 0
+// (callers handle the zero case). Invalid values do NOT fail config loading —
+// they fall back to defaults and are logged by the caller (matches the
+// "invalid duration → use default" contract from T7 §c).
+func normaliseDHTDurations(d *DHTConfig) {
+	d.ParsedAdvertiseInterval = parseDurationOrDefault(d.AdvertiseInterval, defaultDHTAdvertiseInterval)
+	if d.AdvertiseTTL == "" {
+		d.ParsedAdvertiseTTL = 0
+		return
+	}
+	if v, err := time.ParseDuration(d.AdvertiseTTL); err == nil && v > 0 {
+		d.ParsedAdvertiseTTL = v
+	} else {
+		d.ParsedAdvertiseTTL = 0
+	}
+}
+
+// normalisePeerStoreGCInterval parses PeerStore.GCInterval into ParsedGCInterval
+// with a 1h default for empty/zero/invalid values.
+func normalisePeerStoreGCInterval(p *PeerStoreConfig) {
+	p.ParsedGCInterval = parseDurationOrDefault(p.GCInterval, defaultPeerStoreGCInterval)
 }
 
 // normalizeJWTRefreshDurations parses RefreshInterval / RefreshBeforeExpiry

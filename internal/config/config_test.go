@@ -149,7 +149,7 @@ func TestLoadConfig_L4Node(t *testing.T) {
 	if len(cfg.Node.Libp2p.DHT.BootstrapPeers) != 3 {
 		t.Errorf("bootstrap peers = %d, want 3", len(cfg.Node.Libp2p.DHT.BootstrapPeers))
 	}
-	if cfg.Node.Libp2p.NATTraversal.AutoRelay != true {
+	if !cfg.Node.Libp2p.NATTraversal.AutoRelayEffective() {
 		t.Error("AutoRelay expected true")
 	}
 	if cfg.Node.Libp2p.ConnGater.IPRateLimit != 50 {
@@ -821,5 +821,359 @@ node:
 					cfg.Node.JWTService.ParsedRefreshBeforeExpiry, tc.wantBefore)
 			}
 		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// T15: DHT advertise_interval + peer_store.gc_interval parsing & defaults
+// ---------------------------------------------------------------------------
+
+func TestLoadConfig_DHTAdvertiseIntervalDefaults(t *testing.T) {
+	cases := []struct {
+		name      string
+		yamlBody  string
+		wantInter time.Duration
+		wantTTL   time.Duration
+	}{
+		{
+			name: "explicit values",
+			yamlBody: `
+node:
+  identity: { priv_key_path: "/data/key" }
+  declared_capabilities: { edge: true }
+  libp2p:
+    listen: ["/ip4/0.0.0.0/tcp/9001"]
+    dht:
+      namespace: "edge"
+      mode: "client"
+      advertise_ttl: "20m"
+      advertise_interval: "2m"
+  jwt_service:
+    endpoint: "http://cp/v1/node/jwt"
+`,
+			wantInter: 2 * time.Minute,
+			wantTTL:   20 * time.Minute,
+		},
+		{
+			name: "missing interval falls back to 5m default",
+			yamlBody: `
+node:
+  identity: { priv_key_path: "/data/key" }
+  declared_capabilities: { edge: true }
+  libp2p:
+    listen: ["/ip4/0.0.0.0/tcp/9001"]
+    dht:
+      namespace: "edge"
+      mode: "client"
+      advertise_ttl: "20m"
+  jwt_service:
+    endpoint: "http://cp/v1/node/jwt"
+`,
+			wantInter: 5 * time.Minute,
+			wantTTL:   20 * time.Minute,
+		},
+		{
+			name: "invalid interval falls back to 5m default",
+			yamlBody: `
+node:
+  identity: { priv_key_path: "/data/key" }
+  declared_capabilities: { edge: true }
+  libp2p:
+    listen: ["/ip4/0.0.0.0/tcp/9001"]
+    dht:
+      namespace: "edge"
+      mode: "client"
+      advertise_ttl: "20m"
+      advertise_interval: "not-a-duration"
+  jwt_service:
+    endpoint: "http://cp/v1/node/jwt"
+`,
+			wantInter: 5 * time.Minute,
+			wantTTL:   20 * time.Minute,
+		},
+		{
+			name: "zero/negative interval falls back to default",
+			yamlBody: `
+node:
+  identity: { priv_key_path: "/data/key" }
+  declared_capabilities: { edge: true }
+  libp2p:
+    listen: ["/ip4/0.0.0.0/tcp/9001"]
+    dht:
+      namespace: "edge"
+      mode: "client"
+      advertise_ttl: "20m"
+      advertise_interval: "0s"
+  jwt_service:
+    endpoint: "http://cp/v1/node/jwt"
+`,
+			wantInter: 5 * time.Minute,
+			wantTTL:   20 * time.Minute,
+		},
+		{
+			name: "invalid ttl falls back to zero (caller handles)",
+			yamlBody: `
+node:
+  identity: { priv_key_path: "/data/key" }
+  declared_capabilities: { edge: true }
+  libp2p:
+    listen: ["/ip4/0.0.0.0/tcp/9001"]
+    dht:
+      namespace: "edge"
+      mode: "client"
+      advertise_ttl: "garbage"
+      advertise_interval: "5m"
+  jwt_service:
+    endpoint: "http://cp/v1/node/jwt"
+`,
+			wantInter: 5 * time.Minute,
+			wantTTL:   0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeTempYAML(t, tc.yamlBody)
+			cfg, err := LoadConfig(path)
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if cfg.Node.Libp2p.DHT.ParsedAdvertiseInterval != tc.wantInter {
+				t.Errorf("ParsedAdvertiseInterval = %v, want %v",
+					cfg.Node.Libp2p.DHT.ParsedAdvertiseInterval, tc.wantInter)
+			}
+			if cfg.Node.Libp2p.DHT.ParsedAdvertiseTTL != tc.wantTTL {
+				t.Errorf("ParsedAdvertiseTTL = %v, want %v",
+					cfg.Node.Libp2p.DHT.ParsedAdvertiseTTL, tc.wantTTL)
+			}
+		})
+	}
+}
+
+func TestLoadConfig_PeerStoreGCIntervalDefaults(t *testing.T) {
+	cases := []struct {
+		name   string
+		yaml   string
+		wantGC time.Duration
+	}{
+		{
+			name: "explicit value",
+			yaml: `
+node:
+  identity: { priv_key_path: "/data/key" }
+  declared_capabilities: { edge: true }
+  libp2p:
+    listen: ["/ip4/0.0.0.0/tcp/9001"]
+    dht: { namespace: "edge", mode: "client" }
+    peer_store:
+      path: "/data/ps.db"
+      gc_interval: "30m"
+  jwt_service:
+    endpoint: "http://cp/v1/node/jwt"
+`,
+			wantGC: 30 * time.Minute,
+		},
+		{
+			name: "missing gc_interval falls back to 1h default",
+			yaml: `
+node:
+  identity: { priv_key_path: "/data/key" }
+  declared_capabilities: { edge: true }
+  libp2p:
+    listen: ["/ip4/0.0.0.0/tcp/9001"]
+    dht: { namespace: "edge", mode: "client" }
+    peer_store:
+      path: "/data/ps.db"
+  jwt_service:
+    endpoint: "http://cp/v1/node/jwt"
+`,
+			wantGC: time.Hour,
+		},
+		{
+			name: "invalid gc_interval falls back to 1h default",
+			yaml: `
+node:
+  identity: { priv_key_path: "/data/key" }
+  declared_capabilities: { edge: true }
+  libp2p:
+    listen: ["/ip4/0.0.0.0/tcp/9001"]
+    dht: { namespace: "edge", mode: "client" }
+    peer_store:
+      path: "/data/ps.db"
+      gc_interval: "garbage"
+  jwt_service:
+    endpoint: "http://cp/v1/node/jwt"
+`,
+			wantGC: time.Hour,
+		},
+		{
+			name: "zero/negative gc_interval falls back to 1h default",
+			yaml: `
+node:
+  identity: { priv_key_path: "/data/key" }
+  declared_capabilities: { edge: true }
+  libp2p:
+    listen: ["/ip4/0.0.0.0/tcp/9001"]
+    dht: { namespace: "edge", mode: "client" }
+    peer_store:
+      path: "/data/ps.db"
+      gc_interval: "0s"
+  jwt_service:
+    endpoint: "http://cp/v1/node/jwt"
+`,
+			wantGC: time.Hour,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeTempYAML(t, tc.yaml)
+			cfg, err := LoadConfig(path)
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			if cfg.Node.Libp2p.PeerStore.ParsedGCInterval != tc.wantGC {
+				t.Errorf("ParsedGCInterval = %v, want %v",
+					cfg.Node.Libp2p.PeerStore.ParsedGCInterval, tc.wantGC)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// T15: NATTraversalConfig *bool effective accessors
+// ---------------------------------------------------------------------------
+
+func TestLoadConfig_NATTraversalEffective(t *testing.T) {
+	cases := []struct {
+		name      string
+		yaml      string
+		wantAuto  bool
+		wantRelay bool
+		wantDCUtR bool
+	}{
+		{
+			name: "all omitted → effective true (preserves pre-T15 behaviour)",
+			yaml: `
+node:
+  identity: { priv_key_path: "/data/key" }
+  declared_capabilities: { edge: true }
+  libp2p:
+    listen: ["/ip4/0.0.0.0/tcp/9001"]
+    dht: { namespace: "edge", mode: "client" }
+  jwt_service:
+    endpoint: "http://cp/v1/node/jwt"
+`,
+			wantAuto: true, wantRelay: true, wantDCUtR: true,
+		},
+		{
+			name: "all explicit true",
+			yaml: `
+node:
+  identity: { priv_key_path: "/data/key" }
+  declared_capabilities: { edge: true }
+  libp2p:
+    listen: ["/ip4/0.0.0.0/tcp/9001"]
+    dht: { namespace: "edge", mode: "client" }
+    nat_traversal:
+      autonat: true
+      auto_relay: true
+      dcutr: true
+  jwt_service:
+    endpoint: "http://cp/v1/node/jwt"
+`,
+			wantAuto: true, wantRelay: true, wantDCUtR: true,
+		},
+		{
+			name: "all explicit false",
+			yaml: `
+node:
+  identity: { priv_key_path: "/data/key" }
+  declared_capabilities: { edge: true }
+  libp2p:
+    listen: ["/ip4/0.0.0.0/tcp/9001"]
+    dht: { namespace: "edge", mode: "client" }
+    nat_traversal:
+      autonat: false
+      auto_relay: false
+      dcutr: false
+  jwt_service:
+    endpoint: "http://cp/v1/node/jwt"
+`,
+			wantAuto: false, wantRelay: false, wantDCUtR: false,
+		},
+		{
+			name: "mixed — autonat off, others on",
+			yaml: `
+node:
+  identity: { priv_key_path: "/data/key" }
+  declared_capabilities: { edge: true }
+  libp2p:
+    listen: ["/ip4/0.0.0.0/tcp/9001"]
+    dht: { namespace: "edge", mode: "client" }
+    nat_traversal:
+      autonat: false
+      auto_relay: true
+      dcutr: true
+  jwt_service:
+    endpoint: "http://cp/v1/node/jwt"
+`,
+			wantAuto: false, wantRelay: true, wantDCUtR: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := writeTempYAML(t, tc.yaml)
+			cfg, err := LoadConfig(path)
+			if err != nil {
+				t.Fatalf("LoadConfig: %v", err)
+			}
+			n := cfg.Node.Libp2p.NATTraversal
+			if got := n.AutoNATEffective(); got != tc.wantAuto {
+				t.Errorf("AutoNATEffective = %v, want %v", got, tc.wantAuto)
+			}
+			if got := n.AutoRelayEffective(); got != tc.wantRelay {
+				t.Errorf("AutoRelayEffective = %v, want %v", got, tc.wantRelay)
+			}
+			if got := n.DCUtREffective(); got != tc.wantDCUtR {
+				t.Errorf("DCUtREffective = %v, want %v", got, tc.wantDCUtR)
+			}
+		})
+	}
+}
+
+// ---------------------------------------------------------------------------
+// T15: edge.*.enabled cache gates — config-side parsing
+// ---------------------------------------------------------------------------
+
+func TestLoadConfig_CacheEnabledDefaults(t *testing.T) {
+	const yaml = `
+node:
+  identity: { priv_key_path: "/data/key" }
+  declared_capabilities: { edge: true }
+  libp2p:
+    listen: ["/ip4/0.0.0.0/tcp/9001"]
+    dht: { namespace: "edge", mode: "client" }
+  jwt_service:
+    endpoint: "http://cp/v1/node/jwt"
+edge:
+  prefix_cache: { path: "/data/prefix", size_gb: 100 }
+  warm_cache:   { path: "/data/warm",   size_gb: 50 }
+  cold_cache:   { path: "/data/cold",   size_gb: 200, enabled: false }
+`
+	path := writeTempYAML(t, yaml)
+	cfg, err := LoadConfig(path)
+	if err != nil {
+		t.Fatalf("LoadConfig: %v", err)
+	}
+	if cfg.Edge.PrefixCache.Enabled {
+		t.Errorf("PrefixCache.Enabled = true, want false when omitted")
+	}
+	if cfg.Edge.WarmCache.Enabled {
+		t.Errorf("WarmCache.Enabled = true, want false when omitted")
+	}
+	if cfg.Edge.ColdCache.Enabled {
+		t.Errorf("ColdCache.Enabled = true, want false when explicit false")
 	}
 }
