@@ -11,13 +11,16 @@ import (
 
 func (bm *BackhaulManager) HandleBlobL4(ctx context.Context, w io.Writer, blobHash string) error {
 	if data, ok := bm.cache.Get(blobHash); ok {
+		bm.recordCacheRequest(true)
 		_, err := w.Write(data)
 		return err
 	}
+	bm.recordCacheRequest(false)
 
 	if bm.icpFetcher != nil {
 		reader, ok, err := bm.icpFetcher.FetchFromPeer(ctx, blobHash)
 		if err == nil && ok {
+			bm.recordICPRequest(true)
 			rc := reader.(io.ReadCloser)
 			defer rc.Close()
 			if wc, isCacheWriter := bm.cache.(CacheWriter); isCacheWriter {
@@ -26,6 +29,7 @@ func (bm *BackhaulManager) HandleBlobL4(ctx context.Context, w io.Writer, blobHa
 			_, copyErr := io.Copy(w, rc)
 			return copyErr
 		}
+		bm.recordICPRequest(false)
 	}
 
 	result, err, _ := bm.sfGroup.Do(blobHash, func() (any, error) {
