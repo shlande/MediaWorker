@@ -1,0 +1,131 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ingest-worker-config
+  namespace: mediaworker-test
+data:
+  ingest-worker.yaml: |
+    http:
+      listen: ":8080"
+
+    metadata:
+      pg_dsn: "postgres://mediaworker:mediaworker@pg-mediaworker-rw.mediaworker-test.svc.cluster.local:5432/mediaworker?sslmode=disable"
+
+    storage:
+      cloud_accounts:
+        - vendor: baidu
+          account_id: "baidu_acct_01"
+          client_id: "baidu_client_id_sample"
+          client_secret: "baidu_client_secret_sample"
+          refresh_token: "baidu_refresh_token_sample"
+          redirect_uri: "http://localhost:8080/auth/callback/baidu"
+          region: "cn"
+          enabled: true
+        - vendor: onedrive
+          account_id: "onedrive_acct_01"
+          client_id: "onedrive_client_id_sample"
+          client_secret: "onedrive_client_secret_sample"
+          refresh_token: "onedrive_refresh_token_sample"
+          redirect_uri: "http://localhost:8080/auth/callback/onedrive"
+          region: "global"
+          enabled: true
+      vendor_profiles:
+        baidu:
+          weight: 2.0
+          base_latency_ms: 200
+          bandwidth_mbps: 80
+        onedrive:
+          weight: 2.0
+          base_latency_ms: 80
+          bandwidth_mbps: 40
+      rate_limits:
+        baidu:
+          qps: 2.0
+          burst: 4
+          concurrent: 8
+        onedrive:
+          qps: 10.0
+          burst: 20
+          concurrent: 16
+
+    ingest:
+      ffmpeg_path: "/usr/bin/ffmpeg"
+      work_dir: "/data/ingest"
+      redundancy: 2
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ingest-worker
+  namespace: mediaworker-test
+  labels:
+    app.kubernetes.io/name: ingest-worker
+    app.kubernetes.io/part-of: mediaworker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ingest-worker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: ingest-worker
+        app.kubernetes.io/part-of: mediaworker
+    spec:
+      containers:
+        - name: ingest-worker
+          image: ghcr.io/shlande/ingest-worker:latest
+          imagePullPolicy: Always
+          args:
+            - "-config"
+            - "/etc/mediaworker/ingest-worker.yaml"
+          ports:
+            - containerPort: 8080
+              name: http
+          env:
+            - name: GOMAXPROCS
+              value: "2"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 2000m
+              memory: 2Gi
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - mountPath: /etc/mediaworker
+              name: config
+              readOnly: true
+            - mountPath: /data
+              name: data
+      volumes:
+        - name: config
+          configMap:
+            name: ingest-worker-config
+        - name: data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingest-worker
+  namespace: mediaworker-test
+spec:
+  selector:
+    app.kubernetes.io/name: ingest-worker
+  ports:
+    - port: 80
+      targetPort: http
+      name: http

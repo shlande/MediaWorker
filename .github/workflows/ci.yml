@@ -106,3 +106,18 @@ jobs:
             VERSION=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Build and push ingest-worker
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.ingest-worker
+          platforms: linux/amd64,linux/arm64
+          push: ${{ github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master' }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/ingest-worker:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/ingest-worker:latest
+          build-args: |
+            VERSION=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

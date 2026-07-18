@@ -34,4 +34,4 @@ Thumbs.db
 # Private keys / identity
 *.key
 /data/
-/identity/
+/identity/ingest-worker
