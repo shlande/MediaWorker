@@ -655,7 +655,10 @@ func TestJWT_ClientIntegration(t *testing.T) {
 	endpoint := "http://" + listener.Addr().String() + "/v1/node/jwt"
 
 	// Client
-	client := NewJWTClient(nodePriv, nodePeerID, endpoint)
+	client := NewJWTClient(nodePriv, nodePeerID, endpoint, types.NodeCapabilities{
+		Edge:    true,
+		PeerICP: true,
+	})
 	ctx := context.Background()
 	resp, err := client.RequestJWT(ctx)
 	if err != nil {
@@ -689,7 +692,10 @@ func TestJWT_ClientRetryDegraded(t *testing.T) {
 		t.Fatalf("generate peer ID: %v", err)
 	}
 
-	client := NewJWTClient(nodePriv, nodePeerID, "http://127.0.0.1:19999/v1/node/jwt")
+	client := NewJWTClient(nodePriv, nodePeerID, "http://127.0.0.1:19999/v1/node/jwt", types.NodeCapabilities{
+		Edge:    true,
+		PeerICP: true,
+	})
 	client.retryBackoff = 1 * time.Millisecond
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -777,4 +783,292 @@ func TestAuditLog_Log(t *testing.T) {
 func TestAuditLog_NilWriter(t *testing.T) {
 	al := cpjwt.NewAuditLog(nil)
 	al.Log("QmTest", "10.0.0.1", false, 50_000_000, time.Now().Unix()+3600)
+}
+
+// ---------------------------------------------------------------------------
+// Test: RequestJWT includes declared_capabilities in request body
+// ---------------------------------------------------------------------------
+
+func TestJWT_ClientSendsDeclaredCapabilities(t *testing.T) {
+	cpPub, cpPriv, err := sjwt.GenerateEd25519Key()
+	if err != nil {
+		t.Fatalf("generate cp keys: %v", err)
+	}
+	_, nodePriv, err := sjwt.GenerateEd25519Key()
+	if err != nil {
+		t.Fatalf("generate node key: %v", err)
+	}
+	nodePeerID, err := sjwt.GeneratePeerID(nodePriv)
+	if err != nil {
+		t.Fatalf("generate peer ID: %v", err)
+	}
+
+	// Real CP-side service so the JWT we get back is verifiable.
+	policy := config.JWTPolicyConfig{
+		TTL:                  "1h",
+		RefreshBeforeSeconds: 300,
+		BandwidthQuotaBytes:  50_000_000,
+		DefaultCapabilities:  config.JWTPolicyDefaultCapabilities{Edge: true, PeerICP: true, RelayProvider: true},
+	}
+	svc := cpjwt.NewJWTService(cpPriv, cpjwt.NewPeerIdSet(),
+		cpjwt.NewRateLimiter(cpjwt.DefaultRateLimitInterval),
+		cpjwt.NewAuditLog(nil), policy)
+
+	type capturedReq struct {
+		req types.JWTRequest
+		ok  bool
+	}
+	capturedCh := make(chan capturedReq, 1)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/node/jwt", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req types.JWTRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		capturedCh <- capturedReq{req: req, ok: true}
+		resp, err := svc.HandleJWTRequest(req, r.RemoteAddr)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	})
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go http.Serve(listener, mux)
+	defer listener.Close()
+
+	endpoint := "http://" + listener.Addr().String() + "/v1/node/jwt"
+
+	// Declare a distinctive capability set so we can assert it round-trips.
+	declared := types.NodeCapabilities{
+		Edge:          true,
+		L4Backhaul:    true,
+		RelayProvider: false,
+		PeerICP:       true,
+	}
+	client := NewJWTClient(nodePriv, nodePeerID, endpoint, declared)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	resp, err := client.RequestJWT(ctx)
+	if err != nil {
+		t.Fatalf("RequestJWT: %v", err)
+	}
+
+	select {
+	case cap := <-capturedCh:
+		if !cap.ok || cap.req.DeclaredCapabilities == nil {
+			t.Fatal("captured request missing DeclaredCapabilities")
+		}
+		got := *cap.req.DeclaredCapabilities
+		if got != declared {
+			t.Errorf("declared = %+v, want %+v", got, declared)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for request capture")
+	}
+
+	// Sanity: the granted JWT reflects declared ∩ default policy.
+	// declared={Edge,L4Backhaul,PeerICP}, default={Edge,PeerICP,RelayProvider}
+	// → granted={Edge,PeerICP} (L4 ignored — whitelist only; Relay declared=false).
+	payload, err := sjwt.VerifyJWT(resp.JWT, cpPub, nodePeerID)
+	if err != nil {
+		t.Fatalf("VerifyJWT: %v", err)
+	}
+	if !payload.Capabilities.Edge || !payload.Capabilities.PeerICP {
+		t.Errorf("granted Edge=%v PeerICP=%v, want both true", payload.Capabilities.Edge, payload.Capabilities.PeerICP)
+	}
+	if payload.Capabilities.RelayProvider {
+		t.Error("RelayProvider should be false (declared=false)")
+	}
+	if payload.Capabilities.L4Backhaul {
+		t.Error("L4Backhaul should be false (declared ignored, not whitelisted)")
+	}
+
+	if client.CurrentJWT() != resp.JWT {
+		t.Error("CurrentJWT should match returned JWT")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test: CurrentJWT is concurrent-safe and empty before first success
+// ---------------------------------------------------------------------------
+
+func TestJWT_CurrentJWT_EmptyInitially(t *testing.T) {
+	_, nodePriv, err := sjwt.GenerateEd25519Key()
+	if err != nil {
+		t.Fatalf("generate node key: %v", err)
+	}
+	nodePeerID, err := sjwt.GeneratePeerID(nodePriv)
+	if err != nil {
+		t.Fatalf("generate peer ID: %v", err)
+	}
+	client := NewJWTClient(nodePriv, nodePeerID, "http://127.0.0.1:1/v1/node/jwt", types.NodeCapabilities{})
+
+	if got := client.CurrentJWT(); got != "" {
+		t.Errorf("CurrentJWT before first success = %q, want empty", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test: Refresh loop fires ≥2 times with short interval + short TTL
+// ---------------------------------------------------------------------------
+
+// runRefreshLoopForTesting mirrors cmd/edge-node/main.go:runJWTRefreshLoop but
+// is exposed here so the test can drive it without importing main. We instead
+// re-implement the minimal loop using the public JWTClient API and rely on the
+// server side to control TTL via the policy.
+func runRefreshLoopForTesting(
+	ctx context.Context,
+	client *JWTClient,
+	refreshInterval time.Duration,
+) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(refreshInterval):
+		}
+		_, _ = client.RequestJWT(ctx)
+	}
+}
+
+func TestJWT_RefreshLoopFiresMultipleTimes(t *testing.T) {
+	_, cpPriv, err := sjwt.GenerateEd25519Key()
+	if err != nil {
+		t.Fatalf("generate cp keys: %v", err)
+	}
+	_, nodePriv, err := sjwt.GenerateEd25519Key()
+	if err != nil {
+		t.Fatalf("generate node key: %v", err)
+	}
+	nodePeerID, err := sjwt.GeneratePeerID(nodePriv)
+	if err != nil {
+		t.Fatalf("generate peer ID: %v", err)
+	}
+
+	// Short TTL so the JWT is meaningfully short-lived; the loop refreshes
+	// purely on a short interval here (no expiry-driven shortening needed).
+	policy := config.JWTPolicyConfig{
+		TTL:                  "200ms",
+		RefreshBeforeSeconds: 0,
+		BandwidthQuotaBytes:  50_000_000,
+		DefaultCapabilities:  config.JWTPolicyDefaultCapabilities{Edge: true, PeerICP: true},
+	}
+	svc := cpjwt.NewJWTService(cpPriv, cpjwt.NewPeerIdSet(),
+		// Very short rate-limit interval so successive refreshes aren't blocked.
+		cpjwt.NewRateLimiter(1*time.Millisecond),
+		cpjwt.NewAuditLog(nil), policy)
+
+	var (
+		mu       sync.Mutex
+		reqCount int
+	)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/node/jwt", func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		var req types.JWTRequest
+		if err := json.Unmarshal(body, &req); err != nil {
+			http.Error(w, "bad request", http.StatusBadRequest)
+			return
+		}
+		resp, err := svc.HandleJWTRequest(req, r.RemoteAddr)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
+		mu.Lock()
+		reqCount++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	})
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go http.Serve(listener, mux)
+	defer listener.Close()
+
+	endpoint := "http://" + listener.Addr().String() + "/v1/node/jwt"
+	client := NewJWTClient(nodePriv, nodePeerID, endpoint, types.NodeCapabilities{Edge: true, PeerICP: true})
+
+	// Initial request.
+	ctx, cancel := context.WithTimeout(context.Background(), 700*time.Millisecond)
+	defer cancel()
+	if _, err := client.RequestJWT(ctx); err != nil {
+		t.Fatalf("initial RequestJWT: %v", err)
+	}
+
+	// Drive the refresh loop on a 50ms cadence for ~500ms → expect ≥2 refreshes
+	// (initial + 2+ from the loop = ≥3 total requests).
+	go runRefreshLoopForTesting(ctx, client, 50*time.Millisecond)
+
+	<-ctx.Done()
+
+	mu.Lock()
+	got := reqCount
+	mu.Unlock()
+	if got < 3 {
+		t.Errorf("expected ≥3 total requests (initial + ≥2 refreshes), got %d", got)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Test: Refresh loop tolerates server 500 (does not exit / no panic)
+// ---------------------------------------------------------------------------
+
+func TestJWT_RefreshLoopToleratesServerErrors(t *testing.T) {
+	_, nodePriv, err := sjwt.GenerateEd25519Key()
+	if err != nil {
+		t.Fatalf("generate node key: %v", err)
+	}
+	nodePeerID, err := sjwt.GeneratePeerID(nodePriv)
+	if err != nil {
+		t.Fatalf("generate peer ID: %v", err)
+	}
+
+	var (
+		mu       sync.Mutex
+		reqCount int
+	)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1/node/jwt", func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		reqCount++
+		mu.Unlock()
+		// Always 500 — simulates a down CP.
+		http.Error(w, "internal error", http.StatusInternalServerError)
+	})
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	go http.Serve(listener, mux)
+	defer listener.Close()
+
+	endpoint := "http://" + listener.Addr().String() + "/v1/node/jwt"
+	client := NewJWTClient(nodePriv, nodePeerID, endpoint, types.NodeCapabilities{})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	// Should NOT panic on errors; should keep retrying until ctx cancels.
+	runRefreshLoopForTesting(ctx, client, 30*time.Millisecond)
+
+	mu.Lock()
+	got := reqCount
+	mu.Unlock()
+	if got < 2 {
+		t.Errorf("expected ≥2 requests despite 500s, got %d", got)
+	}
 }

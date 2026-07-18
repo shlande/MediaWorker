@@ -21,10 +21,11 @@ import (
 
 // JWTClient requests capability JWTs from the control plane on behalf of a node.
 type JWTClient struct {
-	privKey    ed25519.PrivateKey
-	peerID     types.PeerId
-	endpoint   string
-	httpClient *http.Client
+	privKey      ed25519.PrivateKey
+	peerID       types.PeerId
+	endpoint     string
+	httpClient   *http.Client
+	capabilities types.NodeCapabilities
 
 	mu            sync.RWMutex
 	currentJWT    types.CapabilityJWT
@@ -36,20 +37,29 @@ type JWTClient struct {
 }
 
 // NewJWTClient creates a JWTClient. privKey is the node's Ed25519 private key.
-func NewJWTClient(privKey ed25519.PrivateKey, peerID types.PeerId, endpoint string) *JWTClient {
+// capabilities is the node's declared capabilities, sent with each JWT request
+// so the control plane can apply its `declared ∩ default` grant policy.
+func NewJWTClient(privKey ed25519.PrivateKey, peerID types.PeerId, endpoint string, capabilities types.NodeCapabilities) *JWTClient {
 	return &JWTClient{
-		privKey:    privKey,
-		peerID:     peerID,
-		endpoint:   endpoint,
-		httpClient: &http.Client{Timeout: 10 * time.Second},
+		privKey:      privKey,
+		peerID:       peerID,
+		endpoint:     endpoint,
+		httpClient:   &http.Client{Timeout: 10 * time.Second},
+		capabilities: capabilities,
 	}
 }
 
-// RequestJWT sends a signed JWTRequest to the control plane and returns the response.
+// RequestJWT sends a signed JWTRequest (with declared capabilities) to the
+// control plane and returns the response. On success the returned JWT is
+// cached and accessible via CurrentJWT.
 func (c *JWTClient) RequestJWT(ctx context.Context) (*types.JWTResponse, error) {
+	// Copy capabilities through a pointer so the request's omitempty works:
+	// a non-nil pointer (even all-false) signals "I am declaring capabilities".
+	declared := c.capabilities
 	req := types.JWTRequest{
-		PeerID:       c.peerID,
-		SignedPeerID: sjwt.SignPeerID(c.privKey, c.peerID),
+		PeerID:               c.peerID,
+		SignedPeerID:         sjwt.SignPeerID(c.privKey, c.peerID),
+		DeclaredCapabilities: &declared,
 	}
 
 	body, err := json.Marshal(req)
