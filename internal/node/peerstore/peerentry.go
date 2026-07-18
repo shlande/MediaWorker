@@ -2,10 +2,12 @@
 package peerstore
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dgraph-io/badger/v4"
@@ -29,10 +31,14 @@ const (
 // It is NOT a libp2p peerstore.Peerstore implementation — it is a distribution-domain
 // store queried by ConnectionGater, HashRing, and GossipSub.
 type PeerEntryStore struct {
-	db      *badger.DB
-	index   sync.Map // map[string]*types.PeerStoreEntry (key = PeerId string)
-	dbPath  string
-	logger  *slog.Logger
+	db     *badger.DB
+	index  sync.Map // map[string]*types.PeerStoreEntry (key = PeerId string)
+	dbPath string
+	logger *slog.Logger
+
+	gcCancel context.CancelFunc
+	gcDone   chan struct{}
+	gcCalls  atomic.Uint64
 }
 
 // NewPeerEntryStore opens (or creates) a BadgerDB at dbPath and returns a
@@ -197,11 +203,70 @@ func (s *PeerEntryStore) Restore() error {
 }
 
 // Close releases the BadgerDB handle. The in-memory index is discarded.
+// If StartValueLogGC was called, the GC goroutine is signalled to stop and
+// waited for before closing the DB.
 func (s *PeerEntryStore) Close() error {
+	if s.gcCancel != nil {
+		s.gcCancel()
+		<-s.gcDone
+		s.gcCancel = nil
+		s.gcDone = nil
+	}
 	if err := s.db.Close(); err != nil {
 		return fmt.Errorf("peerentry close: %w", err)
 	}
 	return nil
+}
+
+// StartValueLogGC starts a background goroutine that periodically invokes
+// Badger's RunValueLogGC (value-log garbage collection) at the given interval.
+// The goroutine stops when Close() is called or when ctx is cancelled.
+//
+// RunValueLogGC only reclaims space when the value log discard ratio exceeds
+// a threshold (Badger defaults to 0.5); calls below the threshold are no-ops
+// (and return nil with no error). This is the expected steady state.
+//
+// GCCalls returns the number of times RunValueLogGC was invoked (useful for
+// assembly-test assertions that the ticker is wired up).
+func (s *PeerEntryStore) StartValueLogGC(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		return
+	}
+	gcCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+
+	s.gcCancel = cancel
+	s.gcDone = done
+
+	go s.runValueLogGCLoop(gcCtx, interval, done)
+}
+
+// GCCalls returns the number of times the value-log GC loop has invoked
+// Badger's RunValueLogGC since StartValueLogGC was called.
+func (s *PeerEntryStore) GCCalls() uint64 {
+	return s.gcCalls.Load()
+}
+
+func (s *PeerEntryStore) runValueLogGCLoop(ctx context.Context, interval time.Duration, done chan struct{}) {
+	defer close(done)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// RunValueLogGC returns:
+			//   nil  — nothing to GC (discard ratio below threshold) OR GC ran
+			//   error — only on DB-level failures (e.g. value log not initialised)
+			// Either way we log at Debug and continue; GC failures are not fatal.
+			if err := s.db.RunValueLogGC(0.5); err != nil {
+				s.logger.Debug("badger value-log gc", "err", err)
+			}
+			s.gcCalls.Add(1)
+		}
+	}
 }
 
 // PeerIdFromPeerID converts a libp2p peer.ID to a domain PeerId.

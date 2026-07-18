@@ -1,11 +1,13 @@
 package peerstore
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/shlande/mediaworker/internal/types"
 )
@@ -292,5 +294,105 @@ func TestPeerEntryStore_Close(t *testing.T) {
 	err := store.Close()
 	if err == nil {
 		t.Log("second Close returned nil (acceptable for badger)")
+	}
+}
+
+// ─── TestPeerEntryStore_StartValueLogGC (T15 wiring) ───
+
+// TestPeerEntryStore_StartValueLogGC_TickerFires verifies that
+// StartValueLogGC actually drives periodic RunValueLogGC calls. Uses a 10ms
+// interval and asserts GCCalls() increments ≥3 times within 500ms.
+func TestPeerEntryStore_StartValueLogGC_TickerFires(t *testing.T) {
+	store := openStore(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store.StartValueLogGC(ctx, 10*time.Millisecond)
+
+	deadline := time.After(500 * time.Millisecond)
+	for {
+		if store.GCCalls() >= 3 {
+			break
+		}
+		select {
+		case <-deadline:
+			t.Fatalf("expected ≥3 GC calls within 500ms, got %d", store.GCCalls())
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	t.Logf("GC calls observed: %d", store.GCCalls())
+}
+
+// TestPeerEntryStore_StartValueLogGC_StopsOnClose verifies that the GC
+// goroutine exits when Close() is called — Close must wait for the loop to
+// exit before closing the DB (otherwise badger would race the GC read).
+func TestPeerEntryStore_StartValueLogGC_StopsOnClose(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "badger")
+	store, err := NewPeerEntryStore(path)
+	if err != nil {
+		t.Fatalf("NewPeerEntryStore: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	store.StartValueLogGC(ctx, 5*time.Millisecond)
+
+	// Give the loop time to fire at least once.
+	time.Sleep(30 * time.Millisecond)
+	preCloseCalls := store.GCCalls()
+	if preCloseCalls == 0 {
+		t.Fatalf("expected ≥1 GC call before Close, got 0")
+	}
+
+	// Close must return promptly after signalling the GC goroutine.
+	start := time.Now()
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	elapsed := time.Since(start)
+	if elapsed > 2*time.Second {
+		t.Errorf("Close took %v to wait for GC goroutine — expected <2s", elapsed)
+	}
+	t.Logf("Close completed in %v with %d pre-close GC calls", elapsed, preCloseCalls)
+}
+
+// TestPeerEntryStore_StartValueLogGC_StopsOnContextCancel verifies that the
+// GC loop exits when the caller-supplied context is cancelled (independent
+// of Close). GCCalls stops incrementing after cancel.
+func TestPeerEntryStore_StartValueLogGC_StopsOnContextCancel(t *testing.T) {
+	store := openStore(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	store.StartValueLogGC(ctx, 5*time.Millisecond)
+	time.Sleep(30 * time.Millisecond)
+
+	cancel()
+	preCancelCalls := store.GCCalls()
+	if preCancelCalls == 0 {
+		t.Fatalf("expected ≥1 GC call before cancel, got 0")
+	}
+
+	// After cancel, GCCalls should not increase (loop exited).
+	time.Sleep(50 * time.Millisecond)
+	postCancelCalls := store.GCCalls()
+	if postCancelCalls > preCancelCalls+1 {
+		t.Errorf("GC calls continued after cancel: pre=%d post=%d",
+			preCancelCalls, postCancelCalls)
+	}
+}
+
+// TestPeerEntryStore_StartValueLogGC_ZeroIntervalNoop verifies that a zero
+// or negative interval is a no-op (no goroutine started). This preserves
+// the legacy "no GC" behaviour for callers that haven't been wired.
+func TestPeerEntryStore_StartValueLogGC_ZeroIntervalNoop(t *testing.T) {
+	store := openStore(t)
+	store.StartValueLogGC(context.Background(), 0)
+
+	time.Sleep(20 * time.Millisecond)
+	if got := store.GCCalls(); got != 0 {
+		t.Errorf("expected 0 GC calls for zero interval, got %d", got)
 	}
 }
