@@ -375,11 +375,11 @@ SelectForRead 读取 Backend.Weight() 做选择 (见 3A.6)
 
 ```go
 // 修订后的 SelectForRead (替代 §5 的 VendorProfile 版本)
-func (ap *AccountPool) SelectForRead(ctx context.Context, segID string) (Backend, *DownloadLink, error) {
-    locations, err := metadata.GetSegmentLocations(ctx, segID)
+func (ap *AccountPool) SelectForRead(ctx context.Context, blobHash string) (Backend, *DownloadLink, error) {
+    locations, err := metadata.GetBlobLocations(ctx, blobHash)
     if err != nil { return nil, nil, err }
 
-    // 候选: 从段位置列表中找对应的 Backend
+    // 候选: 从 blob 位置列表中找对应的 Backend
     var candidates []Backend
     for _, loc := range locations {
         backend := ap.backends[loc.BackendKey()]  // backend_id → Backend
@@ -394,7 +394,7 @@ func (ap *AccountPool) SelectForRead(ctx context.Context, segID string) (Backend
     }
 
     if len(candidates) == 0 {
-        return nil, nil, fmt.Errorf("no available backend for segment %s", segID)
+        return nil, nil, fmt.Errorf("no available backend for blob %s", blobHash)
     }
 
     // ★ 按 Backend.Weight() / concurrent_load 加权选择

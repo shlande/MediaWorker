@@ -8,7 +8,6 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/shlande/mediaworker/internal/controlplane/pinstrategy"
 	"github.com/shlande/mediaworker/internal/storage/accountpool"
 	"github.com/shlande/mediaworker/internal/storage/driver"
 	"github.com/shlande/mediaworker/internal/types"
@@ -45,23 +44,11 @@ type mockMetadataClient struct {
 	err       error
 }
 
-func (m *mockMetadataClient) GetContentMeta(contentID string) (*types.ContentMeta, error) {
-	return nil, nil
-}
-
-func (m *mockMetadataClient) GetTopContents(ctx context.Context, limit int) ([]pinstrategy.TopContent, error) {
-	return nil, nil
-}
-
-func (m *mockMetadataClient) GetSegmentLocations(blobHash string) ([]types.BlobLocation, error) {
+func (m *mockMetadataClient) GetBlobLocations(ctx context.Context, blobHash string) ([]types.BlobLocation, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
 	return m.locations, nil
-}
-
-func (m *mockMetadataClient) GetPopularity24h(blobHash string) float64 {
-	return 0
 }
 
 // mockDriver is a minimal driver.Driver for tests.
@@ -111,8 +98,7 @@ func TestFetchBlobLocal_Success(t *testing.T) {
 	}
 	location := types.BlobLocation{
 		BlobHash:  blobHash,
-		Vendor:    string(types.Vendor115),
-		AccountID: "acct-1",
+		BackendID: "115:acct-1",
 		FileID:    "file-1",
 	}
 
@@ -151,8 +137,7 @@ func TestFetchBlobLocal_403ReturnsBanSignal(t *testing.T) {
 	}
 	location := types.BlobLocation{
 		BlobHash:  "hash-403",
-		Vendor:    string(types.Vendor115),
-		AccountID: "acct-1",
+		BackendID: "115:acct-1",
 		FileID:    "file-1",
 	}
 
@@ -190,8 +175,7 @@ func TestFetchBlobLocal_405ReturnsBanSignal(t *testing.T) {
 	}
 	location := types.BlobLocation{
 		BlobHash:  "hash-405",
-		Vendor:    string(types.Vendor115),
-		AccountID: "acct-1",
+		BackendID: "115:acct-1",
 		FileID:    "file-1",
 	}
 
@@ -225,8 +209,7 @@ func TestFetchBlobLocal_429ReturnsBanSignal(t *testing.T) {
 	}
 	location := types.BlobLocation{
 		BlobHash:  "hash-429",
-		Vendor:    string(types.Vendor115),
-		AccountID: "acct-1",
+		BackendID: "115:acct-1",
 		FileID:    "file-1",
 	}
 
@@ -258,8 +241,7 @@ func TestFetchBlobLocal_NilCtxDoesNotPanic(t *testing.T) {
 	}
 	location := types.BlobLocation{
 		BlobHash:  "hash-nil",
-		Vendor:    string(types.Vendor115),
-		AccountID: "acct-1",
+		BackendID: "115:acct-1",
 		FileID:    "file-1",
 	}
 
@@ -309,8 +291,7 @@ func TestFetchBlobLocal_NoMatchingAccountLocation(t *testing.T) {
 	// Location has a different accountID — no match.
 	location := types.BlobLocation{
 		BlobHash:  blobHash,
-		Vendor:    string(types.Vendor115),
-		AccountID: "acct-2",
+		BackendID: "115:acct-2",
 		FileID:    "file-1",
 	}
 
@@ -340,8 +321,7 @@ func TestFetchBlobLocal_Non200Status(t *testing.T) {
 	}
 	location := types.BlobLocation{
 		BlobHash:  "hash-500",
-		Vendor:    string(types.Vendor115),
-		AccountID: "acct-1",
+		BackendID: "115:acct-1",
 		FileID:    "file-1",
 	}
 
@@ -392,8 +372,7 @@ func TestFetchBlobLocal_RequestHeaders(t *testing.T) {
 	}
 	location := types.BlobLocation{
 		BlobHash:  "hash-headers",
-		Vendor:    string(types.Vendor115),
-		AccountID: "acct-1",
+		BackendID: "115:acct-1",
 		FileID:    "file-1",
 	}
 	link := &types.DownloadLink{

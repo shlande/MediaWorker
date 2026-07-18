@@ -15,8 +15,7 @@ func TestMigrateAll_ExecutesInOrder(t *testing.T) {
 	}
 	defer db.Close()
 
-	// Expect exactly 6 migration files, in sorted order,
-	// each containing a CREATE TABLE IF NOT EXISTS statement.
+	// Expect 13 migration files in sorted order.
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS content`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS blob_index`).
@@ -28,6 +27,20 @@ func TestMigrateAll_ExecutesInOrder(t *testing.T) {
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS cloud_account`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS video_popularity`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS blob \(`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS content_blob`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`ALTER TABLE IF EXISTS video_popularity`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS blob_location_v2`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`INSERT INTO blob_location_v2`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`ALTER TABLE blob_location_v2`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`DROP TABLE IF EXISTS blob_index`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	if err := migrateAll(db); err != nil {
@@ -41,8 +54,6 @@ func TestMigrateAll_ExecutesInOrder(t *testing.T) {
 func TestMigrateAll_WithExistingTables(t *testing.T) {
 	t.Parallel()
 
-	// Simulate idempotency: running the same migrations again should
-	// succeed because all tables use IF NOT EXISTS.
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
@@ -60,6 +71,20 @@ func TestMigrateAll_WithExistingTables(t *testing.T) {
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS cloud_account`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS video_popularity`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS blob \(`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS content_blob`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`ALTER TABLE IF EXISTS video_popularity`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS blob_location_v2`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`INSERT INTO blob_location_v2`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`ALTER TABLE blob_location_v2`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`DROP TABLE IF EXISTS blob_index`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	if err := migrateAll(db); err != nil {
@@ -73,9 +98,6 @@ func TestMigrateAll_WithExistingTables(t *testing.T) {
 func TestMigrateAll_SQLParsesCorrectly(t *testing.T) {
 	t.Parallel()
 
-	// Read all SQL files and verify they parse by executing them
-	// against an in-memory mock. This validates the SQL syntax is
-	// well-formed and the embedded files are readable.
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
@@ -94,6 +116,20 @@ func TestMigrateAll_SQLParsesCorrectly(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS video_popularity`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS blob \(`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS content_blob`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`ALTER TABLE IF EXISTS video_popularity`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS blob_location_v2`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`INSERT INTO blob_location_v2`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`ALTER TABLE blob_location_v2`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`DROP TABLE IF EXISTS blob_index`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	if err := migrateAll(db); err != nil {
 		t.Fatalf("migrateAll: %v", err)
@@ -106,7 +142,6 @@ func TestMigrateAll_SQLParsesCorrectly(t *testing.T) {
 func TestMigrateAll_FailsOnBadSQL(t *testing.T) {
 	t.Parallel()
 
-	// Test that migrateAll propagates an error when a statement fails.
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)

@@ -2,37 +2,34 @@ package pinstrategy
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/hashicorp/golang-lru/v2"
+	"github.com/shlande/mediaworker/internal/controlplane/metadata"
 	"github.com/shlande/mediaworker/internal/types"
 )
 
 // ─── Client interfaces (injected, not implemented here) ───
-
-// MetadataClient queries the control-plane metadata service for content
-// information, top-content lists, and blob location data. Implementations
-// talk to the storage gRPC service.
-type MetadataClient interface {
-	GetContentMeta(contentID string) (*types.ContentMeta, error)
-	GetTopContents(ctx context.Context, limit int) ([]TopContent, error)
-	GetSegmentLocations(blobHash string) ([]types.BlobLocation, error)
-	GetPopularity24h(blobHash string) float64
-}
-
-// TopContent pairs content metadata with its 24-hour popularity for rebalancing.
-type TopContent struct {
-	ContentMeta types.ContentMeta
-	Popularity  int64
-}
 
 // SyncBroadcasterClient sends typed events to specific nodes and provides
 // subscription channels. Implementations use the SyncBroadcaster control channel.
 type SyncBroadcasterClient interface {
 	SendToNode(nodeID string, eventType string, payload any) error
 	Subscribe(eventType string) <-chan types.Event
+}
+
+// ─── Domain types ───
+
+// ContentBlobCacheEntry caches a content's blobs + roles to reduce
+// per-rebalance queries to the metadata module.
+type ContentBlobCacheEntry struct {
+	Blobs    []types.BlobDescriptor
+	Roles    []types.BlobRole
+	CachedAt time.Time
 }
 
 // ─── PinOrchestrator ───
@@ -42,25 +39,37 @@ type SyncBroadcasterClient interface {
 // are panic-safe: a strategy panic is recovered and logged without crashing
 // the orchestrator or any other control-plane module.
 type PinOrchestrator struct {
-	metadata    MetadataClient
+	contentMeta metadata.ContentMetaClient // metadata orchestration-layer client
+	popularity  metadata.PopularityClient  // popularity service client
 	broadcaster SyncBroadcasterClient
 	strategies  map[string]PinStrategy // key = ContentType
 
 	nodeSpaces map[string]types.NodeSpaceInfo // key = NodeID
 	nsMu       sync.RWMutex
 
+	// content_blob cache (keyed by content_id), reduces metadata queries during rebalance.
+	blobCache *lru.Cache[string, *ContentBlobCacheEntry]
+	bcMu      sync.RWMutex
+
 	seq atomic.Uint64
 }
 
-// NewPinOrchestrator creates a PinOrchestrator with the given metadata and
-// broadcaster clients. Strategies must be registered via RegisterStrategy
-// before any events are processed.
-func NewPinOrchestrator(mc MetadataClient, bc SyncBroadcasterClient) *PinOrchestrator {
+// NewPinOrchestrator creates a PinOrchestrator with the given content metadata
+// and popularity clients, plus a broadcaster for sending pin plans to nodes.
+// Strategies must be registered via RegisterStrategy before any events are processed.
+func NewPinOrchestrator(
+	contentMeta metadata.ContentMetaClient,
+	popularity metadata.PopularityClient,
+	bc SyncBroadcasterClient,
+) *PinOrchestrator {
+	cache, _ := lru.New[string, *ContentBlobCacheEntry](50000)
 	return &PinOrchestrator{
-		metadata:    mc,
+		contentMeta: contentMeta,
+		popularity:  popularity,
 		broadcaster: bc,
 		strategies:  make(map[string]PinStrategy),
 		nodeSpaces:  make(map[string]types.NodeSpaceInfo),
+		blobCache:   cache,
 	}
 }
 
@@ -73,9 +82,10 @@ func (po *PinOrchestrator) RegisterStrategy(contentType string, strategy PinStra
 // ─── Event handlers ───
 
 // OnContentIngested handles a ContentIngestedEvent from the ingest domain.
-// It calls the registered strategy's DecideInitialPin and sends the resulting
-// NodePinPlans to each target node. Panics are recovered so a bad strategy
-// does not crash the orchestrator.
+// The event already carries the full blob list and role arrangement, so no
+// metadata query is needed. It warms the blobCache and calls the registered
+// strategy's DecideInitialPin.
+// Panics are recovered so a bad strategy does not crash the orchestrator.
 func (po *PinOrchestrator) OnContentIngested(evt types.ContentIngestedEvent) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -83,10 +93,14 @@ func (po *PinOrchestrator) OnContentIngested(evt types.ContentIngestedEvent) {
 		}
 	}()
 
-	content, err := po.metadata.GetContentMeta(evt.ContentID)
-	if err != nil {
-		return
+	// Ingest event carries full content info (blobs + roles); no need to query metadata.
+	content := types.ContentMeta{
+		ContentID:   evt.ContentID,
+		ContentType: evt.ContentType,
 	}
+
+	// Warm blob cache with ingest-provided data.
+	po.cacheContentBlobs(evt.ContentID, evt.Blobs, evt.Roles)
 
 	strategy := po.strategies[content.ContentType]
 	if strategy == nil {
@@ -94,7 +108,7 @@ func (po *PinOrchestrator) OnContentIngested(evt types.ContentIngestedEvent) {
 	}
 
 	nodeSpaces := po.getNodeSpaces()
-	nodePlans := strategy.DecideInitialPin(*content, evt.Blobs, nodeSpaces)
+	nodePlans := strategy.DecideInitialPin(content, evt.Blobs, evt.Roles, nodeSpaces)
 
 	for _, np := range nodePlans {
 		po.sendNodePinPlan(np)
@@ -149,24 +163,73 @@ func (po *PinOrchestrator) safeRebalance(ctx context.Context) {
 }
 
 func (po *PinOrchestrator) rebalance(ctx context.Context) {
-	popular, err := po.metadata.GetTopContents(ctx, 5000)
+	// Step 1: Get top-N popular contents from the popularity service.
+	popular, err := po.popularity.GetTopContents(ctx, 5000)
 	if err != nil {
 		return
 	}
 
 	nodeSpaces := po.getNodeSpaces()
 
-	for _, tc := range popular {
-		strategy := po.strategies[tc.ContentMeta.ContentType]
+	for _, c := range popular {
+		strategy := po.strategies[c.ContentMeta.ContentType]
 		if strategy == nil {
 			continue
 		}
 
-		nodePlans := strategy.AdjustPin(tc.ContentMeta, tc.Popularity, nodeSpaces)
+		// Step 2: Resolve content blobs + roles (cache-backed).
+		blobs, roles, err := po.getContentBlobs(ctx, c.ContentMeta.ContentID)
+		if err != nil || len(blobs) == 0 {
+			continue
+		}
+
+		// Step 3: Call strategy's AdjustPin with resolved data.
+		nodePlans := strategy.AdjustPin(c.ContentMeta, blobs, roles, c.Popularity, nodeSpaces)
 		for _, np := range nodePlans {
 			po.sendNodePinPlan(np)
 		}
 	}
+}
+
+// ─── Content blob cache ───
+
+// getContentBlobs returns the blobs and roles for a content, preferring the
+// local LRU cache (30 min TTL) and falling back to the metadata module on miss.
+func (po *PinOrchestrator) getContentBlobs(ctx context.Context, contentID string) ([]types.BlobDescriptor, []types.BlobRole, error) {
+	// 1. Check local LRU cache (30 min TTL).
+	po.bcMu.RLock()
+	if entry, ok := po.blobCache.Get(contentID); ok && time.Since(entry.CachedAt) < 30*time.Minute {
+		po.bcMu.RUnlock()
+		return entry.Blobs, entry.Roles, nil
+	}
+	po.bcMu.RUnlock()
+
+	// 2. Cache miss: query metadata module.
+	blobs, roles, err := po.contentMeta.GetContentBlobs(ctx, contentID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("contentMeta.GetContentBlobs: %w", err)
+	}
+
+	// 3. Write back to cache.
+	po.cacheContentBlobs(contentID, blobs, roles)
+	return blobs, roles, nil
+}
+
+// cacheContentBlobs stores blobs+roles in the LRU cache with deep-copied slices
+// to prevent callers from mutating cached data.
+func (po *PinOrchestrator) cacheContentBlobs(contentID string, blobs []types.BlobDescriptor, roles []types.BlobRole) {
+	blobsCopy := make([]types.BlobDescriptor, len(blobs))
+	copy(blobsCopy, blobs)
+	rolesCopy := make([]types.BlobRole, len(roles))
+	copy(rolesCopy, roles)
+
+	po.bcMu.Lock()
+	po.blobCache.Add(contentID, &ContentBlobCacheEntry{
+		Blobs:    blobsCopy,
+		Roles:    rolesCopy,
+		CachedAt: time.Now(),
+	})
+	po.bcMu.Unlock()
 }
 
 // ─── Internal helpers ───
@@ -191,7 +254,6 @@ func (po *PinOrchestrator) sendNodePinPlan(np types.NodePinPlan) {
 		Seq:        po.seq.Add(1),
 		TargetNode: np.NodeID,
 		Updates: []types.PinUpdate{{
-			BlobHash:   np.ContentID,
 			PinBlobs:   np.PinBlobs,
 			UnpinBlobs: np.UnpinBlobs,
 		}},
@@ -203,5 +265,3 @@ func (po *PinOrchestrator) sendNodePinPlan(np types.NodePinPlan) {
 func (po *PinOrchestrator) nextSeq() uint64 {
 	return po.seq.Add(1)
 }
-
-

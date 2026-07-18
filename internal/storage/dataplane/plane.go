@@ -8,11 +8,16 @@ import (
 	"io"
 	"net/http"
 
-	"github.com/shlande/mediaworker/internal/controlplane/pinstrategy"
 	"github.com/shlande/mediaworker/internal/storage/accountpool"
 	"github.com/shlande/mediaworker/internal/storage/driver"
 	"github.com/shlande/mediaworker/internal/types"
 )
+
+// BlobLocationClient provides blob location lookup for FetchBlobLocal.
+// accountpool.BlobLocationClient satisfies this interface.
+type BlobLocationClient interface {
+	GetBlobLocations(ctx context.Context, blobHash string) ([]types.BlobLocation, error)
+}
 
 // AccountSelector selects an account for reading a blob.
 // *accountpool.AccountPool implements this interface.
@@ -32,12 +37,12 @@ type LinkFetcher interface {
 type LocalDataPlane struct {
 	selector AccountSelector
 	fetcher  LinkFetcher
-	mc       pinstrategy.MetadataClient
+	mc       BlobLocationClient
 	hc       *http.Client
 }
 
 // NewLocalDataPlane creates a LocalDataPlane with the given dependencies.
-func NewLocalDataPlane(selector AccountSelector, fetcher LinkFetcher, mc pinstrategy.MetadataClient, hc *http.Client) *LocalDataPlane {
+func NewLocalDataPlane(selector AccountSelector, fetcher LinkFetcher, mc BlobLocationClient, hc *http.Client) *LocalDataPlane {
 	return &LocalDataPlane{
 		selector: selector,
 		fetcher:  fetcher,
@@ -66,7 +71,7 @@ func (dp *LocalDataPlane) FetchBlobLocal(ctx interface{}, blobHash string) (io.R
 	}
 
 	// 1. Look up blob locations from metadata.
-	locations, err := dp.mc.GetSegmentLocations(blobHash)
+	locations, err := dp.mc.GetBlobLocations(cctx, blobHash)
 	if err != nil {
 		return nil, fmt.Errorf("dataplane: get locations for %q: %w", blobHash, err)
 	}
@@ -83,7 +88,8 @@ func (dp *LocalDataPlane) FetchBlobLocal(ctx interface{}, blobHash string) (io.R
 	// 3. Find the matching BlobLocation for the selected account.
 	var location *types.BlobLocation
 	for i := range locations {
-		if types.Vendor(locations[i].Vendor) == acct.Vendor && locations[i].AccountID == acct.AccountID {
+		expectedKey := string(acct.Vendor) + ":" + acct.AccountID
+	if locations[i].BackendID == expectedKey {
 			location = &locations[i]
 			break
 		}

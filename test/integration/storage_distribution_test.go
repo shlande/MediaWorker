@@ -9,6 +9,7 @@ package integration_test
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -19,7 +20,7 @@ import (
 
 	"golang.org/x/time/rate"
 
-	"github.com/shlande/mediaworker/internal/controlplane/pinstrategy"
+	"github.com/shlande/mediaworker/internal/controlplane/metadata"
 	"github.com/shlande/mediaworker/internal/node/backhaul"
 	"github.com/shlande/mediaworker/internal/storage/accountpool"
 	"github.com/shlande/mediaworker/internal/storage/auth"
@@ -142,7 +143,7 @@ type mockMetaClient struct {
 	locations map[string][]types.BlobLocation
 }
 
-func (m *mockMetaClient) GetSegmentLocations(blobHash string) ([]types.BlobLocation, error) {
+func (m *mockMetaClient) GetBlobLocations(_ context.Context, blobHash string) ([]types.BlobLocation, error) {
 	locs, ok := m.locations[blobHash]
 	if !ok {
 		return nil, nil
@@ -150,12 +151,32 @@ func (m *mockMetaClient) GetSegmentLocations(blobHash string) ([]types.BlobLocat
 	return locs, nil
 }
 
-// Satisfy the rest of pinstrategy.MetadataClient (unused in tests).
-func (m *mockMetaClient) GetContentMeta(_ string) (*types.ContentMeta, error) { return nil, nil }
-func (m *mockMetaClient) GetTopContents(_ context.Context, _ int) ([]pinstrategy.TopContent, error) {
+// Satisfy the rest of metadata.BlobStoreClient + ContentMetaClient + PopularityClient (unused in tests).
+func (m *mockMetaClient) GetContentMeta(_ context.Context, _ string) (*types.ContentMeta, error) {
 	return nil, nil
 }
-func (m *mockMetaClient) GetPopularity24h(_ string) float64 { return 0 }
+func (m *mockMetaClient) GetContentBlobs(_ context.Context, _ string) ([]types.BlobDescriptor, []types.BlobRole, error) {
+	return nil, nil, nil
+}
+func (m *mockMetaClient) WriteContentMeta(_ context.Context, _ *sql.Tx, _ types.ContentMeta, _ []types.BlobDescriptor, _ []types.BlobRole) error {
+	return nil
+}
+func (m *mockMetaClient) GetTopContents(_ context.Context, _ int) ([]metadata.TopContent, error) {
+	return nil, nil
+}
+func (m *mockMetaClient) GetPopularity24h(_ context.Context, _ string) float64 { return 0 }
+func (m *mockMetaClient) WriteBlob(_ context.Context, _ *sql.Tx, _ []types.BlobDescriptor) error {
+	return nil
+}
+func (m *mockMetaClient) WriteBlobLocations(_ context.Context, _ *sql.Tx, _ []types.BlobLocation) error {
+	return nil
+}
+func (m *mockMetaClient) ReportAccountHealth(_ context.Context, _ types.Vendor, _ string, _ types.HealthState) error {
+	return nil
+}
+func (m *mockMetaClient) GetAccountHealths(_ context.Context, _ types.Vendor) ([]metadata.AccountHealth, error) {
+	return nil, nil
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Test helper: build the full L4 stack (TokenManager, AccountPool,
@@ -312,8 +333,8 @@ func TestStorageDistribution_Baidu(t *testing.T) {
 	meta := &mockMetaClient{
 		locations: map[string][]types.BlobLocation{
 			mockBlobHash: {
-				{Vendor: string(types.VendorBaidu), AccountID: "baidu-acct-1", FileID: mockFileID, ContentID: "c1", BlobHash: mockBlobHash},
-				{Vendor: string(types.VendorBaidu), AccountID: "baidu-acct-2", FileID: mockFileID, ContentID: "c1", BlobHash: mockBlobHash},
+				{BackendID: "baidu:baidu-acct-1", FileID: mockFileID, BlobHash: mockBlobHash},
+				{BackendID: "baidu:baidu-acct-2", FileID: mockFileID, BlobHash: mockBlobHash},
 			},
 		},
 	}
@@ -386,8 +407,8 @@ func TestStorageDistribution_Baidu(t *testing.T) {
 		meta2 := &mockMetaClient{
 			locations: map[string][]types.BlobLocation{
 				mockBlobHash: {
-					{Vendor: string(types.VendorBaidu), AccountID: "baidu-deg-1", FileID: mockFileID, ContentID: "c1", BlobHash: mockBlobHash},
-					{Vendor: string(types.VendorBaidu), AccountID: "baidu-deg-2", FileID: mockFileID, ContentID: "c1", BlobHash: mockBlobHash},
+					{BackendID: "baidu:baidu-deg-1", FileID: mockFileID, BlobHash: mockBlobHash},
+					{BackendID: "baidu:baidu-deg-2", FileID: mockFileID, BlobHash: mockBlobHash},
 				},
 			},
 		}
@@ -541,8 +562,8 @@ func TestStorageDistribution_Baidu(t *testing.T) {
 		sixthBlobHash := "baidu-deg-blob-6"
 		meta2.mu.Lock()
 		meta2.locations[sixthBlobHash] = []types.BlobLocation{
-			{Vendor: string(types.VendorBaidu), AccountID: "baidu-deg-1", FileID: mockFileID, ContentID: "c1", BlobHash: sixthBlobHash},
-			{Vendor: string(types.VendorBaidu), AccountID: "baidu-deg-2", FileID: mockFileID, ContentID: "c1", BlobHash: sixthBlobHash},
+			{BackendID: "baidu:baidu-deg-1", FileID: mockFileID, BlobHash: sixthBlobHash},
+			{BackendID: "baidu:baidu-deg-2", FileID: mockFileID, BlobHash: sixthBlobHash},
 		}
 		meta2.mu.Unlock()
 
@@ -674,7 +695,7 @@ func TestStorageDistribution_OneDrive(t *testing.T) {
 	meta := &mockMetaClient{
 		locations: map[string][]types.BlobLocation{
 			mockBlobHash: {
-				{Vendor: string(types.VendorOneDrive), AccountID: "od-acct-1", FileID: mockFileID, ContentID: "c1", BlobHash: mockBlobHash},
+				{BackendID: "onedrive:od-acct-1", FileID: mockFileID, BlobHash: mockBlobHash},
 			},
 		},
 	}
@@ -766,7 +787,7 @@ func TestStorageDistribution_OneDrive(t *testing.T) {
 		banMeta := &mockMetaClient{
 			locations: map[string][]types.BlobLocation{
 				"od-ban-blob": {
-					{Vendor: string(types.VendorOneDrive), AccountID: "od-ban-acct", FileID: "ban-file-id", ContentID: "c1", BlobHash: "od-ban-blob"},
+					{BackendID: "onedrive:od-ban-acct", FileID: "ban-file-id", BlobHash: "od-ban-blob"},
 				},
 			},
 		}

@@ -39,9 +39,9 @@ type CircuitBreaker interface {
 	ForceClose()
 }
 
-// MetadataClient provides blob location lookup for SelectForRead.
-type MetadataClient interface {
-	GetSegmentLocations(blobHash string) ([]types.BlobLocation, error)
+// BlobLocationClient provides blob location lookup for SelectForRead.
+type BlobLocationClient interface {
+	GetBlobLocations(ctx context.Context, blobHash string) ([]types.BlobLocation, error)
 }
 
 // Account represents a single cloud drive account with its driver, rate limiter,
@@ -64,7 +64,7 @@ type AccountPool struct {
 	mu       sync.RWMutex
 	accounts map[string]*Account // key = "vendor:account_id"
 	vendors  map[types.Vendor][]string
-	metadata MetadataClient
+	metadata BlobLocationClient
 }
 
 // accountKey returns the map key for an account.
@@ -73,7 +73,7 @@ func accountKey(vendor types.Vendor, accountID string) string {
 }
 
 // NewAccountPool creates a new AccountPool with the given MetadataClient.
-func NewAccountPool(mc MetadataClient) *AccountPool {
+func NewAccountPool(mc BlobLocationClient) *AccountPool {
 	return &AccountPool{
 		accounts: make(map[string]*Account),
 		vendors:  make(map[types.Vendor][]string),
@@ -108,7 +108,7 @@ func (ap *AccountPool) account(key string) *Account {
 //
 // Candidates are sorted by score = Concurrent / VendorWeight ascending.
 func (ap *AccountPool) SelectForRead(ctx context.Context, blobHash string) (*Account, error) {
-	locations, err := ap.metadata.GetSegmentLocations(blobHash)
+	locations, err := ap.metadata.GetBlobLocations(ctx, blobHash)
 	if err != nil {
 		return nil, fmt.Errorf("accountpool: get locations for %q: %w", blobHash, err)
 	}
@@ -118,7 +118,7 @@ func (ap *AccountPool) SelectForRead(ctx context.Context, blobHash string) (*Acc
 
 	var candidates []*Account
 	for _, loc := range locations {
-		key := accountKey(types.Vendor(loc.Vendor), loc.AccountID)
+		key := loc.BackendID
 		acct := ap.account(key)
 		if acct == nil {
 			continue
@@ -163,7 +163,7 @@ func (ap *AccountPool) SelectForRead(ctx context.Context, blobHash string) (*Acc
 
 // SelectK selects up to k healthy accounts for upload, preferring cross-vendor
 // diversity and least-loaded accounts. It does not deduplicate by location;
-// the caller passes segment locations during UploadSegment.
+// the caller passes blob locations during UploadBlob.
 func (ap *AccountPool) SelectK(ctx context.Context, k int) ([]*Account, error) {
 	ap.mu.RLock()
 	defer ap.mu.RUnlock()
@@ -225,11 +225,11 @@ func (ap *AccountPool) SelectK(ctx context.Context, k int) ([]*Account, error) {
 	return selected, nil
 }
 
-// UploadSegment uploads data to k redundant accounts concurrently.
+// UploadBlob uploads data to k redundant accounts concurrently.
 // It selects k healthy accounts, uploads in parallel via errgroup,
 // and writes metadata on success. At least one successful upload is required;
 // partial failures are returned as-is.
-func (ap *AccountPool) UploadSegment(ctx context.Context, segID string, data []byte) error {
+func (ap *AccountPool) UploadBlob(ctx context.Context, blobHash string, data []byte) error {
 	accounts, err := ap.SelectK(ctx, 2)
 	if err != nil {
 		return fmt.Errorf("accountpool: select accounts for upload: %w", err)
@@ -246,7 +246,7 @@ func (ap *AccountPool) UploadSegment(ctx context.Context, segID string, data []b
 	for i, acct := range accounts {
 		i, acct := i, acct
 		g.Go(func() error {
-			fi, err := acct.Driver.Put(gctx, segID, segID+".m4s", bytes.NewReader(data), int64(len(data)))
+			fi, err := acct.Driver.Put(gctx, blobHash, blobHash+".bin", bytes.NewReader(data), int64(len(data)))
 			if err != nil {
 				results[i] = result{idx: i, err: fmt.Errorf("upload to %s/%s: %w", acct.Vendor, acct.AccountID, err)}
 				return nil // do not fail fast — let others continue

@@ -313,7 +313,8 @@ func main() {
 	// 18. SyncBroadcaster client — receive PinPlan from control plane
 	// -------------------------------------------------------------------
 	_ = nodesync.NewClient(h, func(plan types.PinPlan) {
-		nodepinstrategy.HandlePinPlan(plan, pinStore)
+		// PinPlan arrives without blob metadata; ApplyPin tolerates empty blobType/role.
+		nodepinstrategy.HandlePinPlan(plan, pinStore, nil, nil)
 	}, nil)
 	logger.Info("syncbroadcaster client registered",
 		"protocol", string(nodesync.ControlProtocol),

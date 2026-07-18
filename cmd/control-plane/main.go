@@ -96,8 +96,8 @@ func run(configPath string) error {
 	}
 
 	// 11. PinOrchestrator.
-	po := pinstrategy.NewPinOrchestrator(mc, sb)
-	po.RegisterStrategy("dash", &pinstrategy.DashPinStrategy{})
+	po := pinstrategy.NewPinOrchestrator(mc, mc, sb)
+	po.RegisterStrategy("dash_video", &pinstrategy.DashPinStrategy{})
 
 	rebalanceIntv, err := time.ParseDuration(cfg.PinOrchestrator.RebalanceInterval)
 	if err != nil {

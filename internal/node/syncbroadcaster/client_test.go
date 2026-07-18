@@ -163,7 +163,6 @@ func TestOnEvent_PinPlanUpdate_StillWorksViaOnPlan(t *testing.T) {
 		Seq:        99,
 		TargetNode: "node-B",
 		Updates: []types.PinUpdate{{
-			BlobHash:   "blob-hash-99",
 			PinBlobs:   []string{"blob1"},
 			UnpinBlobs: nil,
 		}},

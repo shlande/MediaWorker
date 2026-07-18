@@ -37,6 +37,7 @@ const keyPrefix = "p:"
 type PinEntry struct {
 	BlobHash string    `json:"blob_hash"`
 	BlobType string    `json:"blob_type"`
+	Role     string    `json:"role"`
 	Size     int64     `json:"size"`
 	PinnedAt time.Time `json:"pinned_at"`
 	Ready    atomic.Bool `json:"-"`
@@ -47,6 +48,7 @@ type PinDelta struct {
 	Type     int    `json:"type"` // DeltaPin or DeltaUnpin
 	BlobHash string `json:"blob_hash"`
 	BlobType string `json:"blob_type"`
+	Role     string `json:"role"`
 }
 
 // DeltaBuffer accumulates pin/unpin deltas.
@@ -157,7 +159,9 @@ func (ps *PinStore) dbView(fn func(txn *badger.Txn) error) error {
 // ApplyPin persists a pin record, updates the in-memory index, appends a delta,
 // and asynchronously fetches the blob to the prefix partition.
 // Idempotent: if the blob is already pinned, this is a no-op.
-func (ps *PinStore) ApplyPin(blobHash string, blobType string, size int64) {
+// blobType: binary output type ("mp4_init_segment" etc).
+// role: semantic role of the blob within its content ("init"/"media" etc), used by eviction logic.
+func (ps *PinStore) ApplyPin(blobHash string, blobType string, role string, size int64) {
 	if _, ok := ps.index.Load(blobHash); ok {
 		return // already pinned, idempotent
 	}
@@ -165,6 +169,7 @@ func (ps *PinStore) ApplyPin(blobHash string, blobType string, size int64) {
 	entry := &PinEntry{
 		BlobHash: blobHash,
 		BlobType: blobType,
+		Role:     role,
 		Size:     size,
 		PinnedAt: time.Now(),
 	}
@@ -183,7 +188,7 @@ func (ps *PinStore) ApplyPin(blobHash string, blobType string, size int64) {
 	ps.index.Store(blobHash, entry)
 
 	// 3. Append delta.
-	ps.deltaBuffer.Append(PinDelta{Type: DeltaPin, BlobHash: blobHash, BlobType: blobType})
+	ps.deltaBuffer.Append(PinDelta{Type: DeltaPin, BlobHash: blobHash, BlobType: blobType, Role: role})
 
 	// 4. Asynchronously fetch blob to prefix partition.
 	go ps.fetchPinnedBlob(blobHash)

@@ -258,13 +258,13 @@ func (ap *AccountPool) UploadSegment(ctx context.Context, segID string, data []b
     }
 
     // 两个都成功，写入元数据
-    return metadata.WriteSegmentLocations(ctx, segID, results)
+    return metadata.WriteBlobLocations(ctx, blobHash, results)
 }
 ```
 
 ### 3.2 blob 位置表记录
 
-blob 位置表在 PostgreSQL 中持久化，每个 blob 记录 K 个冗余存储位置。完整 Schema 见 §9.1.1。
+blob 位置表（`blob_location`）在 PostgreSQL 中持久化，每个 blob 记录 K 个冗余存储位置。表属 storage 域内容寻址层，主键为 `(blob_hash, backend_id)`，跨 content 共享。完整 Schema 见 §9.1.1。
 
 ### 3.3 账号级熔断
 
@@ -318,8 +318,8 @@ type Credential struct {
 ### 4.2 读取时的账号选择（SelectForRead）
 
 ```go
-func (ap *AccountPool) SelectForRead(ctx context.Context, segID string) (*Account, *DownloadLink, error) {
-    locations, err := metadata.GetSegmentLocations(ctx, segID)
+func (ap *AccountPool) SelectForRead(ctx context.Context, blobHash string) (*Account, *DownloadLink, error) {
+    locations, err := metadata.GetBlobLocations(ctx, blobHash)
     if err != nil {
         return nil, nil, err
     }
@@ -402,26 +402,9 @@ vendor_profiles:
 
 ### 4.4 延迟反哺逐出
 
-`reportFetchLatency` 将回源延迟写入段的缓存元信息（`last_fetch_latency_ms`）。Video-aware LRU 逐出时，对"高延迟回源段"降低逐出优先级（跨厂商回源 300ms 的段比本地缓存命中 0.1ms 的段更值得保留）。
+回源时记录每次回源延迟（`last_fetch_latency_ms`），逐出决策对高延迟回源段降低逐出优先级——跨厂商回源 300ms 的段比本地缓存命中 0.1ms 的段更值得保留。
 
-```go
-// evict() 修订: 增加 latency 因素 (distribution/README.md)
-func (e *EdgeNode) evict() *SegmentCache {
-    videos := e.getVideosSortedByPopularity()  // 先按流行度(含 gossip)
-    for _, v := range videos {
-        segs := v.getSegmentsSortedByBitrateDesc()
-        for _, s := range segs {
-            if e.isPinned(s.SegID, v.VideoID) { continue }  // pin 检查
-            // ★ 新增: 高延迟回源段降低逐出优先级
-            // 正常段直接返回(可逐出), 高延迟段跳过(保留)
-            if s.LastFetchLatencyMs > 200 { continue }
-            return s
-        }
-    }
-    // 如果所有段都是高延迟段, 仍需逐出 (取延迟最低的高延迟段)
-    return e.evictHighLatencyFallback(videos)
-}
-```
+逐出是分发域的职责（不在 storage 域），完整实现见 [`distribution/README.md §7.2`](distribution/README.md)（高延迟段保护）。storage 域的 `SelectForRead` 只负责在 `reportFetchLatency` 回调中把延迟写入段的缓存元信息，供分发域逐出逻辑读取。
 
 ---
 
@@ -950,41 +933,32 @@ func (n *L2L4Node) reportLoop(ctx context.Context) {
 
 ### 9.1 存储内容与 Schema
 
-#### 10.1.1 核心表
+存储域 schema 按**层次分离**组织：底层是纯内容寻址的 blob store（storage 域本体），上层是元数据模块（理解 content 是什么、组织和编排 blob）。两层通过 `blob_hash` 关联。
+
+#### 9.1.1 Storage 域 — 内容寻址 Blob Store（纯存储层）
+
+storage 域只关心 blob 二进制本身，**不感知"视频""码率""段序"等业务语义**。`blob_hash` 是文件内容的 SHA-256，跨 content 全局唯一，相同二进制自动去重。
 
 ```sql
--- 通用内容表：每个入库的内容（DASH视频/图床/文档等）一条记录
-CREATE TABLE content (
-    content_id      UUID PRIMARY KEY,
-    content_type    TEXT NOT NULL,              -- "dash_video" | "image" | "document" | ...
-    type_metadata   JSONB,                      -- 内容类型专属元数据 (MPD XML / EXIF / 页索引等)
-                                                 -- 通用管线不解析此字段
-    created_at      TIMESTAMPTZ DEFAULT now(),
-    updated_at      TIMESTAMPTZ DEFAULT now()
+-- blob 主表：每个唯一二进制文件一条记录（内容寻址）
+CREATE TABLE blob (
+    blob_hash       TEXT PRIMARY KEY,           -- = SHA-256(文件内容), 全局唯一
+    blob_type       TEXT NOT NULL,              -- 二进制产出类型 (内容寻址层的类型分类)
+                                                 -- "mp4_init_segment" | "m4s_media_segment"
+                                                 -- | "jpeg_thumbnail" | "png_original" | "pdf_page_image" | ...
+    size_bytes      BIGINT NOT NULL,
+    created_at      TIMESTAMPTZ DEFAULT now()
 );
 
--- 通用 blob 索引：每个可上传的文件（DASH段/原图/缩略图等）一条记录
-CREATE TABLE blob_index (
-    content_id   UUID NOT NULL REFERENCES content(content_id),
-    blob_hash      TEXT NOT NULL,                 -- "init_720p" | "seg_720p_3" | "original" | "thumb_200" | ...
-    role         TEXT NOT NULL,                 -- 语义标签: "init"|"media"|"original"|"thumbnail"|"page"
-    sort_order   INTEGER DEFAULT 0,             -- blob 在内容内的逻辑顺序
-    size_bytes   BIGINT NOT NULL,
-    checksum     TEXT NOT NULL,                 -- SHA256
-    PRIMARY KEY (content_id, blob_hash)
-);
-
--- 通用 blob 位置表：每个 blob 的 K 个冗余存储位置
+-- blob 位置表：每个 blob 的 K 个冗余存储位置
 -- 写入时用事务保证 K 个位置原子性
+-- 跨 content 共享：同一 blob 被多个 content 引用时共享同一组位置
 CREATE TABLE blob_location (
-    content_id   UUID NOT NULL,
-    blob_hash      TEXT NOT NULL,
-    backend_id   TEXT NOT NULL,                 -- "115:acct_03" | "baidu:acct_05" | "local:ssd-01"
-    file_id      TEXT NOT NULL,                 -- 后端内的文件 ID
-    created_at   TIMESTAMPTZ DEFAULT now(),
-    PRIMARY KEY (content_id, blob_hash, backend_id),
-    FOREIGN KEY (content_id, blob_hash)
-        REFERENCES blob_index(content_id, blob_hash)
+    blob_hash       TEXT NOT NULL REFERENCES blob(blob_hash),
+    backend_id      TEXT NOT NULL,              -- "115:acct_03" | "baidu:acct_05" | "local:ssd-01"
+    file_id         TEXT NOT NULL,              -- 后端内的文件 ID
+    created_at      TIMESTAMPTZ DEFAULT now(),
+    PRIMARY KEY (blob_hash, backend_id)
 );
 
 -- 账号健康状态（高频更新，建议用 Redis，PostgreSQL 做持久化）
@@ -998,24 +972,71 @@ CREATE TABLE account_health (
     ban_until    TIMESTAMPTZ,                   -- 封号到何时
     PRIMARY KEY (vendor, account_id)
 );
+```
+
+**关键性质**：
+- `blob_hash` = SHA-256，纯内容寻址，不携带任何业务语义（码率、段号、缩略图尺寸等）
+- `blob_type` 描述**二进制本身的产出类型**（格式/生产方式），不是"在某个 content 里扮演什么角色"。例如一个 720p init segment 的 `blob_type` 是 `mp4_init_segment`，至于"它是视频 X 的 720p init"这个语义在元数据模块
+- 两个不同视频使用同一份 init segment 模板（相同二进制）→ 自动物理去重，共享同一行 `blob` 记录和同一组 `blob_location`
+- storage 域不知道 `content` 概念，回源查询只用 `blob_hash` 单键
+
+#### 9.1.2 高层元数据模块 — Content 编排层
+
+元数据模块理解 content 是什么（DASH 视频 / 图床 / PDF / ...），组织和编排 content 对应的多个 blob，把业务语义（码率、段序、缩略图尺寸、页码）编码在关联表中。**元数据模块与 storage 域是不同的逻辑层**，可以独立部署，但通常共用同一 PG 实例。
+
+```sql
+-- 内容表：每个入库的内容一条记录
+CREATE TABLE content (
+    content_id      UUID PRIMARY KEY,
+    content_type    TEXT NOT NULL,              -- "dash_video" | "image" | "document" | ...
+    type_metadata   JSONB,                      -- 内容类型专属元数据 (MPD XML / EXIF / 页索引等)
+                                                 -- 元数据模块解析此字段, storage 域不感知
+    created_at      TIMESTAMPTZ DEFAULT now(),
+    updated_at      TIMESTAMPTZ DEFAULT now()
+);
+
+-- content 与 blob 的多对多关联表
+-- 表达"一个 content 由哪些 blob 组成 + 每个 blob 在该 content 内的编排信息"
+-- 同一 blob 可被多个 content 引用（如共享 init segment 模板）
+CREATE TABLE content_blob (
+    content_id      UUID NOT NULL REFERENCES content(content_id),
+    blob_hash       TEXT NOT NULL REFERENCES blob(blob_hash),
+    role            TEXT NOT NULL,              -- 该 blob 在此 content 内的语义角色
+                                                 -- DASH: "init"|"media"
+                                                 -- 图床: "original"|"thumbnail"
+                                                 -- 文档: "page"
+    sort_order      INTEGER DEFAULT 0,         -- blob 在 content 内的逻辑顺序
+                                                 -- DASH: 段序号; 文档: 页码; 图床: 缩略图尺寸升序
+    business_meta   JSONB,                      -- 该关联的业务专属元数据 (可选)
+                                                 -- DASH: {"representation_id":"720p","bitrate":1500000}
+                                                 -- 图床: {"width":200,"height":150}
+    PRIMARY KEY (content_id, blob_hash)
+);
 
 -- 注: 热度表 (content_popularity) 不属于存储域, 由分发域维护。
--- 两个域通过 content_id / blob_hash 作为关联键解耦。
+-- 分发域通过 content_id 与元数据模块关联, 通过 blob_hash 与 storage 域关联。
 -- 热度表的 Schema 和接口见 distribution/README.md §8。
 ```
 
-#### 10.1.2 查询示例
+**关键性质**：
+- `role` / `sort_order` / `business_meta` 都是**关联属性**（描述 blob 在某 content 内扮演什么角色），不是 blob 本身的属性，所以放在 `content_blob` 关联表
+- 同一 blob 在不同 content 里可以有不同 `role`（理论上），自然支持
+- 元数据模块可基于对 content 的理解提供额外服务（ABR 码率选择、缩略图列表、PDF 分页导航等），storage 域不参与这些决策
+
+#### 9.1.3 查询示例
+
+**回源查询（storage 域，单键）**：
 
 ```sql
--- 获取视频所有段的位置（冗余列表）
+-- L4 节点本地缓存 miss 时查 blob 的冗余位置
+-- 只需 blob_hash 单键, 不需要 content_id
 SELECT bl.backend_id, bl.file_id,
        ah.state, ah.latency_ms
 FROM blob_location bl
 LEFT JOIN account_health ah
     ON ah.vendor = split_part(bl.backend_id, ':', 1)
    AND ah.account_id = split_part(bl.backend_id, ':', 2)
-WHERE bl.content_id = 'abc123'
-  AND bl.blob_hash = 'seg_720p_5';
+WHERE bl.blob_hash = 'sha256:a3f5e8...';
 ```
 
 结果示例：
@@ -1027,30 +1048,61 @@ WHERE bl.content_id = 'abc123'
  baidu:acct_07   | fid_yyyy | healthy | 200
 ```
 
-L2+L4 节点的本地数据面从这两条中选一条（按 Backend 权重、负载），获取下载链接然后回源。
+**编排查询（元数据模块，返回 content 的 blob 列表 + 编排信息）**：
+
+```sql
+-- 客户端请求 DASH 视频时, 元数据模块返回该 content 的所有 blob + 编排信息
+-- 客户端按 role/sort_order/business_meta 自行决定请求哪些 blob (ABR 选择)
+SELECT cb.blob_hash, cb.role, cb.sort_order, cb.business_meta,
+       b.blob_type, b.size_bytes
+FROM content_blob cb
+JOIN blob b ON b.blob_hash = cb.blob_hash
+WHERE cb.content_id = 'abc123'
+ORDER BY cb.role, cb.sort_order;
+```
+
+结果示例：
+
+```
+ blob_hash         | role  | sort_order | business_meta                 | blob_type           | size_bytes
+-------------------+-------+------------+-------------------------------+---------------------+------------
+ sha256:a3f5e8...  | init  | 0          | {"representation_id":"720p"} | mp4_init_segment    | 1024
+ sha256:b7c1d2...  | media | 1          | {"representation_id":"720p"} | m4s_media_segment   | 2097152
+ sha256:c9e3f4...  | media | 2          | {"representation_id":"720p"} | m4s_media_segment   | 2097152
+```
+
+L2+L4 节点的本地数据面从冗余位置中选一条（按 Backend 权重、负载），获取下载链接然后回源。
 
 ### 9.2 gRPC 服务接口
 
 ```go
 // 元数据服务 gRPC 接口定义
-service MetadataService {
-    // --- 内容元数据 ---
-    rpc GetContentMeta(GetContentMetaReq) returns (GetContentMetaResp);  // 获取 content + type_metadata
+// 接口按层次划分: BlobStore 服务对应 storage 域内容寻址层, ContentMeta 服务对应高层元数据模块
+service BlobStore {
+    // --- blob 主表 (内容寻址层) ---
+    rpc GetBlob(GetBlobReq) returns (GetBlobResp);                 // 查 blob 类型/大小
+    rpc WriteBlob(WriteBlobReq) returns (Empty);                   // 写入 blob 主表 (去重: 已存在则跳过)
 
-    // --- blob 索引 ---
-    rpc GetBlobIndex(GetBlobIndexReq) returns (GetBlobIndexResp);
-
-    // --- blob 位置 ---
+    // --- blob 位置 (内容寻址层, 回源热路径) ---
     rpc GetBlobLocations(GetBlobLocationsReq) returns (GetBlobLocationsResp);
-    rpc WriteContentMeta(WriteContentMetaReq) returns (Empty);  // 入库写入 (content + blob_index + blob_location 事务)
+    rpc WriteBlobLocations(WriteBlobLocationsReq) returns (Empty); // 写入 K 个冗余位置
+}
 
-    // --- 账号健康 ---
+service ContentMeta {
+    // --- 内容元数据 (编排层) ---
+    rpc GetContentMeta(GetContentMetaReq) returns (GetContentMetaResp);   // 获取 content + type_metadata
+    rpc GetContentBlobs(GetContentBlobsReq) returns (GetContentBlobsResp); // 获取 content 的 blob 列表 + 编排信息 (role/sort_order/business_meta)
+    rpc WriteContentMeta(WriteContentMetaReq) returns (Empty);             // 入库写入 (content + content_blob 关联, 事务)
+
+    // --- 账号健康 (storage 域内部, 共用 MetadataService 进程) ---
     rpc ReportAccountHealth(AccountHealthReq) returns (Empty);
     rpc GetAccountHealths(GetAccountHealthsReq) returns (GetAccountHealthsResp);
-
-    // 注: 流行度相关接口 (ReportAccess / GetPopularContents) 不属于存储域,
-    // 见 distribution/README.md §8 热度数据模型。
 }
+
+// 注: 流行度相关接口 (ReportAccess / GetPopularContents) 不属于存储域,
+// 见 distribution/README.md §8 热度数据模型。
+// 入库事务跨两服务: BlobStore.WriteBlob + BlobStore.WriteBlobLocations + ContentMeta.WriteContentMeta
+// 在同一 PG 事务内完成 (见 ingest/README.md §4.1)。
 
 message GetBlobLocationsResp {
     repeated BlobLocation locations = 1;
@@ -1060,7 +1112,7 @@ message BlobLocation {
     string backend_id = 1;   // "115:acct_03" | "local:ssd-01"
     string file_id = 2;
     int64 size = 3;
-    string checksum = 4;
+    // 注: blob_hash 已是 SHA-256 (内容寻址), 不再单独设 checksum 字段
 }
 ```
 
@@ -1068,15 +1120,15 @@ message BlobLocation {
 
 | 选型 | 理由 |
 |------|------|
-| **PostgreSQL 14+** 作为主存储 | 1) 事务保证 blob 位置写入原子性（一个 blob 的 K 个 location 必须一起提交）；2) JSONB 字段存 content.type_metadata（内容类型专属元数据，通用管线不解析）；3) 主从流复制做读扩展 + HA |
-| **Redis 7+** 作为热数据缓存 | 1) content 专属元数据缓存（TTL 1h），命中率 > 90%；2) blob 位置缓存（TTL 30min，段不可变可以设更长）；3) 账号健康状态缓存（30s 更新一次，实时性要求不高但热点读极高）；4) 哨兵模式自动故障转移 |
+| **PostgreSQL 14+** 作为主存储 | 1) 事务保证 blob 位置写入原子性（一个 blob 的 K 个 location 必须一起提交）；2) JSONB 字段存 content.type_metadata 和 content_blob.business_meta（内容类型专属元数据，storage 域不解析，元数据模块解析）；3) 主从流复制做读扩展 + HA |
+| **Redis 7+** 作为热数据缓存 | 1) content 专属元数据缓存（TTL 1h），命中率 > 90%；2) content→blob 列表（含编排信息）缓存（TTL 30min，content 不可变可以设更长）；3) blob 位置缓存（TTL 30min，blob 不可变）；4) 账号健康状态缓存（30s 更新一次，实时性要求不高但热点读极高）；5) 哨兵模式自动故障转移 |
 
 ### 10.4 一致性策略
 
-- **写路径（入库）**：`BEGIN → INSERT content → INSERT blob_index → INSERT blob_location × K → COMMIT`。所有写入走 PostgreSQL 主库。
+- **写路径（入库）**：`BEGIN → INSERT blob × N (去重) → INSERT blob_location × N×K → INSERT content → INSERT content_blob × N → COMMIT`。所有写入走 PostgreSQL 主库。详见 `ingest/README.md §4.1`。
 - **读路径**：Redis 缓存 → 未命中 → PostgreSQL 从库 → 回填 Redis。
 - **账号健康状态**：L2+L4 节点本地数据面每 30s 探测一次，写入 Redis（TTL 60s）+ 异步写 PostgreSQL + 上报控制面。读取方式：Redis 直读。
-- **流行度**：不属于存储域。热度数据由分发域维护（gossip 分钟级 + PG `content_popularity` 小时级），通过 `content_id` / `blob_hash` 与存储域的blob 索引关联。详见 `distribution/README.md §8`。
+- **流行度**：不属于存储域，也不属于元数据模块。热度数据由分发域维护（gossip 分钟级 + PG `content_popularity` 小时级），通过 `content_id`（与元数据模块关联）和 `blob_hash`（与 storage 域关联）作为关联键。详见 `distribution/README.md §8`。
 
 ---
 

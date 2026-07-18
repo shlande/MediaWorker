@@ -157,12 +157,26 @@ func (e *BanSignalError) Error() string {
 
 // ─── 来自 ingest 域的类型 ───
 
-// BlobDescriptor describes a single blob (produced by the ingest domain, consumed by distribution).
+// BlobDescriptor describes a single blob at the content-addressed storage layer.
+// Produced by ingest; consumed by distribution and storage. BlobHash is SHA-256
+// of the blob bytes — globally unique, carries NO business semantics
+// (no bitrate, segment number, thumbnail size, etc.).
 type BlobDescriptor struct {
-	BlobHash  string `json:"blob_hash"`
-	BlobType  string `json:"blob_type"`
-	Size      int64  `json:"size"`
-	SortOrder int    `json:"sort_order"`
+	BlobHash string `json:"blob_hash"` // = SHA-256(blob bytes), globally unique, cross-content deduped
+	BlobType string `json:"blob_type"` // binary production type, no business semantics:
+	//   "mp4_init_segment" | "m4s_media_segment" | "jpeg_original" | "jpeg_thumbnail" | "pdf_page_image" | ...
+	Size int64 `json:"size"`
+}
+
+// BlobRole describes how a blob is arranged within a specific content. It is the
+// metadata-layer counterpart of BlobDescriptor: same BlobHash, but carries the
+// business semantics (role / sort_order / business_meta) that the content-addressed
+// blob table deliberately does not store.
+type BlobRole struct {
+	BlobHash     string         `json:"blob_hash"`               // references BlobDescriptor.BlobHash
+	Role         string         `json:"role"`                    // "init" | "media" | "original" | "thumbnail" | "page" | ...
+	SortOrder    int            `json:"sort_order"`
+	BusinessMeta map[string]any `json:"business_meta,omitempty"` // {"representation_id":"720p","bitrate":1500000} etc.
 }
 
 // ContentMeta is content metadata (produced by ingest, consumed by distribution).
@@ -172,11 +186,13 @@ type ContentMeta struct {
 	TypeMetadata []byte `json:"type_metadata"`
 }
 
-// ContentIngestedEvent is the ingestion event (published by ingest domain, subscribed by distribution).
+// ContentIngestedEvent is the ingestion event (published by ingest, subscribed by distribution).
+// Carries both the content-addressed blob list (Blobs) and the per-content arrangement (Roles).
 type ContentIngestedEvent struct {
 	ContentID   string           `json:"content_id"`
 	ContentType string           `json:"content_type"`
-	Blobs       []BlobDescriptor `json:"blobs"`
+	Blobs       []BlobDescriptor `json:"blobs"` // content-addressed layer: BlobHash(SHA-256) + BlobType + Size
+	Roles       []BlobRole       `json:"roles"` // arrangement layer: role + sort_order + business_meta
 	Timestamp   int64            `json:"timestamp"`
 }
 
@@ -205,8 +221,9 @@ type PinPlan struct {
 }
 
 // PinUpdate is a single pin/unpin instruction within a PinPlan.
+// PinBlobs and UnpinBlobs are lists of blob_hash strings — no separate
+// BlobHash field needed (pin is blob-level, list elements ARE blob hashes).
 type PinUpdate struct {
-	BlobHash   string   `json:"blob_hash"`
 	PinBlobs   []string `json:"pin_blobs"`
 	UnpinBlobs []string `json:"unpin_blobs"`
 }
@@ -236,13 +253,13 @@ type PartitionStatus struct {
 	BlobCount  int32 `json:"blob_count"`
 }
 
-// BlobLocation identifies where a blob is stored (for MetadataClient interface).
+// BlobLocation identifies where a blob is stored. BlobHash is the content-addressed
+// key (SHA-256); BackendID is "vendor:account_id" format (e.g. "115:acct_03").
+// No ContentID — blob_location is cross-content shared (same blob, same locations).
 type BlobLocation struct {
 	BlobHash  string `json:"blob_hash"`
-	Vendor    string `json:"vendor"`
-	AccountID string `json:"account_id"`
+	BackendID string `json:"backend_id"` // "vendor:account_id", e.g. "115:acct_03"
 	FileID    string `json:"file_id"`
-	ContentID string `json:"content_id,omitempty"`
 }
 
 const (
@@ -253,6 +270,7 @@ const (
 	EventNewSegmentLocation = "NEW_SEGMENT_LOCATION"
 	EventQuotaUpdate        = "QUOTA_UPDATE"
 	EventQuotaBorrow        = "QUOTA_BORROW"
+	EventContentIngested    = "CONTENT_INGESTED"
 )
 
 // Event is a generic event with a type tag and opaque payload (for SyncBroadcasterClient).

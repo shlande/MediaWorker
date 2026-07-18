@@ -59,7 +59,7 @@
 
 **网盘不可靠假设**：不信任任何单一账号、单一厂商。冗余、熔断、降级是核心骨架。
 
-**最终一致**：段位置表写入是原子事务，跨厂商副本允许秒级差异。多节点间的账号限流协调、健康状态共享均采用最终一致模型，不依赖强一致协调服务。
+**最终一致**：`blob_location` 写入是原子事务，跨厂商副本允许秒级差异。多节点间的账号限流协调、健康状态共享均采用最终一致模型，不依赖强一致协调服务。
 
 **代理回源统一**：所有网盘到客户端的数据流经过"接入层数据面"代理。接入层是**逻辑分层**——控制面集中部署，数据面下沉到 L4 节点本地。
 
@@ -111,9 +111,10 @@
               ┌──────────┴──────────────────────────────────────────┐
               │  L5 元数据服务                                       │
               │  PostgreSQL(主从) + Redis(哨兵)                      │
-              │  [存储域] MPD / 段索引 / 段位置表 / 账号健康          │
-              │  [分发域] video_popularity 热度表                    │
-              │  两域通过 video_id / segment_id 关联键解耦           │
+│  [存储域] blob / blob_location / 账号健康              │
+│  [元数据模块] content / content_blob (编排)            │
+│  [分发域] content_popularity 热度表                    │
+│  分发域通过 content_id (元数据模块) + blob_hash (storage) 关联键解耦           │
               └──────────┬──────────────────────────────────────────┘
                          │
               ┌──────────┴──────────────────────────────────────────┐
@@ -138,16 +139,16 @@
 
 分发方向和存储方向通过以下交互点协作。这些交互点是系统设计的关键解耦点。
 
-### 3.1 回源时查段位置（分发 → 存储）
+### 3.1 回源时查段位置（分发 → storage 内容寻址层）
 
 ```
-distribution 层                          storage 层
+distribution 层                          storage 层 (内容寻址层)
 L4 节点本地缓存 miss                  blob 位置表 (blob_location)
     │                                        │
-    │  GetSegmentLocations(seg_id)           │
+    │  GetBlobLocations(blob_hash)           │
     ├───────────────────────────────────────>│
-    │  [(115,acct3,fid_xxx),                │
-    │   (baidu,acct7,fid_yyy)]              │
+    │  [(115:acct_03,fid_xxx),              │
+    │   (baidu:acct_07,fid_yyy)]            │
     │<───────────────────────────────────────┤
     │                                        │
     │  选账号(VendorProfile权重)             │
@@ -156,9 +157,11 @@ L4 节点本地缓存 miss                  blob 位置表 (blob_location)
     │  流式返回客户端                        │
 ```
 
-- 分发层的 L4 节点本地缓存段位置 hot subset（由 storage 层控制面 SyncBroadcaster 推送）
-- 本地 miss 时查 storage 层的 PG 从库
+- 分发层的 L4 节点本地缓存 blob 位置 hot subset（由 storage 层控制面 SyncBroadcaster 推送，以 `blob_hash` 为 key）
+- 本地 miss 时查 storage 层的 PG 从库，单键 `blob_hash` 查询
 - 选账号逻辑用 storage 层的 VendorProfile 权重 + 健康状态 + 限流令牌（详见 [`storage/README.md §4`](storage/README.md)）
+
+> **层次说明**：storage 域采用内容寻址，`blob_hash = SHA-256(文件内容)`，全局唯一、不携带业务语义。客户端发起请求前，先经元数据模块（`content` + `content_blob` 关联表）解析"播放视频 X 的 720p 段 3"得到对应的 `blob_hash`，再用此 `blob_hash` 走分发链路。元数据模块理解 content 是什么（DASH 视频 / 图床 / PDF），把码率、段序、缩略图尺寸等业务语义编码在 `content_blob.role` / `sort_order` / `business_meta` 中。详见 [`storage/README.md §9.1`](storage/README.md) 的分层 schema。
 
 ### 3.2 入库事件通知（入库 → 分发）
 
@@ -187,23 +190,24 @@ ingest 层                                distribution 层
 
 ### 3.3 流行度反馈（分发域内部闭环）
 
-热度数据完全属于分发域，不依赖存储域。存储域只提供 `blob_hash` / `blob_hash` 作为关联键。
+热度数据完全属于分发域，不依赖 storage 域，也不依赖元数据模块。分发域通过 `content_id`（content 维度热度，与元数据模块关联）和 `blob_hash`（blob 维度本地热度，与 storage 域关联）作为双关联键。
 
 ```
-distribution 域 (内部闭环)                      storage 域
+distribution 域 (内部闭环)                    元数据模块 / storage 域
                                                   │
-  本地 gossip 热度 (30s, 分钟级)                   │
+  本地 gossip 热度 (30s, 分钟级, blob 维度)        │
   ┌─────────────────────────┐                    │
   │ 节点A热度 ──┐            │                    │
   │ 节点B热度 ──┼─> 合并视图  │                    │
   │ 节点C热度 ──┘  (取max)   │                    │
+  │ key=blob_hash             │                    │
   └─────────────────────────┘                    │
         │                                         │
         │  驱动本地逐出决策 (1min内生效)           │
         │                                         │
-        │  ReportAccess(gRPC, 异步)                │
+        │  ReportAccess(gRPC, 异步, content_id+blob_hash)
         v                                         │
-  PG video_popularity (分发域表)                  │
+  PG content_popularity (分发域表, content 维度)  │
   pg_cron 每小时重算 window_24h                   │
         │                                         │
         │  驱动 PinOrchestrator (10min重算)        │
@@ -212,18 +216,27 @@ distribution 域 (内部闭环)                      storage 域
         v                                         │
   更新本地 PinManifest                            │
                                                   │
-  ──────── 关联键: video_id / segment_id ──────────┤
-  (分发域只传 ID, 不读写存储域的段索引/段位置表)    │
+  ──────── 双关联键 ──────────────────────────────┤
+  content_id (元数据模块 content 表)              │
+  blob_hash  (storage 域 blob / blob_location)    │
+  (分发域只传 ID, 不读写其他域的表)               │
                                                   │
-  回源时: distribution 用 segment_id ─────────────┤
-  查 storage 的 blob_location                   │
+  回源时: distribution 用 blob_hash ──────────────┤
+  查 storage 的 blob_location                    │
+                                                  │
+  PinOrchestrator 决策时: 用 content_id ──────────┤
+  查元数据模块 content_blob 拿到该 content 的所有 │
+  blob + role/sort_order, 然后下发 PinPlan       │
 ```
 
-- **分钟级**：节点间 gossip 热度同步，驱动本地逐出和预取决策（延迟 < 1min）
-- **小时级**：PG `video_popularity` 的 `window_24h`，驱动控制面 PinOrchestrator 做全局 prefix/pin 决策
-- **关联键**：`video_id`（热度表主键）和 `segment_id`（回源时查段位置），两域通过 ID 解耦，不共享表
+- **分钟级**：节点间 gossip 热度同步（blob 维度），驱动本地逐出和预取决策（延迟 < 1min）
+- **小时级**：PG `content_popularity` 的 `window_24h`（content 维度），驱动控制面 PinOrchestrator 做全局 prefix/pin 决策
+- **关联键**：
+  - `content_id`（content 维度热度表主键）—— 用于 PinOrchestrator 按 content 维度决策，并查元数据模块拿该 content 的 blob 列表
+  - `blob_hash`（blob 维度本地热度 + 回源查位置）—— 用于本地缓存逐出决策和回源时查 `blob_location`
+  - 元数据模块的 `content_blob` 关联表把两个键桥接起来
 - 热度表 Schema 和 gRPC 接口详见 [`distribution/README.md §8.1`](distribution/README.md)
-- 回源查段位置（用 segment_id 关联存储域）见 [`storage/README.md §10`](storage/README.md)
+- 回源查段位置（用 `blob_hash` 关联 storage 域）见 [`storage/README.md §10`](storage/README.md)
 
 ### 3.4 账号健康传播（存储内部 → 分发）
 
@@ -335,7 +348,7 @@ prefix cache 由 PinOrchestrator 动态管理（详见 [`distribution/README.md 
      │              │ [兄弟节点 MISS]        │                   │
      │              │                       │                   │
      │              │ ★ 调用本地数据面 ★    │                   │
-     │              │ GetSegmentLocations   │                   │
+     │              │ GetBlobLocations      │                   │
      │              ├──────────────────────>│                   │
      │              │ [(115,acct3,fid_xxx), │                   │
      │              │  (baidu,acct7,fid_yyy)]│                   │
@@ -389,10 +402,11 @@ prefix cache 由 PinOrchestrator 动态管理（详见 [`distribution/README.md 
  非 L4 节点         L4 节点              元数据             115网盘
      │                   │                       │                  │
      │  FetchFromL2L4(   │                       │                  │
-     │    seg_id="abc_4")│                       │                  │
+     │    blob_hash=     │                       │                  │
+     │    "abc_4")       │                       │                  │
      ├──────────────────>│                       │                  │
      │                   │ [本地数据面接管]       │                  │
-     │                   │ GetSegmentLocations   │                  │
+     │                   │ GetBlobLocations      │                  │
      │                   ├──────────────────────>│                  │
      │                   │ [(115,acct2,fid_a),   │                  │
      │                   │  (baidu,acct5,fid_b)] │                  │
@@ -438,9 +452,10 @@ prefix cache 由 PinOrchestrator 动态管理（详见 [`distribution/README.md 
       │                   │                   │                               │
       │                   │                   │ [4. 事务写入元数据]           │
       │                   │                   │  BEGIN TRANSACTION            │
-      │                   │                   │   INSERT content              │
-      │                   │                   │   INSERT blob_index           │
+      │                   │                   │   INSERT blob (去重)          │
       │                   │                   │   INSERT blob_location (K=2)  │
+      │                   │                   │   INSERT content              │
+      │                   │                   │   INSERT content_blob         │
       │                   │                   │  COMMIT                       │
       │                   │                   ├────────────────>│             │
       │                   │                   │                 │             │
@@ -448,7 +463,7 @@ prefix cache 由 PinOrchestrator 动态管理（详见 [`distribution/README.md 
       │                   │                   │  → 分发域 PinOrchestrator 监听│
       │                   │                   │  → 按内容类型决定 pin 哪些blob│
       │                   │                   │  → 推送到区域代表节点 (异步)  │
-      │  HTTP 201 {video_id}                  │                 │             │
+      │  HTTP 201 {content_id}                  │                 │             │
       │<──────────────────┤                   │                 │             │
 ```
 
@@ -552,7 +567,7 @@ prefix cache 由 PinOrchestrator 动态管理（详见 [`distribution/README.md 
 | 接入层数据面 | 网盘抽象 + 链接池 + 限流 + 熔断 | **自研 Go**（节点子模块） | driver 接口 + 账号池 + 熔断器，context/errgroup/rate 标准库 |
 | 接入层控制面 | 账号主库 + 同步协议 + Ingest + DHT bootstrap + JWT 签发 | **自研 Go** | SyncBroadcaster 增量同步协议；DHT bootstrap 与控制面共进程，逻辑独立；JWT 签发独立 HTTP 端点 |
 | 元数据存储 | 结构化数据 | **PostgreSQL 14+** | 事务保证、JSONB 存 MPD、主从复制 |
-| 元数据缓存 | 热数据加速 | **Redis 7+ 集群（哨兵）** | MPD/段索引/账号健康缓存，自动故障转移 |
+| 元数据缓存 | 热数据加速 | **Redis 7+ 集群（哨兵）** | content 元数据 / content_blob 编排 / blob_location / 账号健康缓存，自动故障转移 |
 | 调度层 | DNS 调度 + 健康聚合 | **自研 HTTP 调度 + DNS GeoIP** | 仅负责客户端到节点的 DNS 调度，不参与节点间发现 |
 | 监控 | 指标 + 告警 | **Prometheus + Grafana** | 所有节点原生暴露 /metrics |
 | 日志 | 聚合搜索 | **Loki + Grafana** | 与 Prometheus 统一面板 |
@@ -585,9 +600,10 @@ prefix cache 由 PinOrchestrator 动态管理（详见 [`distribution/README.md 
 | **单节点总计** | ~19 TB | ~17 TB |
 
 ### 元数据存储
-- blob_index: ~5 GB（5000 万行）
+- blob: ~5 GB（5000 万行，内容寻址主表）
 - blob_location: ~8 GB（1 亿行，K=2）
-- 其他表：< 1 GB
+- content + content_blob: ~1 GB（content 主表 + 编排关联表，含 business_meta JSONB）
+- account_health / 其他表：< 1 GB
 - **合计 ~14 GB**，4C16G PG 实例 + 8G Redis 即可
 
 详细容量计算见原架构文档 §13。

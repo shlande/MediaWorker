@@ -11,6 +11,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -24,6 +25,7 @@ import (
 	kaddht "github.com/libp2p/go-libp2p-kad-dht"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 
+	"github.com/shlande/mediaworker/internal/controlplane/metadata"
 	"github.com/shlande/mediaworker/internal/controlplane/pinstrategy"
 	"github.com/shlande/mediaworker/internal/node/backhaul"
 	"github.com/shlande/mediaworker/internal/node/cache"
@@ -403,28 +405,52 @@ func (m *mockL4Fetcher) FetchFromL4Node(_ context.Context, blobHash string) (int
 	return nil, fmt.Errorf("L4 unavailable in test: %s", blobHash)
 }
 
-// mockMetadataClient implements pinstrategy.MetadataClient.
+// mockMetadataClient implements metadata.ContentMetaClient + PopularityClient + BlobStoreClient.
 type mockMetadataClient struct {
 	contentMeta *types.ContentMeta
 }
 
-func (m *mockMetadataClient) GetContentMeta(contentID string) (*types.ContentMeta, error) {
+func (m *mockMetadataClient) GetContentMeta(_ context.Context, contentID string) (*types.ContentMeta, error) {
 	if m.contentMeta != nil && m.contentMeta.ContentID == contentID {
 		return m.contentMeta, nil
 	}
 	return nil, fmt.Errorf("content %s not found", contentID)
 }
 
-func (m *mockMetadataClient) GetTopContents(_ context.Context, _ int) ([]pinstrategy.TopContent, error) {
+func (m *mockMetadataClient) GetContentBlobs(_ context.Context, _ string) ([]types.BlobDescriptor, []types.BlobRole, error) {
+	return nil, nil, nil
+}
+
+func (m *mockMetadataClient) WriteContentMeta(_ context.Context, _ *sql.Tx, _ types.ContentMeta, _ []types.BlobDescriptor, _ []types.BlobRole) error {
+	return nil
+}
+
+func (m *mockMetadataClient) GetTopContents(_ context.Context, _ int) ([]metadata.TopContent, error) {
 	return nil, nil
 }
 
-func (m *mockMetadataClient) GetSegmentLocations(_ string) ([]types.BlobLocation, error) {
-	return nil, nil
-}
-
-func (m *mockMetadataClient) GetPopularity24h(_ string) float64 {
+func (m *mockMetadataClient) GetPopularity24h(_ context.Context, _ string) float64 {
 	return 0
+}
+
+func (m *mockMetadataClient) GetBlobLocations(_ context.Context, _ string) ([]types.BlobLocation, error) {
+	return nil, nil
+}
+
+func (m *mockMetadataClient) WriteBlob(_ context.Context, _ *sql.Tx, _ []types.BlobDescriptor) error {
+	return nil
+}
+
+func (m *mockMetadataClient) WriteBlobLocations(_ context.Context, _ *sql.Tx, _ []types.BlobLocation) error {
+	return nil
+}
+
+func (m *mockMetadataClient) ReportAccountHealth(_ context.Context, _ types.Vendor, _ string, _ types.HealthState) error {
+	return nil
+}
+
+func (m *mockMetadataClient) GetAccountHealths(_ context.Context, _ types.Vendor) ([]metadata.AccountHealth, error) {
+	return nil, nil
 }
 
 // mockSyncBroadcasterClient implements pinstrategy.SyncBroadcasterClient.
@@ -836,12 +862,12 @@ func TestIntegration_Pin(t *testing.T) {
 	mc := &mockMetadataClient{
 		contentMeta: &types.ContentMeta{
 			ContentID:   "content-1",
-			ContentType: "dash",
+			ContentType: "dash_video",
 		},
 	}
 	bc := &mockSyncBroadcasterClient{}
-	po := pinstrategy.NewPinOrchestrator(mc, bc)
-	po.RegisterStrategy("dash", &pinstrategy.DashPinStrategy{})
+	po := pinstrategy.NewPinOrchestrator(mc, mc, bc)
+	po.RegisterStrategy("dash_video", &pinstrategy.DashPinStrategy{})
 
 	// Register node A's space.
 	po.OnNodeStatusReport(types.NodeStatusReport{
@@ -864,7 +890,7 @@ func TestIntegration_Pin(t *testing.T) {
 
 	// The orchestrator sends a PinPlan to node A.
 	// Manually apply the pin on node A.
-	nodeA.pinStore.ApplyPin("pin-blob-1", "init", 100)
+	nodeA.pinStore.ApplyPin("pin-blob-1", "mp4_init_segment", "init", 100)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {

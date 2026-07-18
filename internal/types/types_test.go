@@ -25,10 +25,29 @@ func roundtrip[T any](t *testing.T, v T) {
 
 func TestBlobDescriptor_roundtrip(t *testing.T) {
 	roundtrip(t, BlobDescriptor{
+		BlobHash: "abc123def456",
+		BlobType: "media",
+		Size:     1048576,
+	})
+}
+
+func TestBlobRole_roundtrip(t *testing.T) {
+	roundtrip(t, BlobRole{
 		BlobHash:  "abc123def456",
-		BlobType:  "media",
-		Size:      1048576,
-		SortOrder: 1,
+		Role:      "media",
+		SortOrder: 2,
+		BusinessMeta: map[string]any{
+			"representation_id": "720p",
+			"bitrate":           float64(1500000),
+		},
+	})
+}
+
+func TestBlobRole_omit_business_meta(t *testing.T) {
+	roundtrip(t, BlobRole{
+		BlobHash:  "blob_no_meta",
+		Role:      "original",
+		SortOrder: 0,
 	})
 }
 
@@ -45,8 +64,12 @@ func TestContentIngestedEvent_roundtrip(t *testing.T) {
 		ContentID:   "cont_002",
 		ContentType: "image",
 		Blobs: []BlobDescriptor{
-			{BlobHash: "blob_a", BlobType: "original", Size: 512000, SortOrder: 0},
-			{BlobHash: "blob_b", BlobType: "thumbnail", Size: 32000, SortOrder: 1},
+			{BlobHash: "blob_a", BlobType: "original", Size: 512000},
+			{BlobHash: "blob_b", BlobType: "thumbnail", Size: 32000},
+		},
+		Roles: []BlobRole{
+			{BlobHash: "blob_a", Role: "original", SortOrder: 0},
+			{BlobHash: "blob_b", Role: "thumbnail", SortOrder: 1},
 		},
 		Timestamp: 1700000000,
 	})
@@ -74,15 +97,14 @@ func TestPinPlan_roundtrip(t *testing.T) {
 		Seq:        1,
 		TargetNode: "node_02",
 		Updates: []PinUpdate{
-			{BlobHash: "blob_x", PinBlobs: []string{"blob_x"}, UnpinBlobs: nil},
-			{BlobHash: "blob_y", PinBlobs: nil, UnpinBlobs: []string{"blob_z"}},
+			{PinBlobs: []string{"blob_x"}, UnpinBlobs: nil},
+			{PinBlobs: nil, UnpinBlobs: []string{"blob_z"}},
 		},
 	})
 }
 
 func TestPinUpdate_roundtrip(t *testing.T) {
 	roundtrip(t, PinUpdate{
-		BlobHash:   "blob_abc",
 		PinBlobs:   []string{"blob_1", "blob_2"},
 		UnpinBlobs: []string{"blob_3"},
 	})
@@ -244,8 +266,7 @@ func TestPeerStoreEntry_roundtrip(t *testing.T) {
 func TestBlobLocation_roundtrip(t *testing.T) {
 	roundtrip(t, BlobLocation{
 		BlobHash:  "blob_loc_001",
-		Vendor:    "s3",
-		AccountID: "acct_123",
+		BackendID: "s3:acct_123",
 		FileID:    "file_456",
 	})
 }
@@ -338,13 +359,11 @@ func TestBanSignalError_Error(t *testing.T) {
 	}
 }
 
-func TestBlobLocation_WithContentID(t *testing.T) {
+func TestBlobLocation_WithBackendID(t *testing.T) {
 	loc := BlobLocation{
-		BlobHash:  "blob_with_cid",
-		Vendor:    "115",
-		AccountID: "acct_001",
+		BlobHash:  "blob_with_backend",
+		BackendID: "115:acct_001",
 		FileID:    "file_001",
-		ContentID: "cont_001",
 	}
 	data, err := json.Marshal(loc)
 	if err != nil {
@@ -355,34 +374,36 @@ func TestBlobLocation_WithContentID(t *testing.T) {
 	if err := json.Unmarshal(data, &got); err != nil {
 		t.Fatalf("json.Unmarshal: %v", err)
 	}
-	if got.ContentID != "cont_001" {
-		t.Fatalf("ContentID = %q, want %q", got.ContentID, "cont_001")
+	if got.BackendID != "115:acct_001" {
+		t.Fatalf("BackendID = %q, want %q", got.BackendID, "115:acct_001")
 	}
 }
 
-func TestBlobLocation_OldJSONWithoutContentID(t *testing.T) {
-	// Old JSON without "content_id" field — must deserialize with ContentID==""
-	oldJSON := `{"blob_hash":"old_blob","vendor":"115","account_id":"acct_001","file_id":"file_001"}`
-	var loc BlobLocation
-	if err := json.Unmarshal([]byte(oldJSON), &loc); err != nil {
-		t.Fatalf("json.Unmarshal old JSON: %v", err)
+func TestBlobLocation_BackendIDFormat(t *testing.T) {
+	// BackendID is "vendor:account_id" format — verify roundtrip with common vendor IDs
+	loc := BlobLocation{
+		BlobHash:  "old_blob",
+		BackendID: "115:acct_001",
+		FileID:    "file_001",
 	}
-	if loc.BlobHash != "old_blob" {
-		t.Fatalf("BlobHash = %q, want %q", loc.BlobHash, "old_blob")
+	data, err := json.Marshal(loc)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
 	}
-	if loc.ContentID != "" {
-		t.Fatalf("ContentID should be empty for old JSON, got %q", loc.ContentID)
+	var got BlobLocation
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("json.Unmarshal: %v", err)
+	}
+	if got.BackendID != "115:acct_001" {
+		t.Fatalf("BackendID = %q, want %q", got.BackendID, "115:acct_001")
 	}
 }
 
-func TestBlobLocation_roundtrip_with_old_fields(t *testing.T) {
-	// Ensure existing fields still roundtrip correctly without ContentID set
+func TestBlobLocation_roundtrip_with_backend(t *testing.T) {
 	roundtrip(t, BlobLocation{
 		BlobHash:  "existing_blob",
-		Vendor:    "baidu",
-		AccountID: "acct_002",
+		BackendID: "baidu:acct_002",
 		FileID:    "file_002",
-		// ContentID intentionally empty
 	})
 }
 

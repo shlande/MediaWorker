@@ -874,22 +874,25 @@ GossipSub 内置评分项 ──────────────┤
 
 ### 4.4 热度数据模型（分发域所有）
 
-热度数据完全属于分发域，不依赖存储域。存储域只提供 `blob_hash` / `blob_hash` 作为关联键。
+热度数据完全属于分发域，不依赖存储域，也不依赖元数据模块。分发域通过 `content_id` 与元数据模块关联（content 维度热度），通过 `blob_hash` 与 storage 域关联（回源查位置）。
+
+> **设计说明**：热度是 content 维度的概念（"这个视频热门"），不是 blob 维度（"这个 720p seg3 热门"无意义）。所以持久化热度表用 `content_id` 作主键；gossip 本地热度按 `blob_hash` 跟踪是为了缓存逐出（"这个 blob 的访问次数"），但 PinOrchestrator 的全局决策基于 content 维度。
 
 #### 8.1.1 持久化热度表（PG）
 
 ```sql
--- 热度表: 由分发域维护, 与存储域的 blob_index 通过 blob_hash 关联
-CREATE TABLE video_popularity (
-    blob_hash       UUID PRIMARY KEY,           -- 关联键: 与 storage 域 content.blob_hash 一致
-    request_count  BIGINT DEFAULT 0,           -- 累计请求次数
-    last_access    TIMESTAMPTZ,
-    window_24h     BIGINT DEFAULT 0,           -- 过去 24h 请求次数（pg_cron 定期清零）
-    window_1h      BIGINT DEFAULT 0            -- 过去 1h 请求次数
+-- 热度表: 由分发域维护, content 维度
+-- 关联键: content_id (与元数据模块的 content 表关联)
+CREATE TABLE content_popularity (
+    content_id      UUID PRIMARY KEY,           -- 关联键: 与元数据模块 content.content_id 一致
+    request_count   BIGINT DEFAULT 0,           -- 累计请求次数 (所有 blob 共享)
+    last_access     TIMESTAMPTZ,
+    window_24h      BIGINT DEFAULT 0,           -- 过去 24h 请求次数（pg_cron 定期清零）
+    window_1h       BIGINT DEFAULT 0            -- 过去 1h 请求次数
 );
 
--- 索引: 按 window_24h 降序, 供 PinOrchestrator 查询 top-N 热门
-CREATE INDEX idx_popularity_24h ON video_popularity (window_24h DESC);
+-- 索引: 按 window_24h 降序, 供 PinOrchestrator 查询 top-N 热门内容
+CREATE INDEX idx_popularity_24h ON content_popularity (window_24h DESC);
 ```
 
 #### 8.1.2 热度 gRPC 接口
@@ -898,47 +901,50 @@ CREATE INDEX idx_popularity_24h ON video_popularity (window_24h DESC);
 // 分发域热度服务 (可独立部署, 也可与元数据服务共进程但逻辑独立)
 service PopularityService {
     // 边缘节点异步上报访问事件
+    // blob 级别上报, 服务内部聚合到 content 维度 (按 blob_hash → content_id 反查)
     rpc ReportAccess(ReportAccessReq) returns (Empty);
-    // PinOrchestrator 查询热门/冷门视频列表
-    rpc GetTopVideos(GetTopVideosReq) returns (GetTopVideosResp);
-    rpc GetColdVideos(GetColdVideosReq) returns (GetColdVideosResp);
+    // PinOrchestrator 查询热门/冷门内容列表
+    rpc GetTopContents(GetTopContentsReq) returns (GetTopContentsResp);
+    rpc GetColdContents(GetColdContentsReq) returns (GetColdContentsResp);
 }
 
 message ReportAccessReq {
-    string blob_hash = 1;
-    int64  count = 2;          // 批量上报时可为 N
-    int64  timestamp = 3;
+    string content_id = 1;   // content 维度上报 (边缘节点已知 content_id)
+    string blob_hash = 2;    // blob 维度上报 (用于本地缓存逐出决策)
+    int64  count = 3;        // 批量上报时可为 N
+    int64  timestamp = 4;
 }
 ```
 
-#### 8.1.3 与存储域的关联
+#### 8.1.3 与存储域 / 元数据模块的关联
 
 ```
-storage 域                          distribution 域
-─────────────                       ─────────────────
-content                          video_popularity
-  blob_hash (PK)  ◄──── 关联键 ────►  blob_hash (PK)
-  mpd_xml                           
-  duration_s                        gossip 本地热度 (内存)
-                                     └── blob_hash → sliding window
-blob_index
-  blob_hash (FK)  ◄──── 关联键 ────►  (逐出决策按 blob_hash 查热度)
-  representation
-  seg_number
+元数据模块                       distribution 域
+─────────────                    ─────────────────
+content                       content_popularity
+  content_id (PK)  ◄── 关联键 ──►  content_id (PK)
+  content_type
+  type_metadata                 gossip 本地热度 (内存, blob 维度)
+                                 └── blob_hash → sliding window
 
+storage 域 (内容寻址层)
+blob                            (逐出决策按 blob_hash 查 gossip 本地热度)
+  blob_hash (PK)
+  blob_type                     (PinOrchestrator 全局决策按 content_id 查 PG 热度)
+  size_bytes
 blob_location
-  blob_hash (FK)
-  representation
-  seg_number
-  vendor
-  account_id
+  blob_hash (FK)  ◄── 关联键 ──►  (回源时按 blob_hash 查 blob_location)
+  backend_id
+  file_id
 ```
 
 **关联规则**：
-- 分发域通过 `blob_hash` 关联存储域的 `content` 和 `blob_index`
-- 分发域的逐出决策查热度时，用 `blob_hash` 查 `video_popularity`（本地 gossip 或 PG）
-- 分发域的回源决策查段位置时，用 `blob_hash` 查存储域的 `blob_location`（经 storage 域 gRPC 接口）
-- 两个域不共享表，只通过 ID 关联
+- 分发域通过 `content_id` 关联元数据模块的 `content` 表（content 维度热度，驱动 PinOrchestrator 全局决策）
+- 分发域通过 `blob_hash` 关联 storage 域的 `blob_location`（回源时按 blob 查位置）
+- 分发域的逐出决策查 gossip 本地热度时，用 `blob_hash`（blob 维度访问计数，用于缓存逐出）
+- 分发域的 PinOrchestrator 重算时，用 `content_id` 查 `content_popularity`（content 维度热度）
+- 元数据模块的 `content_blob` 关联表把 `content_id` 和 `blob_hash` 桥接起来，分发域可据此从 content 找到所有 blob 或反向
+- 三个域不共享表，只通过 ID 关联
 
 #### 8.1.4 热度数据流
 
@@ -949,28 +955,39 @@ blob_location
 │  ┌────────────────────┐                                          │
 │  │ LocalPopularity    │ → 驱动本地逐出/预取 (1min内生效)          │
 │  │ (滑动窗口, 内存)    │                                          │
+│  │ blob_hash → counts │                                          │
 │  └─────────┬──────────┘                                          │
 │            │                                                     │
 │            │ ReportAccess (gRPC, 异步批量)                        │
+│            │ 上报 content_id + blob_hash                          │
 │            v                                                     │
 │  ┌────────────────────┐                                          │
-│  │ PG video_popularity│ → pg_cron 每小时重算 window_24h           │
+│  │ PG content_popularity│ → pg_cron 每小时重算 window_24h         │
 │  │ (持久化, 小时级)    │ → 驱动 PinOrchestrator (10min重算)        │
+│  │ content_id → counts │                                          │
 │  └────────────────────┘   → PinPlan 下发 (prefix 扩展/降级)       │
 │                                                                  │
 └──────────────────────────────────────────────────────────────────┘
          │
-         │ 关联键: blob_hash (只传 ID, 不传存储域数据)
+         │ 双关联键: content_id (元数据模块) + blob_hash (storage 域)
          v
-┌─ storage 域 ─────────────────────────────────────────────────────┐
-│  blob_index / blob_location (通过 blob_hash 关联)            │
-│  回源时: distribution 用 blob_hash 查 storage 的段位置表          │
+┌─ 元数据模块 ────────────────────────────────────────────────────┐
+│  content + content_blob (通过 content_id 关联)                   │
+│  PinOrchestrator 按 content_id 查元数据模块拿到该 content 的所有  │
+│  blob + role/sort_order, 然后下发 PinPlan                        │
+└──────────────────────────────────────────────────────────────────┘
+         │
+         │ blob_hash (回源热路径)
+         v
+┌─ storage 域 (内容寻址层) ───────────────────────────────────────┐
+│  blob + blob_location (通过 blob_hash 关联)                     │
+│  回源时: distribution 用 blob_hash 查 storage 的 blob_location   │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-**与存储域流行度的关系**：
-- **gossip 热度**（分钟级）：驱动本地逐出决策和本地预取决策，延迟 < 1min
-- **PG `video_popularity`**（小时级）：驱动控制面的 PinOrchestrator 做全局 prefix/pin 决策（§9），保留为长期趋势源
+**与存储域/元数据模块流行度的关系**：
+- **gossip 热度**（分钟级，blob 维度）：驱动本地逐出决策和本地预取决策，延迟 < 1min
+- **PG `content_popularity`**（小时级，content 维度）：驱动控制面的 PinOrchestrator 做全局 prefix/pin 决策（§9），保留为长期趋势源
 - 两者不冲突：gossip 是"快但局部"，PG 是"慢但全局"
 - 两者都属于分发域，存储域不参与热度数据的读写
 

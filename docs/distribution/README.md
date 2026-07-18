@@ -66,25 +66,35 @@
 // ─── 来自 ingest 域的类型 (见 ingest/README.md) ───
 
 // BlobDescriptor: 单个 blob 的描述 (ingest 域产出, 分发域消费)
+// 对应 storage 域 blob 表 (内容寻址层)
 type BlobDescriptor struct {
-    BlobHash  string  // SHA-256 hash (内容寻址, 全局唯一)
-    BlobType  string  // "init" | "media" | "thumbnail" | "original" | "page_1" | ...
+    BlobHash  string  // = SHA-256(文件内容), 全局唯一, 跨 content 去重
+    BlobType  string  // 二进制产出类型: "mp4_init_segment" | "m4s_media_segment" | "jpeg_thumbnail" | ...
     Size      int64
-    SortOrder int
+}
+
+// BlobRole: blob 在某 content 内的编排信息 (ingest 域产出, 分发域消费)
+// 对应 storage 域 content_blob 关联表 (元数据层)
+type BlobRole struct {
+    BlobHash      string
+    Role          string          // "init" | "media" | "original" | "thumbnail" | "page" | ...
+    SortOrder     int             // 段序号 / 页码 / 缩略图尺寸升序
+    BusinessMeta  map[string]any  // {"representation_id":"720p","bitrate":1500000} 等
 }
 
 // ContentMeta: 内容元数据 (ingest 域产出, 分发域消费)
 type ContentMeta struct {
     ContentID    string
     ContentType  string  // "dash_video" | "image" | "document" | ...
-    TypeMetadata []byte  // JSON (MPD/EXIF 等, 分发域不解析)
+    TypeMetadata []byte  // JSON (MPD/EXIF 等, 分发域不解析, 由内容类型专属策略层解析)
 }
 
 // ContentIngestedEvent: 入库事件 (ingest 域发布, 分发域订阅)
 type ContentIngestedEvent struct {
     ContentID   string
     ContentType string
-    Blobs       []BlobDescriptor  // 含 BlobHash + BlobType + Size
+    Blobs       []BlobDescriptor  // 内容寻址层: BlobHash(SHA-256) + BlobType + Size
+    Roles       []BlobRole        // 编排层: blob 在该 content 内的 role + sort_order + business_meta
     Timestamp   int64
 }
 
@@ -206,7 +216,7 @@ Prefix cache 是边缘节点 NVMe 上的独立分区，存储指定内容的"优
 
 **特性**：
 - Pin 住不逐出：由 PinStore（§9.1 节点 pin 基础设施）控制 pin/unpin，常规 evict() 跳过 pinned blob
-- 内容类型无关：DASH 视频 pin init+前N段；图床 pin 缩略图；文档 pin 第一页。决策由 PinOrchestrator 策略层根据 BlobType + 流行度做出
+- 内容类型无关：DASH 视频 pin init+前N段；图床 pin 缩略图；文档 pin 第一页。决策由 PinOrchestrator 策略层根据 BlobRole（编排语义）+ 流行度做出
 - 内容来源：入库时由 PinOrchestrator 推送到区域代表节点，其他节点首次访问时被动拉取（详见 §9.2）
 
 ---
@@ -308,9 +318,11 @@ func (e *EdgeNode_NoL4) HandleBlob(w http.ResponseWriter, r *http.Request, blobH
 
 ```go
 // PrefetchStrategy: 内容类型专属的预取策略
+// 输入: 当前请求的 blob_hash + content 的完整编排信息 (blobs + roles)
+// 输出: 建议预取的 blob_hash 列表
+// 注: 不从 blob_hash 字符串解析业务语义, 而是从 BlobRole 的 role/sort_order/business_meta 获取
 type PrefetchStrategy interface {
-    // 给定当前请求的 blob_hash, 返回建议预取的 blob_hash 列表
-    SuggestPrefetch(currentBlobHash string, contentMeta ContentMeta) []string
+    SuggestPrefetch(currentBlobHash string, content ContentMeta, blobs []BlobDescriptor, roles []BlobRole) []string
 }
 ```
 
@@ -319,11 +331,11 @@ type PrefetchStrategy interface {
 2. 当前边缘回源带宽利用率 < 70%
 
 ```go
-func (e *EdgeNode) maybePrefetch(currentBlobHash string, contentMeta ContentMeta) {
-    strategy := e.prefetchStrategies[contentMeta.ContentType]
+func (e *EdgeNode) maybePrefetch(currentBlobHash string, content ContentMeta, blobs []BlobDescriptor, roles []BlobRole) {
+    strategy := e.prefetchStrategies[content.ContentType]
     if strategy == nil { return }
 
-    suggestions := strategy.SuggestPrefetch(currentBlobHash, contentMeta)
+    suggestions := strategy.SuggestPrefetch(currentBlobHash, content, blobs, roles)
     for _, blobHash := range suggestions {
         if e.cache.Has(blobHash) { continue }
         if e.backhaulUtilization() > 0.7 { return }
@@ -342,13 +354,37 @@ func (e *EdgeNode) maybePrefetch(currentBlobHash string, contentMeta ContentMeta
 
 ```go
 type DashPrefetchStrategy struct{}
-func (s *DashPrefetchStrategy) SuggestPrefetch(currentBlobHash string, meta ContentMeta) []string {
-    // 解析 blob_hash: "seg_720p_3" → representation="720p", number=3
-    rep, num := parseDashBlobHash(currentBlobHash)
-    return []string{
-        fmt.Sprintf("seg_%s_%d", rep, num+1),
-        fmt.Sprintf("seg_%s_%d", rep, num+2),
+
+func (s *DashPrefetchStrategy) SuggestPrefetch(
+    currentBlobHash string, content ContentMeta,
+    blobs []BlobDescriptor, roles []BlobRole,
+) []string {
+    // 从 BlobRole 获取当前 blob 的编排信息 (不从 blob_hash 字符串解析)
+    // 找出当前 blob 的 representation_id 和 segment_number
+    var currentRepID string
+    var currentSegNum int
+    for _, r := range roles {
+        if r.BlobHash == currentBlobHash && r.Role == "media" {
+            if v, ok := r.BusinessMeta["representation_id"].(string); ok { currentRepID = v }
+            if v, ok := r.BusinessMeta["segment_number"].(int); ok { currentSegNum = v }
+            break
+        }
     }
+    if currentRepID == "" { return nil }
+
+    // 在 roles 里找同 representation 的下 2 段
+    target1 := currentSegNum + 1
+    target2 := currentSegNum + 2
+    var result []string
+    for _, r := range roles {
+        if r.Role != "media" { continue }
+        repID, _ := r.BusinessMeta["representation_id"].(string)
+        segNum, _ := r.BusinessMeta["segment_number"].(int)
+        if repID == currentRepID && (segNum == target1 || segNum == target2) {
+            result = append(result, r.BlobHash)
+        }
+    }
+    return result
 }
 ```
 
@@ -415,12 +451,19 @@ type VideoMeta struct {
     Segments     []*SegmentCache
 }
 
+// SegmentCache: 缓存条目
+// 注意: Bitrate 不是 blob 本身的属性 (storage 域 blob 主表无此字段)
+//       而是来自 content_blob.business_meta (元数据层), 缓存时从 BlobRole 拷贝过来
 type SegmentCache struct {
     BlobHash        string
-    Bitrate      int      // bps
-    Size         int64
-    LastAccess   time.Time
-    CachedAt     time.Time
+    Bitrate         int      // bps, 来自 BlobRole.BusinessMeta["bitrate"]
+    Representation  string   // 来自 BlobRole.BusinessMeta["representation_id"], 用于按码率分组逐出
+    Size            int64
+    LastAccess      time.Time
+    CachedAt        time.Time
+
+    // 回源延迟 (见 §7.2)
+    LastFetchLatencyMs int
 }
 
 // 逐出选择
@@ -500,7 +543,10 @@ type PinStore struct {
 
 type PinEntry struct {
     BlobHash  string    // blob 的 SHA-256 hash (内容寻址, 全局唯一)
-    BlobType  string    // "init" | "media" | "thumbnail" | ...
+    BlobType  string    // 二进制产出类型: "mp4_init_segment" | "m4s_media_segment" | ...
+                        // 用于辅助判断 (如是否能流式播放); 不用于 pin 决策
+    Role      string    // 该 blob 在所属 content 内的语义角色: "init" | "media" | "thumbnail" | ...
+                        // 用于逐出时识别"哪些是 init 哪些是 media"
     Size      int64
     PinnedAt  time.Time
     Ready     bool      // blob 是否已拉取到本地 prefix 分区
@@ -511,10 +557,11 @@ type PinEntry struct {
 // 执行 pin 指令: 写入 BadgerDB + 更新内存索引/bloom filter + 追加 delta + 异步拉取 blob
 // 调用方: PinPlan 事件处理 (来自控制面策略层)
 // 注意: 每次只 pin 一个 blob (blob 级别 pin, 非 content 级别)
-func (ps *PinStore) ApplyPin(blobHash string, blobType string, size int64) {
+func (ps *PinStore) ApplyPin(blobHash string, blobType string, role string, size int64) {
     entry := &PinEntry{
         BlobHash:  blobHash,
         BlobType:  blobType,
+        Role:      role,
         Size:      size,
         PinnedAt:  time.Now(),
         Ready:     false,
@@ -529,7 +576,7 @@ func (ps *PinStore) ApplyPin(blobHash string, blobType string, size int64) {
     ps.index.Store(blobHash, entry)
 
     // 3. 追加增量 delta (供日志, 不上报)
-    ps.deltaBuffer.Append(PinDelta{Type: DELTA_PIN, BlobHash: blobHash, BlobType: blobType})
+    ps.deltaBuffer.Append(PinDelta{Type: DELTA_PIN, BlobHash: blobHash, Role: role})
 
     // 5. 异步拉取 blob 到本地 prefix 分区
     go ps.fetchPinnedBlob(blobHash)
@@ -639,7 +686,7 @@ func (ps *PinStore) Restore() error {
 策略层是**可选的优化组件**，负责计算"哪些 blob 应该被 pin"，产出**按节点差异化**的 PinPlan 下发给各节点执行。策略层不直接操作节点存储。
 
 策略层做决策需要三类输入：
-1. **内容元数据**：BlobType、blob 大小（来自 ingest 域的 ContentIngestedEvent）
+1. **内容元数据**：blob 列表（BlobHash + BlobType + Size）和 BlobRole 列表（role + sort_order + business_meta）（来自 ingest 域的 ContentIngestedEvent）
 2. **全局流行度**：window_24h（来自 distribution §8 热度表）
 3. **节点空间状态**：各节点 prefix 分区剩余空间（来自 NodeStatusReport，见 network.md §5.3）
 
@@ -647,45 +694,54 @@ func (ps *PinStore) Restore() error {
 
 ```go
 // PinStrategy: 内容类型专属的 pin 决策策略
+// 决策依据: BlobRole (编排语义, "init"/"media"/"thumbnail"/...)
+//          而非 BlobType (二进制类型, "mp4_init_segment"/...)
+// 因为"前 N 段 media"是编排语义, 不是二进制类型
 type PinStrategy interface {
     // 新内容入库时决定初始 pin
-    // blobs: 内容的 blob 列表 (含 BlobHash + BlobType + Size)
+    // blobs: 内容的 blob 列表 (内容寻址层: BlobHash + BlobType + Size)
+    // roles: blob 在该 content 内的编排信息 (role + sort_order + business_meta)
     // nodeSpaces: 各节点的空间统计 (来自 NodeStatusReport, 非全量 pin 列表)
-    DecideInitialPin(content ContentMeta, blobs []BlobDescriptor, nodeSpaces []NodeSpaceInfo) []NodePinPlan
+    DecideInitialPin(content ContentMeta, blobs []BlobDescriptor, roles []BlobRole, nodeSpaces []NodeSpaceInfo) []NodePinPlan
 
     // 定时重算时根据流行度调整 pin
+    // blobs + roles: 由 PinOrchestrator 通过 content_blob 关联表反查得到
+    //                (PinOrchestrator 内部 LRU 缓存, 减少对元数据模块的查询)
+    // popularity: 该 content 的 window_24h 访问次数
     // 返回: 按节点差异化的 pin 调整计划
-    AdjustPin(content ContentMeta, popularity int64, nodeSpaces []NodeSpaceInfo) []NodePinPlan
+    AdjustPin(content ContentMeta, blobs []BlobDescriptor, roles []BlobRole, popularity int64, nodeSpaces []NodeSpaceInfo) []NodePinPlan
 }
 
 // NodePinPlan: 针对单个节点的 pin 计划
 type NodePinPlan struct {
-    NodeID    string
-    BlobHash string
-    PinBlobs  []string   // 该节点应 pin 的 blob_hash 列表
+    NodeID     string
+    ContentID  string
+    PinBlobs   []string  // 该节点应 pin 的 blob_hash 列表
     UnpinBlobs []string  // 该节点应 unpin 的 blob_hash 列表 (增量调整)
 }
 ```
 
 **按节点差异化的决策逻辑**：
 
-策略层根据各节点上报的剩余空间，为不同节点产出不同的 pin 计划：
+策略层根据各节点上报的剩余空间，为不同节点产出不同的 pin 计划。决策基于 `BlobRole`（编排语义），而非 `BlobType`（二进制类型）：
 
 ```go
 // DASH 视频 PinStrategy 示例
 type DashPinStrategy struct{}
 
 func (s *DashPinStrategy) DecideInitialPin(
-    content ContentMeta, blobs []BlobDescriptor, nodeSpaces []NodeSpaceInfo,
+    content ContentMeta, blobs []BlobDescriptor, roles []BlobRole, nodeSpaces []NodeSpaceInfo,
 ) []NodePinPlan {
     var plans []NodePinPlan
 
-    // 1. 按内容语义选出候选 blob (所有节点共用的基础选择)
-    initBlobs := filterByBlobType(blobs, "init")
-    mediaBlobs := filterByBlobType(blobs, "media")
-    // 按 sortOrder 排序, 取前 N 段
+    // 1. 按 BlobRole 的 role 字段筛选 (不是 BlobType)
+    //    BlobRole 描述 blob 在此 content 内的编排语义: "init" / "media"
+    initBlobs := filterBlobsByRole(blobs, roles, "init")
+    mediaBlobs := filterBlobsByRole(blobs, roles, "media")
+
+    // 按 sort_order (段序号) 排序, 取前 N 段
     sort.Slice(mediaBlobs, func(i, j int) bool {
-        return mediaBlobs[i].SortOrder < mediaBlobs[j].SortOrder
+        return roleOf(mediaBlobs[i].BlobHash, roles).SortOrder < roleOf(mediaBlobs[j].BlobHash, roles).SortOrder
     })
 
     for _, ns := range nodeSpaces {
@@ -719,13 +775,34 @@ func (s *DashPinStrategy) DecideInitialPin(
         if len(pinBlobs) > 0 {
             plans = append(plans, NodePinPlan{
                 NodeID:    ns.NodeID,
-                BlobHash: content.BlobHash,
+                ContentID: content.ContentID,
                 PinBlobs:  pinBlobs,
             })
         }
     }
 
     return plans
+}
+
+// filterBlobsByRole: 从 blobs 中筛出在某 content 内 role 等于指定值的 blob
+// (BlobRole 来自元数据层, 不是 blob 本身的属性)
+func filterBlobsByRole(blobs []BlobDescriptor, roles []BlobRole, role string) []BlobDescriptor {
+    roleSet := make(map[string]bool)
+    for _, r := range roles {
+        if r.Role == role { roleSet[r.BlobHash] = true }
+    }
+    var result []BlobDescriptor
+    for _, b := range blobs {
+        if roleSet[b.BlobHash] { result = append(result, b) }
+    }
+    return result
+}
+
+func roleOf(blobHash string, roles []BlobRole) BlobRole {
+    for _, r := range roles {
+        if r.BlobHash == blobHash { return r }
+    }
+    return BlobRole{}
 }
 ```
 
@@ -734,13 +811,28 @@ func (s *DashPinStrategy) DecideInitialPin(
 ```go
 // 控制面侧: 策略调度器
 type PinOrchestrator struct {
-    metadata    MetadataClient
+    // ★ 元数据模块客户端 (编排层), 见 storage/README.md §9.2
+    //    只用 ContentMeta 服务 (GetContentMeta / GetContentBlobs), 不直接访问 storage 域 BlobStore
+    contentMeta ContentMetaClient
     broadcaster *SyncBroadcaster
     strategies  map[string]PinStrategy
 
     // 节点 pin 状态缓存 (来自各节点 30s 上报, §9.1.1)
     nodeSpaces map[string]NodeSpaceInfo  // key = node_id
     nsMu         sync.RWMutex
+
+    // ★ content_blob 缓存 (按 content_id 索引), 减少 rebalance 时对元数据模块的查询
+    //    entry: content_id → (blobs []BlobDescriptor, roles []BlobRole, lastAccess time.Time)
+    //    TTL: 30min (与 PG content_popularity 重算节奏对齐, 见 network.md §4.4)
+    //    驱逐: LRU, 上限 50000 entries (覆盖 top-5000 热门 content × 10 倍冗余)
+    blobCache   *lru.Cache[string, *ContentBlobCacheEntry]
+    bcMu        sync.RWMutex
+}
+
+type ContentBlobCacheEntry struct {
+    Blobs      []BlobDescriptor
+    Roles      []BlobRole
+    CachedAt   time.Time
 }
 
 // 接收节点上报的 pin 状态
@@ -766,18 +858,25 @@ func (po *PinOrchestrator) OnContentIngested(evt ContentIngestedEvent) {
     defer func() {
         if r := recover(); r != nil {
             log.Warn("PinOrchestrator.OnContentIngested panicked, pin skipped",
-                "blob_hash", evt.BlobHash, "panic", r)
+                "content_id", evt.ContentID, "panic", r)
         }
     }()
 
-    content, err := po.metadata.GetContentMeta(evt.BlobHash)
-    if err != nil { return }
+    // 入库事件已含 content 完整信息 (blobs + roles), 无需再查元数据模块
+    content := ContentMeta{
+        ContentID:    evt.ContentID,
+        ContentType:  evt.ContentType,
+        TypeMetadata: nil,  // 如策略层需要 type_metadata 再从元数据模块拉取
+    }
+
+    // ★ 顺带预热 blobCache: 入库事件自带 blobs + roles, 直接缓存, 避免后续 rebalance 反查
+    po.cacheContentBlobs(evt.ContentID, evt.Blobs, evt.Roles)
 
     strategy := po.strategies[content.ContentType]
     if strategy == nil { return }
 
     nodeSpaces := po.getNodeSpaces()
-    nodePlans := strategy.DecideInitialPin(content, evt.Blobs, nodeSpaces)
+    nodePlans := strategy.DecideInitialPin(content, evt.Blobs, evt.Roles, nodeSpaces)
 
     // 按节点下发差异化 PinPlan
     for _, np := range nodePlans {
@@ -808,7 +907,9 @@ func (po *PinOrchestrator) safeRebalance(ctx context.Context) {
 }
 
 func (po *PinOrchestrator) rebalance(ctx context.Context) {
-    popular, err := po.metadata.GetTopContents(ctx, 5000)
+    // 1. 从分发域热度服务 (PopularityService, 见 network.md §4.4) 拿 top-N 热门 content
+    //    注意: GetTopContents 返回的是 content 维度热度 (content_id 主键), 不是 blob 维度
+    popular, err := po.popularity.GetTopContents(ctx, 5000)
     if err != nil { return }
 
     nodeSpaces := po.getNodeSpaces()
@@ -817,22 +918,73 @@ func (po *PinOrchestrator) rebalance(ctx context.Context) {
         strategy := po.strategies[c.ContentType]
         if strategy == nil { continue }
 
-        nodePlans := strategy.AdjustPin(c, c.Window24h, nodeSpaces)
+        // 2. ★ 按 content_id 查 content_blob 拿到该 content 的所有 blob + role
+        //    (AdjustPin 需要 blobs + roles 才能算"哪些 blob 该 pin/unpin")
+        //    先查本地 blobCache (LRU), miss 时回源到元数据模块的 ContentMeta.GetContentBlobs
+        blobs, roles, err := po.getContentBlobs(ctx, c.ContentID)
+        if err != nil {
+            log.Debug("getContentBlobs failed, skip this content",
+                "content_id", c.ContentID, "err", err)
+            continue
+        }
+        if len(blobs) == 0 { continue }
+
+        // 3. 调用策略层: AdjustPin(content, blobs, roles, popularity, nodeSpaces) → []NodePinPlan
+        //    策略层内部根据 role/sort_order 选出该 content 应 pin 的 blob_hash 列表
+        nodePlans := strategy.AdjustPin(c, blobs, roles, c.Window24h, nodeSpaces)
         for _, np := range nodePlans {
             po.sendNodePinPlan(np)
         }
     }
 }
 
+// getContentBlobs: 按 content_id 查询该 content 的所有 blob + role
+// 优先读本地 LRU 缓存, miss 时回源元数据模块
+func (po *PinOrchestrator) getContentBlobs(ctx context.Context, contentID string) ([]BlobDescriptor, []BlobRole, error) {
+    // 1. 查本地缓存
+    po.bcMu.RLock()
+    if entry, ok := po.blobCache.Get(contentID); ok && time.Since(entry.CachedAt) < 30*time.Minute {
+        po.bcMu.RUnlock()
+        return entry.Blobs, entry.Roles, nil
+    }
+    po.bcMu.RUnlock()
+
+    // 2. 缓存 miss: 回源到元数据模块 (ContentMeta.GetContentBlobs, 见 storage/README.md §9.2)
+    resp, err := po.contentMeta.GetContentBlobs(ctx, GetContentBlobsReq{ContentID: contentID})
+    if err != nil {
+        return nil, nil, fmt.Errorf("contentMeta.GetContentBlobs: %w", err)
+    }
+
+    // 3. 写入缓存
+    po.cacheContentBlobs(contentID, resp.Blobs, resp.Roles)
+    return resp.Blobs, resp.Roles, nil
+}
+
+// cacheContentBlobs: 写入 blobCache (线程安全)
+func (po *PinOrchestrator) cacheContentBlobs(contentID string, blobs []BlobDescriptor, roles []BlobRole) {
+    // 深拷贝避免外部修改污染缓存
+    blobsCopy := make([]BlobDescriptor, len(blobs))
+    copy(blobsCopy, blobs)
+    rolesCopy := make([]BlobRole, len(roles))
+    copy(rolesCopy, roles)
+
+    po.bcMu.Lock()
+    po.blobCache.Add(contentID, &ContentBlobCacheEntry{
+        Blobs:    blobsCopy,
+        Roles:    rolesCopy,
+        CachedAt: time.Now(),
+    })
+    po.bcMu.Unlock()
+}
+
 // 按节点下发 PinPlan (不再全局广播, 而是定向发送)
 func (po *PinOrchestrator) sendNodePinPlan(np NodePinPlan) {
     plan := PinPlan{
-        Seq:     po.nextSeq(),
+        Seq:        po.nextSeq(),
         TargetNode: np.NodeID,  // ★ 定向下发, 非全局广播
         Updates: []PinUpdate{{
-            BlobHash:   np.BlobHash,
-            PinBlobs:    np.PinBlobs,
-            UnpinBlobs:  np.UnpinBlobs,
+            PinBlobs:   np.PinBlobs,
+            UnpinBlobs: np.UnpinBlobs,
         }},
     }
     po.broadcaster.SendToNode(np.NodeID, PIN_PLAN_UPDATE, plan)
@@ -843,26 +995,52 @@ func (po *PinOrchestrator) sendNodePinPlan(np NodePinPlan) {
 
 ```go
 // 节点侧: 接收定向 PinPlan, 委托 PinStore 基础设施执行
-func (n *EdgeNode) handlePinPlan(plan PinPlan) {
+func (n *EdgeNode) handlePinPlan(plan PinPlan, blobs []BlobDescriptor, roles []BlobRole) {
     // plan.TargetNode == 本节点 (由 SyncBroadcaster 保证)
+    // blobs + roles: 来自 ContentIngestedEvent, 随 PinPlan 一起下发或本地缓存
+    //   用于填充 PinEntry 的 BlobType 和 Role 字段
     for _, update := range plan.Updates {
-        if len(update.PinBlobs) > 0 {
-            n.pinStore.ApplyPin(update.BlobHash, update.PinBlobs)  // §9.1 基础设施
+        for _, blobHash := range update.PinBlobs {
+            blobType := findBlobType(blobHash, blobs)
+            role := findRole(blobHash, roles)
+            size := findBlobSize(blobHash, blobs)
+            n.pinStore.ApplyPin(blobHash, blobType, role, size)  // §9.1 基础设施
         }
-        if len(update.UnpinBlobs) > 0 {
-            n.pinStore.ApplyPartialUnpin(update.UnpinBlobs[0])
+        for _, blobHash := range update.UnpinBlobs {
+            n.pinStore.ApplyUnpin(blobHash)
         }
     }
+}
+
+func findBlobType(blobHash string, blobs []BlobDescriptor) string {
+    for _, b := range blobs {
+        if b.BlobHash == blobHash { return b.BlobType }
+    }
+    return ""
+}
+
+func findRole(blobHash string, roles []BlobRole) string {
+    for _, r := range roles {
+        if r.BlobHash == blobHash { return r.Role }
+    }
+    return ""
+}
+
+func findBlobSize(blobHash string, blobs []BlobDescriptor) int64 {
+    for _, b := range blobs {
+        if b.BlobHash == blobHash { return b.Size }
+    }
+    return 0
 }
 ```
 
 **内容类型 pin 策略示例**（按节点空间差异化）：
 
-| 内容类型 | BlobType 分类 | 空间充足 (>50%) | 空间一般 (20-50%) | 空间紧张 (<20%) |
+| 内容类型 | BlobRole 分类 (role 字段) | 空间充足 (>50%) | 空间一般 (20-50%) | 空间紧张 (<20%) |
 |---------|-------------|----------------|------------------|----------------|
 | DASH 视频 | init / media | init + 前 5 段 media | init + 前 2 段 media | 仅 init |
 | 图床 | original / thumbnail | thumbnail + original | thumbnail | 最小 thumbnail |
-| 文档 | page_1 / page_2 / ... | 前 3 页 | 前 2 页 | 仅 page_1 |
+| 文档 | page | 前 3 页 | 前 2 页 | 仅第 1 页 |
 
 **信息流**：
 
@@ -872,9 +1050,9 @@ func (n *EdgeNode) handlePinPlan(plan PinPlan) {
 节点 C (30s 上报) ──┘
                             │
 ContentIngestedEvent ──────>│
-                            │
+                            │ (含 blobs + roles, 顺带预热 PinOrchestrator.blobCache)
                             v
-                    PinStrategy.DecideInitialPin(content, blobs, nodeSpaces)
+                    PinStrategy.DecideInitialPin(content, blobs, roles, nodeSpaces)
                             │
                     ┌───────┼───────┐
                     v       v       v
@@ -905,23 +1083,27 @@ ContentIngestedEvent ──────>│
 入库完成
   |
   +-- 1. 控制面 PinOrchestrator 计算 prefix 计划 (动态段数)
+  |      基于 ContentIngestedEvent.Blobs + Roles, 按 role/sort_order 选出 init + 前 N 段 media
   |
 +-- 2. 主动推送: 推送到若干 L4 代表节点 (全网选 2-3 个)
 |      (worker pool 限制并发 20, 失败进 retry queue, 指数退避 3 次)
 |
 +-- 3. 其他节点 (非 L4 + 其余 L4):
          被动拉取 -- 首次请求该视频时, 从代表节点拉取 prefix 段
-         GET /prefix/{blob_hash}/{seg} from 代表节点
+         GET /prefix/{content_id}/{blob_hash} from 代表节点
          拉取后写入本地 prefix 分区
 ```
 
 ```go
 // 修订后的 prefix 推送
-func (po *PinOrchestrator) pushPrefix(ctx context.Context, blob_hash string, dashDir string) {
-    // 1. 计算该视频的 prefix 段数 (动态)
-    duration := getVideoDuration(blob_hash)
+// contentID: 内容 ID (用于路径)
+// blobs + roles: 内容的 blob 列表 + 编排信息 (用于选出 init + 前 N 段 media)
+func (po *PinOrchestrator) pushPrefix(ctx context.Context, contentID string, blobs []BlobDescriptor, roles []BlobRole) {
+    // 1. 计算该 content 的 prefix blob 列表 (动态)
+    //    基于 BlobRole 选出 init + 前 N 段 media, 不从 blob_hash 字符串解析
+    duration := getVideoDuration(contentID)
     n := computePrefixSegments(duration, DEFAULT_WINDOW)  // 入库时用默认热度
-    files := selectPrefixFiles(dashDir, n)  // init + 前 N 段
+    prefixBlobs := selectPrefixBlobs(blobs, roles, n)  // init + 前 N 段 media (按 BlobRole 筛选)
 
     // 2. 选 2-3 个 L4 代表节点 (全网, 不按区域; 后续可基于 IP 地理位置优化)
     representatives := po.scheduler.GetL4Nodes(2)  // 从 PeerStore 筛选 L4Backhaul=true, 取 2 个
@@ -932,25 +1114,36 @@ func (po *PinOrchestrator) pushPrefix(ctx context.Context, blob_hash string, das
     for _, node := range representatives {
         node := node
         g.Go(func() error {
-            return po.pushToNode(ctx, node, blob_hash, files)
-            })
+            return po.pushToNode(ctx, node, contentID, prefixBlobs)
+        })
     }
     // 失败的进 retry queue (不在入库热路径上, 异步)
     go po.retryFailed(ctx, g.Wait())
 }
 
+// selectPrefixBlobs: 基于 BlobRole 选出 init + 前 N 段 media (按 sort_order)
+func selectPrefixBlobs(blobs []BlobDescriptor, roles []BlobRole, n int) []BlobDescriptor {
+    initBlobs := filterBlobsByRole(blobs, roles, "init")
+    mediaBlobs := filterBlobsByRole(blobs, roles, "media")
+    sort.Slice(mediaBlobs, func(i, j int) bool {
+        return roleOf(mediaBlobs[i].BlobHash, roles).SortOrder < roleOf(mediaBlobs[j].BlobHash, roles).SortOrder
+    })
+    if n > len(mediaBlobs) { n = len(mediaBlobs) }
+    return append(initBlobs, mediaBlobs[:n]...)
+}
+
 // 边缘节点: 被动拉取接口
-// GET /prefix/{blob_hash}/{blobHash} -> 返回段数据 (供兄弟节点拉取)
+// GET /prefix/{content_id}/{blob_hash} -> 返回 blob 数据 (供兄弟节点拉取)
 func (e *EdgeNode) HandlePrefixPull(w http.ResponseWriter, r *http.Request) {
-    blob_hash := r.PathValue("blob_hash")
-    blobHash := r.PathValue("blobHash")
+    contentID := r.PathValue("content_id")
+    blobHash := r.PathValue("blob_hash")
     // 1. 查本地 prefix 分区
-    if data, ok := e.prefixCache.Get(blob_hash, blobHash); ok {
+    if data, ok := e.prefixCache.Get(blobHash); ok {
         w.Write(data)
         return
     }
     // 2. 本地没有 -> 回源拉取并缓存 (L4 本地回源, 非 L4 走代表节点)
-    data, err := e.fetchAndCache(blob_hash, blobHash)
+    data, err := e.fetchAndCache(blobHash)
     if err != nil {
         http.Error(w, "not found", 404)
         return
@@ -1400,7 +1593,7 @@ groups:
 
 | 涉及概念 | 文档 |
 |---------|------|
-| 段文件存储（blob_location 表）、段索引 | storage/README.md |
+| blob 存储（blob 表 + blob_location 表）、内容编排（content + content_blob） | storage/README.md |
 | 元数据服务（PostgreSQL + Redis 设计） | storage/README.md |
 | 数据面回源（Driver、BackendPool、LinkPool、CircuitBreaker） | storage/README.md |
 | Backend 抽象与链路策略控制（PolicyController 回源/上传权重） | policy/README.md |

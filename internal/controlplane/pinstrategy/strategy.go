@@ -13,36 +13,70 @@ import (
 // recovers from panics so no strategy can crash the control plane.
 type PinStrategy interface {
 	// DecideInitialPin computes the initial pin plan for newly ingested content.
-	// nodeSpaces are per-node space statistics from the most recent NodeStatusReport.
-	DecideInitialPin(content types.ContentMeta, blobs []types.BlobDescriptor, nodeSpaces []types.NodeSpaceInfo) []types.NodePinPlan
+	// blobs: content-addressed blob list (BlobHash + BlobType + Size).
+	// roles: per-content arrangement info (role + sort_order + business_meta).
+	// nodeSpaces: per-node space statistics from the most recent NodeStatusReport.
+	DecideInitialPin(content types.ContentMeta, blobs []types.BlobDescriptor, roles []types.BlobRole, nodeSpaces []types.NodeSpaceInfo) []types.NodePinPlan
 
 	// AdjustPin recomputes pin plans during periodic rebalancing using current
-	// popularity data and node space statistics.
-	AdjustPin(content types.ContentMeta, popularity int64, nodeSpaces []types.NodeSpaceInfo) []types.NodePinPlan
+	// popularity data, blobs+roles (resolved by the orchestrator via content_blob
+	// lookup), and node space statistics.
+	AdjustPin(content types.ContentMeta, blobs []types.BlobDescriptor, roles []types.BlobRole, popularity int64, nodeSpaces []types.NodeSpaceInfo) []types.NodePinPlan
 }
 
 // DashPinStrategy implements PinStrategy for DASH video content.
-// - init blobs (BlobType == "init") are always pinned to every node.
-// - media blobs (BlobType == "media") are pinned based on remaining node space:
-//
-//	> 50% free → pin up to 5 media blobs
-//	20–50% free → pin up to 2 media blobs
-//	< 20% free → only init blobs
+// It uses BlobRole.Role (not BlobType) to partition blobs:
+//   - init blobs (role="init") are always pinned to every node.
+//   - media blobs (role="media") are pinned based on remaining node space:
+//     > 50 GB free → pin up to 5 media blobs
+//     > 20 GB free → pin up to 2 media blobs
+//     ≤ 20 GB free → only init blobs
+// Sorting uses BlobRole.SortOrder (not BlobDescriptor.SortOrder).
 type DashPinStrategy struct{}
 
-// DecideInitialPin partitions blobs into init and media groups, sorts media by
-// SortOrder ascending, and assigns a per-node pin plan based on available space.
+// DecideInitialPin partitions blobs into init and media groups by role, sorts
+// media by sort_order ascending (from roles), and assigns a per-node pin plan
+// based on available space.
 func (s *DashPinStrategy) DecideInitialPin(
 	content types.ContentMeta,
 	blobs []types.BlobDescriptor,
+	roles []types.BlobRole,
 	nodeSpaces []types.NodeSpaceInfo,
 ) []types.NodePinPlan {
-	initBlobs := filterByBlobType(blobs, "init")
-	mediaBlobs := filterByBlobType(blobs, "media")
+	initBlobs := filterBlobsByRole(blobs, roles, "init")
+	mediaBlobs := filterBlobsByRole(blobs, roles, "media")
 	sort.Slice(mediaBlobs, func(i, j int) bool {
-		return mediaBlobs[i].SortOrder < mediaBlobs[j].SortOrder
+		return roleOf(mediaBlobs[i].BlobHash, roles).SortOrder < roleOf(mediaBlobs[j].BlobHash, roles).SortOrder
 	})
 
+	return s.buildNodePlans(content, initBlobs, mediaBlobs, nodeSpaces)
+}
+
+// AdjustPin recomputes the pin plan for existing content during periodic
+// rebalancing. For DASH content the logic is identical to initial pinning.
+func (s *DashPinStrategy) AdjustPin(
+	content types.ContentMeta,
+	blobs []types.BlobDescriptor,
+	roles []types.BlobRole,
+	popularity int64,
+	nodeSpaces []types.NodeSpaceInfo,
+) []types.NodePinPlan {
+	initBlobs := filterBlobsByRole(blobs, roles, "init")
+	mediaBlobs := filterBlobsByRole(blobs, roles, "media")
+	sort.Slice(mediaBlobs, func(i, j int) bool {
+		return roleOf(mediaBlobs[i].BlobHash, roles).SortOrder < roleOf(mediaBlobs[j].BlobHash, roles).SortOrder
+	})
+
+	return s.buildNodePlans(content, initBlobs, mediaBlobs, nodeSpaces)
+}
+
+// buildNodePlans computes per-node pin plans given pre-separated init and media
+// blobs and node space snapshots.
+func (s *DashPinStrategy) buildNodePlans(
+	content types.ContentMeta,
+	initBlobs, mediaBlobs []types.BlobDescriptor,
+	nodeSpaces []types.NodeSpaceInfo,
+) []types.NodePinPlan {
 	plans := make([]types.NodePinPlan, 0, len(nodeSpaces))
 	for _, ns := range nodeSpaces {
 		pinBlobs := make([]string, 0, len(initBlobs)+5)
@@ -55,16 +89,6 @@ func (s *DashPinStrategy) DecideInitialPin(
 		avail := ns.AvailableBytes
 
 		// Determine media count from available space thresholds.
-		// NodeSpaceInfo carries only AvailableBytes; we use absolute thresholds
-		// tuned to match the spec's ratio logic with typical partition sizes:
-		//   > 50 GB  → rich (init + 5 media)
-		//   > 20 GB  → medium (init + 2 media)
-		//   <= 20 GB → poor (init only)
-		// We use absolute thresholds tuned to match the spec's ratio-based logic
-		// with typical partition sizes (100 GB prefix partition):
-		//   > 50 GB → rich (5 media)
-		//   > 20 GB → medium (2 media)
-		//   <= 20 GB → poor (0 media)
 		mediaCount := 0
 		if avail > 50*1024*1024*1024 {
 			mediaCount = 5
@@ -95,26 +119,31 @@ func (s *DashPinStrategy) DecideInitialPin(
 	return plans
 }
 
-// AdjustPin recomputes the pin plan for existing content during periodic
-// rebalancing. For DASH content the logic is identical to initial pinning.
-func (s *DashPinStrategy) AdjustPin(
-	content types.ContentMeta,
-	popularity int64,
-	nodeSpaces []types.NodeSpaceInfo,
-) []types.NodePinPlan {
-	// Rebalancing for DASH content follows the same space-aware logic.
-	// The spec defers per-blob-type AdjustPin variants to the strategy
-	// implementations. For DashPinStrategy the result is identical.
-	return nil
-}
-
-// filterByBlobType returns blobs whose BlobType matches the given type.
-func filterByBlobType(blobs []types.BlobDescriptor, blobType string) []types.BlobDescriptor {
-	var result []types.BlobDescriptor
+// filterBlobsByRole returns blobs from `blobs` whose BlobHash appears in
+// `roles` with the given role string.
+func filterBlobsByRole(blobs []types.BlobDescriptor, roles []types.BlobRole, role string) []types.BlobDescriptor {
+	roleSet := make(map[string]bool, len(roles))
+	for _, r := range roles {
+		if r.Role == role {
+			roleSet[r.BlobHash] = true
+		}
+	}
+	result := make([]types.BlobDescriptor, 0, len(roleSet))
 	for _, b := range blobs {
-		if b.BlobType == blobType {
+		if roleSet[b.BlobHash] {
 			result = append(result, b)
 		}
 	}
 	return result
+}
+
+// roleOf returns the BlobRole for the given blob hash, or the zero value if
+// not found.
+func roleOf(blobHash string, roles []types.BlobRole) types.BlobRole {
+	for _, r := range roles {
+		if r.BlobHash == blobHash {
+			return r
+		}
+	}
+	return types.BlobRole{}
 }

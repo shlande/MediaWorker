@@ -25,13 +25,13 @@ func (m *mockCB) ForceClose()       { m.state = StateClosed }
 
 func newMockCB(state int) *mockCB { return &mockCB{state: state} }
 
-// mockMetadataClient implements MetadataClient for testing.
-type mockMetadataClient struct {
+// mockBlobLocationClient implements BlobLocationClient for testing.
+type mockBlobLocationClient struct {
 	locations map[string][]types.BlobLocation
 	err       error
 }
 
-func (m *mockMetadataClient) GetSegmentLocations(blobHash string) ([]types.BlobLocation, error) {
+func (m *mockBlobLocationClient) GetBlobLocations(ctx context.Context, blobHash string) ([]types.BlobLocation, error) {
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -81,11 +81,11 @@ func TestSelectForRead_selectsHealthyLowLoad(t *testing.T) {
 	ctx := context.Background()
 
 	// 2 locations for the same blob: 115:acct1 and baidu:acct2
-	mc := &mockMetadataClient{
+	mc := &mockBlobLocationClient{
 		locations: map[string][]types.BlobLocation{
 			"hash1": {
-				{Vendor: string(types.Vendor115), AccountID: "acct1", FileID: "fid1"},
-				{Vendor: string(types.VendorBaidu), AccountID: "acct2", FileID: "fid2"},
+				{BackendID: "115:acct1", FileID: "fid1"},
+				{BackendID: "baidu:acct2", FileID: "fid2"},
 			},
 		},
 	}
@@ -118,11 +118,11 @@ func TestSelectForRead_selectsHealthyLowLoad(t *testing.T) {
 func TestSelectForRead_CBOpen_skipsAccount(t *testing.T) {
 	ctx := context.Background()
 
-	mc := &mockMetadataClient{
+	mc := &mockBlobLocationClient{
 		locations: map[string][]types.BlobLocation{
 			"hash2": {
-				{Vendor: string(types.Vendor115), AccountID: "acct1", FileID: "fid1"},
-				{Vendor: string(types.VendorBaidu), AccountID: "acct2", FileID: "fid2"},
+				{BackendID: "115:acct1", FileID: "fid1"},
+				{BackendID: "baidu:acct2", FileID: "fid2"},
 			},
 		},
 	}
@@ -150,11 +150,11 @@ func TestSelectForRead_CBOpen_skipsAccount(t *testing.T) {
 func TestSelectForRead_limiterDeny_skipsAccount(t *testing.T) {
 	ctx := context.Background()
 
-	mc := &mockMetadataClient{
+	mc := &mockBlobLocationClient{
 		locations: map[string][]types.BlobLocation{
 			"hash3": {
-				{Vendor: string(types.Vendor115), AccountID: "acct1", FileID: "fid1"},
-				{Vendor: string(types.VendorBaidu), AccountID: "acct2", FileID: "fid2"},
+				{BackendID: "115:acct1", FileID: "fid1"},
+				{BackendID: "baidu:acct2", FileID: "fid2"},
 			},
 		},
 	}
@@ -180,11 +180,11 @@ func TestSelectForRead_limiterDeny_skipsAccount(t *testing.T) {
 func TestSelectForRead_concurrentLimit_skipsAccount(t *testing.T) {
 	ctx := context.Background()
 
-	mc := &mockMetadataClient{
+	mc := &mockBlobLocationClient{
 		locations: map[string][]types.BlobLocation{
 			"hash4": {
-				{Vendor: string(types.Vendor115), AccountID: "acct1", FileID: "fid1"},
-				{Vendor: string(types.VendorBaidu), AccountID: "acct2", FileID: "fid2"},
+				{BackendID: "115:acct1", FileID: "fid1"},
+				{BackendID: "baidu:acct2", FileID: "fid2"},
 			},
 		},
 	}
@@ -212,11 +212,11 @@ func TestSelectForRead_concurrentLimit_skipsAccount(t *testing.T) {
 func TestSelectForRead_allBanned_returnsError(t *testing.T) {
 	ctx := context.Background()
 
-	mc := &mockMetadataClient{
+	mc := &mockBlobLocationClient{
 		locations: map[string][]types.BlobLocation{
 			"hash5": {
-				{Vendor: string(types.Vendor115), AccountID: "acct1", FileID: "fid1"},
-				{Vendor: string(types.VendorBaidu), AccountID: "acct2", FileID: "fid2"},
+				{BackendID: "115:acct1", FileID: "fid1"},
+				{BackendID: "baidu:acct2", FileID: "fid2"},
 			},
 		},
 	}
@@ -240,11 +240,11 @@ func TestSelectForRead_allBanned_returnsError(t *testing.T) {
 func TestSelectForRead_unhealthyState_skipsAccount(t *testing.T) {
 	ctx := context.Background()
 
-	mc := &mockMetadataClient{
+	mc := &mockBlobLocationClient{
 		locations: map[string][]types.BlobLocation{
 			"hash6": {
-				{Vendor: string(types.Vendor115), AccountID: "acct1", FileID: "fid1"},
-				{Vendor: string(types.VendorBaidu), AccountID: "acct2", FileID: "fid2"},
+				{BackendID: "115:acct1", FileID: "fid1"},
+				{BackendID: "baidu:acct2", FileID: "fid2"},
 			},
 		},
 	}
@@ -271,7 +271,7 @@ func TestSelectForRead_unhealthyState_skipsAccount(t *testing.T) {
 func TestSelectForRead_noLocations_returnsError(t *testing.T) {
 	ctx := context.Background()
 
-	mc := &mockMetadataClient{
+	mc := &mockBlobLocationClient{
 		locations: map[string][]types.BlobLocation{
 			"hash1": {},
 		},
@@ -288,10 +288,10 @@ func TestSelectForRead_noLocations_returnsError(t *testing.T) {
 func TestSelectForRead_noAccountInPool_returnsError(t *testing.T) {
 	ctx := context.Background()
 
-	mc := &mockMetadataClient{
+	mc := &mockBlobLocationClient{
 		locations: map[string][]types.BlobLocation{
 			"hash1": {
-				{Vendor: string(types.Vendor115), AccountID: "nonexistent", FileID: "fid1"},
+				{BackendID: "115:nonexistent", FileID: "fid1"},
 			},
 		},
 	}
@@ -306,7 +306,7 @@ func TestSelectForRead_noAccountInPool_returnsError(t *testing.T) {
 func TestSelectForRead_metadataError_returnsError(t *testing.T) {
 	ctx := context.Background()
 	expectedErr := errors.New("metadata unavailable")
-	mc := &mockMetadataClient{err: expectedErr}
+	mc := &mockBlobLocationClient{err: expectedErr}
 	pool := NewAccountPool(mc)
 
 	_, err := pool.SelectForRead(ctx, "hash1")
@@ -320,10 +320,10 @@ func TestSelectForRead_metadataError_returnsError(t *testing.T) {
 func TestSelectForRead_doesNotCallGetLink(t *testing.T) {
 	ctx := context.Background()
 
-	mc := &mockMetadataClient{
+	mc := &mockBlobLocationClient{
 		locations: map[string][]types.BlobLocation{
 			"hash_nolink": {
-				{Vendor: string(types.Vendor115), AccountID: "acct1", FileID: "fid1"},
+				{BackendID: "115:acct1", FileID: "fid1"},
 			},
 		},
 	}
@@ -355,7 +355,7 @@ func TestSelectForRead_doesNotCallGetLink(t *testing.T) {
 
 func TestSelectK_crossVendorPriority(t *testing.T) {
 	ctx := context.Background()
-	pool := NewAccountPool(&mockMetadataClient{})
+	pool := NewAccountPool(&mockBlobLocationClient{})
 
 	// 3 accounts from vendor115, 1 from baidu — should prefer cross-vendor
 	for i := 0; i < 3; i++ {
@@ -385,7 +385,7 @@ func TestSelectK_crossVendorPriority(t *testing.T) {
 
 func TestSelectK_noHealthy_returnsError(t *testing.T) {
 	ctx := context.Background()
-	pool := NewAccountPool(&mockMetadataClient{})
+	pool := NewAccountPool(&mockBlobLocationClient{})
 
 	acct := newAccount(string(types.Vendor115), "acct1", mock.NewMockDriver(types.Vendor115, mock.MockDriverConfig{}), 3.0, rate.NewLimiter(10, 20), newMockCB(StateClosed))
 	acct.Health.Store(types.HealthState{State: "banned"})
@@ -399,7 +399,7 @@ func TestSelectK_noHealthy_returnsError(t *testing.T) {
 
 func TestSelectK_emptyPool_returnsError(t *testing.T) {
 	ctx := context.Background()
-	pool := NewAccountPool(&mockMetadataClient{})
+	pool := NewAccountPool(&mockBlobLocationClient{})
 
 	_, err := pool.SelectK(ctx, 2)
 	if err == nil {
@@ -409,7 +409,7 @@ func TestSelectK_emptyPool_returnsError(t *testing.T) {
 
 func TestSelectK_returnsAllIfLessThanK(t *testing.T) {
 	ctx := context.Background()
-	pool := NewAccountPool(&mockMetadataClient{})
+	pool := NewAccountPool(&mockBlobLocationClient{})
 
 	acct := newAccount(string(types.Vendor115), "acct1", mock.NewMockDriver(types.Vendor115, mock.MockDriverConfig{}), 3.0, rate.NewLimiter(10, 20), newMockCB(StateClosed))
 	pool.AddAccount(acct)
@@ -423,11 +423,11 @@ func TestSelectK_returnsAllIfLessThanK(t *testing.T) {
 	}
 }
 
-// ─── UploadSegment tests ───
+// ─── UploadBlob tests ───
 
 func TestUploadSegment_concurrentUpload(t *testing.T) {
 	ctx := context.Background()
-	pool := NewAccountPool(&mockMetadataClient{})
+	pool := NewAccountPool(&mockBlobLocationClient{})
 
 	d115 := mock.NewMockDriver(types.Vendor115, mock.MockDriverConfig{})
 	dBaidu := mock.NewMockDriver(types.VendorBaidu, mock.MockDriverConfig{})
@@ -439,14 +439,14 @@ func TestUploadSegment_concurrentUpload(t *testing.T) {
 	pool.AddAccount(acctBaidu)
 
 	data := []byte("test segment data")
-	err := pool.UploadSegment(ctx, "seg123", data)
+	err := pool.UploadBlob(ctx, "seg123", data)
 	if err != nil {
-		t.Fatalf("UploadSegment: unexpected error: %v", err)
+		t.Fatalf("UploadBlob: unexpected error: %v", err)
 	}
 
 	// Both accounts should have the file
 	for _, d := range []*mock.MockDriver{d115, dBaidu} {
-		fi, err := d.Get(ctx, "seg123/seg123.m4s")
+		fi, err := d.Get(ctx, "seg123/seg123.bin")
 		if err != nil {
 			t.Errorf("UploadSegment: Get on %s: %v", d.Vendor(), err)
 		}
@@ -458,19 +458,19 @@ func TestUploadSegment_concurrentUpload(t *testing.T) {
 
 func TestUploadSegment_oneAccountHealthy_usesSingleAccount(t *testing.T) {
 	ctx := context.Background()
-	pool := NewAccountPool(&mockMetadataClient{})
+	pool := NewAccountPool(&mockBlobLocationClient{})
 
 	d115 := mock.NewMockDriver(types.Vendor115, mock.MockDriverConfig{})
 
 	acct115 := newAccount(string(types.Vendor115), "acct1", d115, 3.0, rate.NewLimiter(10, 20), newMockCB(StateClosed))
 	pool.AddAccount(acct115)
 
-	err := pool.UploadSegment(ctx, "seg456", []byte("data"))
+	err := pool.UploadBlob(ctx, "seg456", []byte("data"))
 	if err != nil {
-		t.Fatalf("UploadSegment: unexpected error: %v", err)
+		t.Fatalf("UploadBlob: unexpected error: %v", err)
 	}
 
-	fi, err := d115.Get(ctx, "seg456/seg456.m4s")
+	fi, err := d115.Get(ctx, "seg456/seg456.bin")
 	if err != nil {
 		t.Errorf("UploadSegment: Get on 115: %v", err)
 	}
@@ -481,22 +481,22 @@ func TestUploadSegment_oneAccountHealthy_usesSingleAccount(t *testing.T) {
 
 func TestUploadSegment_noHealthyAccounts_returnsError(t *testing.T) {
 	ctx := context.Background()
-	pool := NewAccountPool(&mockMetadataClient{})
+	pool := NewAccountPool(&mockBlobLocationClient{})
 
 	acct := newAccount(string(types.Vendor115), "acct1", mock.NewMockDriver(types.Vendor115, mock.MockDriverConfig{}), 3.0, rate.NewLimiter(10, 20), newMockCB(StateClosed))
 	acct.Health.Store(types.HealthState{State: "banned"})
 	pool.AddAccount(acct)
 
-	err := pool.UploadSegment(ctx, "seg789", []byte("data"))
+	err := pool.UploadBlob(ctx, "seg789", []byte("data"))
 	if err == nil {
-		t.Fatal("UploadSegment: expected error when no healthy accounts, got nil")
+		t.Fatal("UploadBlob: expected error when no healthy accounts, got nil")
 	}
 }
 
 // ─── ReplaceAll / UpdateCredential / UpdateHealth / MarkBanned tests ───
 
 func TestReplaceAll(t *testing.T) {
-	mc := &mockMetadataClient{}
+	mc := &mockBlobLocationClient{}
 	pool := NewAccountPool(mc)
 
 	pool.AddAccount(newAccount(string(types.Vendor115), "old", mock.NewMockDriver(types.Vendor115, mock.MockDriverConfig{}), 3.0, rate.NewLimiter(10, 20), newMockCB(StateClosed)))
@@ -538,7 +538,7 @@ func TestReplaceAll(t *testing.T) {
 }
 
 func TestUpdateCredential(t *testing.T) {
-	mc := &mockMetadataClient{}
+	mc := &mockBlobLocationClient{}
 	pool := NewAccountPool(mc)
 
 	acct := newAccount(string(types.Vendor115), "acct1", mock.NewMockDriver(types.Vendor115, mock.MockDriverConfig{}), 3.0, rate.NewLimiter(10, 20), newMockCB(StateClosed))
@@ -553,7 +553,7 @@ func TestUpdateCredential(t *testing.T) {
 }
 
 func TestUpdateCredential_nonexistentAccount_noop(t *testing.T) {
-	mc := &mockMetadataClient{}
+	mc := &mockBlobLocationClient{}
 	pool := NewAccountPool(mc)
 
 	// Should not panic
@@ -561,7 +561,7 @@ func TestUpdateCredential_nonexistentAccount_noop(t *testing.T) {
 }
 
 func TestUpdateHealth(t *testing.T) {
-	mc := &mockMetadataClient{}
+	mc := &mockBlobLocationClient{}
 	pool := NewAccountPool(mc)
 
 	acct := newAccount(string(types.Vendor115), "acct1", mock.NewMockDriver(types.Vendor115, mock.MockDriverConfig{}), 3.0, rate.NewLimiter(10, 20), newMockCB(StateClosed))
@@ -580,7 +580,7 @@ func TestUpdateHealth(t *testing.T) {
 }
 
 func TestMarkBanned(t *testing.T) {
-	mc := &mockMetadataClient{}
+	mc := &mockBlobLocationClient{}
 	pool := NewAccountPool(mc)
 	cb := newMockCB(StateClosed)
 
@@ -599,7 +599,7 @@ func TestMarkBanned(t *testing.T) {
 }
 
 func TestMarkBanned_nonexistentAccount_noop(t *testing.T) {
-	mc := &mockMetadataClient{}
+	mc := &mockBlobLocationClient{}
 	pool := NewAccountPool(mc)
 
 	// Should not panic
@@ -607,7 +607,7 @@ func TestMarkBanned_nonexistentAccount_noop(t *testing.T) {
 }
 
 func TestMarkBanned_noCB_stillWorks(t *testing.T) {
-	mc := &mockMetadataClient{}
+	mc := &mockBlobLocationClient{}
 	pool := NewAccountPool(mc)
 
 	acct := newAccount(string(types.Vendor115), "acct1", mock.NewMockDriver(types.Vendor115, mock.MockDriverConfig{}), 3.0, rate.NewLimiter(10, 20), nil)
@@ -622,7 +622,7 @@ func TestMarkBanned_noCB_stillWorks(t *testing.T) {
 }
 
 func TestAddAccount_replacesExisting(t *testing.T) {
-	mc := &mockMetadataClient{}
+	mc := &mockBlobLocationClient{}
 	pool := NewAccountPool(mc)
 
 	a1 := newAccount(string(types.Vendor115), "acct1", mock.NewMockDriver(types.Vendor115, mock.MockDriverConfig{}), 3.0, rate.NewLimiter(10, 20), newMockCB(StateClosed))
@@ -639,7 +639,7 @@ func TestAddAccount_replacesExisting(t *testing.T) {
 }
 
 func TestNewAccountPool(t *testing.T) {
-	mc := &mockMetadataClient{}
+	mc := &mockBlobLocationClient{}
 	pool := NewAccountPool(mc)
 	if pool == nil {
 		t.Fatal("NewAccountPool: got nil")

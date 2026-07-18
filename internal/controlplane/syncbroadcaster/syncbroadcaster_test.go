@@ -79,7 +79,6 @@ func TestForwardChannel_PinPlanUpdate(t *testing.T) {
 		Seq:        42,
 		TargetNode: "node-A",
 		Updates: []types.PinUpdate{{
-			BlobHash:   "blob-hash-1",
 			PinBlobs:   []string{"blob1", "blob2"},
 			UnpinBlobs: []string{"blob3"},
 		}},

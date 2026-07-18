@@ -55,7 +55,7 @@ func TestApplyPin_IsPinned(t *testing.T) {
 
 	// Given: no pins
 	// When: ApplyPin
-	ps.ApplyPin("abc123", "init", 7)
+	ps.ApplyPin("abc123", "mp4_init_segment", "init", 7)
 
 	// Then: IsPinned returns true
 	if !ps.IsPinned("abc123") {
@@ -71,7 +71,7 @@ func TestApplyUnpin_IsPinned(t *testing.T) {
 	ps := newTestPinStore(t, fh.Fetch)
 
 	// Given: a pinned blob
-	ps.ApplyPin("abc123", "init", 7)
+	ps.ApplyPin("abc123", "mp4_init_segment", "init", 7)
 
 	// When: ApplyUnpin
 	ps.ApplyUnpin("abc123")
@@ -94,7 +94,7 @@ func TestApplyPin_Idempotent(t *testing.T) {
 	ps := newTestPinStore(t, fh.Fetch)
 
 	// Given: first ApplyPin
-	ps.ApplyPin("abc123", "init", 7)
+	ps.ApplyPin("abc123", "mp4_init_segment", "init", 7)
 	waitFetch(fh)
 
 	// When: second ApplyPin (idempotent)
@@ -103,7 +103,7 @@ func TestApplyPin_Idempotent(t *testing.T) {
 		done: make(chan struct{}),
 	}
 	// ApplyPin is idempotent — second call is no-op — so fetchFunc is NOT called again.
-	ps.ApplyPin("abc123", "init", 7) // uses internal check, not fh2
+	ps.ApplyPin("abc123", "mp4_init_segment", "init", 7) // uses internal check, not fh2
 
 	// Then: only one fetch call occurred
 	if callCount.Load() != 1 {
@@ -136,7 +136,7 @@ func TestIsReady_AfterFetch(t *testing.T) {
 	ps := newTestPinStore(t, fh.Fetch)
 
 	// Given: ApplyPin triggers async fetch
-	ps.ApplyPin("abc123", "init", 5)
+	ps.ApplyPin("abc123", "mp4_init_segment", "init", 5)
 	waitFetch(fh)
 
 	// Then: IsReady returns true (data fetched + stored)
@@ -153,7 +153,7 @@ func TestIsReady_FetchFail(t *testing.T) {
 	ps := newTestPinStore(t, fh.Fetch)
 
 	// Given: ApplyPin triggers async fetch that fails
-	ps.ApplyPin("abc123", "init", 5)
+	ps.ApplyPin("abc123", "mp4_init_segment", "init", 5)
 	<-fh.done // fetchFunc returned with error
 	time.Sleep(20 * time.Millisecond)
 
@@ -175,7 +175,7 @@ func TestFetchPinnedBlob_PanicRecovery(t *testing.T) {
 	ps := newTestPinStore(t, fh.Fetch)
 
 	// Given: ApplyPin triggers async fetch that panics
-	ps.ApplyPin("abc123", "init", 5)
+	ps.ApplyPin("abc123", "mp4_init_segment", "init", 5)
 	<-fh.done // panic recovered, fetchFunc's defers ran
 	time.Sleep(20 * time.Millisecond)
 
@@ -207,7 +207,7 @@ func TestRestore(t *testing.T) {
 	wg.Add(numBlobs)
 	for i := range numBlobs {
 		hash := fmt.Sprintf("blob-%03d", i)
-		ps1.ApplyPin(hash, "init", 100)
+		ps1.ApplyPin(hash, "mp4_init_segment", "init", 100)
 	}
 	wg.Wait()
 	time.Sleep(50 * time.Millisecond) // let remaining stores complete
@@ -248,9 +248,9 @@ func TestQuerySpace(t *testing.T) {
 	ps := newTestPinStore(t, nopFetch)
 
 	// Given: 3 pinned blobs with known sizes
-	ps.ApplyPin("hash-a", "init", 100)
-	ps.ApplyPin("hash-b", "media", 200)
-	ps.ApplyPin("hash-c", "thumbnail", 50)
+	ps.ApplyPin("hash-a", "mp4_init_segment", "init", 100)
+	ps.ApplyPin("hash-b", "video_fragment", "media", 200)
+	ps.ApplyPin("hash-c", "thumbnail", "thumbnail", 50)
 
 	// Wait for all 3 async fetch goroutines to complete.
 	for fetchCount.Load() < 3 {
@@ -276,7 +276,7 @@ func TestQuerySpace(t *testing.T) {
 func TestHandleQueryPinSpace(t *testing.T) {
 	ps := newTestPinStore(t, func(hash string) ([]byte, error) { return []byte("x"), nil })
 
-	ps.ApplyPin("hash-a", "init", 128)
+	ps.ApplyPin("hash-a", "mp4_init_segment", "init", 128)
 	// Don't wait for fetch — HandleQueryPinSpace returns space info, not Ready status.
 
 	info := ps.HandleQueryPinSpace()
