@@ -47,6 +47,10 @@ import (
 	"github.com/shlande/mediaworker/internal/shared/identity"
 	sjwt "github.com/shlande/mediaworker/internal/shared/jwt"
 	"github.com/shlande/mediaworker/internal/types"
+
+	// T20 — metrics package (added at end of import block to avoid merge
+	// conflicts with T15/T18's parallel edits in this file).
+	"github.com/shlande/mediaworker/internal/node/monitor"
 )
 
 // ---------------------------------------------------------------------------
@@ -110,7 +114,13 @@ func main() {
 	if err := ps.Restore(); err != nil {
 		log.Fatalf("restore peerstore: %v", err)
 	}
-	logger.Info("peerstore restored", "path", cfg.Node.Libp2p.PeerStore.Path)
+	gcCtx, gcCancel := context.WithCancel(context.Background())
+	defer gcCancel()
+	ps.StartValueLogGC(gcCtx, cfg.Node.Libp2p.PeerStore.ParsedGCInterval)
+	logger.Info("peerstore restored",
+		"path", cfg.Node.Libp2p.PeerStore.Path,
+		"gc_interval", cfg.Node.Libp2p.PeerStore.ParsedGCInterval.String(),
+	)
 
 	// -------------------------------------------------------------------
 	// 4. Extract Ed25519 private key from libp2p key
@@ -174,15 +184,21 @@ func main() {
 	}
 
 	// -------------------------------------------------------------------
-	// 8. libp2p host
+	// 8. libp2p host (T15: NAT traversal gated by node.libp2p.nat_traversal)
 	// -------------------------------------------------------------------
-	h, err := libp2phost.NewEdgeHost(nodeIdentity, cfg.Node.Libp2p.Listen, pskBytes, gater)
+	natOpts := libp2phost.ResolveNATOptions(
+		cfg.Node.Libp2p.NATTraversal.AutoNAT,
+		cfg.Node.Libp2p.NATTraversal.AutoRelay,
+		cfg.Node.Libp2p.NATTraversal.DCUtR,
+	)
+	h, err := libp2phost.NewEdgeHostWithNAT(nodeIdentity, cfg.Node.Libp2p.Listen, pskBytes, gater, natOpts)
 	if err != nil {
 		log.Fatalf("create libp2p host: %v", err)
 	}
 	logger.Info("libp2p host started",
 		"peer_id", h.ID().ShortString(),
 		"addrs", logAddrs(h),
+		"nat_explicit", natOpts.Explicit,
 	)
 
 	// -------------------------------------------------------------------
@@ -202,6 +218,17 @@ func main() {
 	)
 
 	// -------------------------------------------------------------------
+	// 10a. Metrics (T20). Constructed once per process; mounted on the HTTP
+	// mux alongside /blob (plan line 275 — no separate port). Auth: NONE
+	// — /metrics is reachable from the same network as /blob. This is the
+	// documented intranet assumption: edge-node is deployed behind a
+	// network ACL that restricts port 8080 to the operator network and
+	// the Prometheus scraper. Do NOT expose /metrics to the public
+	// internet without an auth proxy.
+	// -------------------------------------------------------------------
+	metrics := monitor.NewMetrics()
+
+	// -------------------------------------------------------------------
 	// 11. JWT client — request initial capability JWT from control plane
 	// -------------------------------------------------------------------
 	jwtClient := nodejwt.NewJWTClient(edPriv, nodeIdentity.PeerID, cfg.Node.JWTService.Endpoint, types.NodeCapabilities{
@@ -214,8 +241,10 @@ func main() {
 	jwtResp, err := jwtClient.RequestJWTWithRetry(rootCtx)
 	if err != nil {
 		logger.Error("initial JWT request failed (entering degraded mode)", "err", err)
+		metrics.RecordJWTInitialFailure()
 	} else {
 		logger.Info("JWT obtained", "refresh_before", jwtResp.RefreshBefore)
+		metrics.RecordJWTInitialSuccess()
 	}
 
 	// -------------------------------------------------------------------
@@ -227,7 +256,8 @@ func main() {
 	go runJWTRefreshLoop(rootCtx, jwtClient, ed25519.PublicKey(cpPubKey),
 		cfg.Node.JWTService.ParsedRefreshInterval,
 		cfg.Node.JWTService.ParsedRefreshBeforeExpiry,
-		logger)
+		logger,
+		metrics)
 
 	// -------------------------------------------------------------------
 	// 12. JWT refresh push handler (/edge/jwt-refresh/1.0.0)
@@ -258,31 +288,50 @@ func main() {
 	}
 	bootstrapAddrs := parseBootstrapAddrs(cfg.Node.Libp2p.DHT.BootstrapPeers)
 
+	advertiseInterval := cfg.Node.Libp2p.DHT.ParsedAdvertiseInterval
 	disc := dht.NewEdgeDiscovery(h, ps, bootstrapAddrs,
-		cfg.Node.Libp2p.DHT.Namespace, ttl, dhtMode)
+		cfg.Node.Libp2p.DHT.Namespace, ttl, advertiseInterval, dhtMode)
 	if err := disc.Start(rootCtx); err != nil {
 		log.Fatalf("start edge discovery: %v", err)
 	}
 	logger.Info("DHT edge discovery started",
 		"namespace", cfg.Node.Libp2p.DHT.Namespace,
 		"mode", cfg.Node.Libp2p.DHT.Mode,
+		"advertise_ttl", ttl.String(),
+		"advertise_interval", advertiseInterval.String(),
 	)
 
 	// -------------------------------------------------------------------
-	// 14. Cache — MemoryIndex + WarmCache
+	// 14. Cache — MemoryIndex + WarmCache (T15: gated by edge.warm_cache.enabled)
 	// -------------------------------------------------------------------
 	memIndex := cache.NewMemoryIndex()
-	warmCache := cache.NewWarmCache(
-		cfg.Edge.WarmCache.Path,
-		int64(cfg.Edge.WarmCache.SizeGB)*1_000_000_000,
-		memIndex,
-		nil, // PinChecker — wired below via pin store
-		nil, // PopSource — wired below via GossipSub
-	)
-	logger.Info("warm cache initialized",
-		"path", cfg.Edge.WarmCache.Path,
-		"max_size_gb", cfg.Edge.WarmCache.SizeGB,
-	)
+	var warmCache *cache.WarmCache
+	if cfg.Edge.WarmCache.Enabled {
+		warmCache = cache.NewWarmCache(
+			cfg.Edge.WarmCache.Path,
+			int64(cfg.Edge.WarmCache.SizeGB)*1_000_000_000,
+			memIndex,
+			nil, // PinChecker — wired below via pin store
+			nil, // PopSource — wired below via GossipSub
+		)
+		logger.Info("warm cache initialized",
+			"path", cfg.Edge.WarmCache.Path,
+			"max_size_gb", cfg.Edge.WarmCache.SizeGB,
+		)
+	} else {
+		logger.Info("warm cache disabled (edge.warm_cache.enabled=false)")
+	}
+
+	// Cold cache: not constructed in main.go (no on-disk store wiring yet),
+	// but we declare the configured state for operator visibility.
+	if cfg.Edge.ColdCache.Enabled {
+		logger.Info("cold cache configured (construction deferred — no on-disk store yet)",
+			"path", cfg.Edge.ColdCache.Path,
+			"max_size_gb", cfg.Edge.ColdCache.SizeGB,
+		)
+	} else {
+		logger.Info("cold cache disabled (edge.cold_cache.enabled=false)")
+	}
 
 	// -------------------------------------------------------------------
 	// 15. ICP handlers — register stream protocols for sibling cache
@@ -302,36 +351,49 @@ func main() {
 	logger.Info("hash ring created", "replicas", cfg.HashRing.Replicas)
 
 	// -------------------------------------------------------------------
-	// 17. Pin store
+	// 17. Pin store (T15: gated by edge.prefix_cache.enabled)
 	// -------------------------------------------------------------------
-	pinStore, err := pinstore.NewPinStore(
-		cfg.Edge.PrefixCache.Path+".pin.db",
-		cfg.Edge.PrefixCache.Path,
-		int64(cfg.Edge.PrefixCache.SizeGB)*1_000_000_000,
-		func(blobHash string) ([]byte, error) {
-			data, ok := warmCache.Get(blobHash)
-			if !ok {
-				return nil, fmt.Errorf("blob %s not in warm cache", blobHash)
-			}
-			return data, nil
-		},
-	)
-	if err != nil {
-		log.Fatalf("create pin store: %v", err)
+	var pinStore *pinstore.PinStore
+	if cfg.Edge.PrefixCache.Enabled {
+		ps2, err := pinstore.NewPinStore(
+			cfg.Edge.PrefixCache.Path+".pin.db",
+			cfg.Edge.PrefixCache.Path,
+			int64(cfg.Edge.PrefixCache.SizeGB)*1_000_000_000,
+			func(blobHash string) ([]byte, error) {
+				if warmCache == nil {
+					return nil, fmt.Errorf("blob %s not in warm cache (warm cache disabled)", blobHash)
+				}
+				data, ok := warmCache.Get(blobHash)
+				if !ok {
+					return nil, fmt.Errorf("blob %s not in warm cache", blobHash)
+				}
+				return data, nil
+			},
+		)
+		if err != nil {
+			log.Fatalf("create pin store: %v", err)
+		}
+		if err := ps2.Restore(); err != nil {
+			logger.Error("pin store restore failed (continuing with empty index)", "err", err)
+		}
+		pinStore = ps2
+		logger.Info("pin store initialized",
+			"prefix_path", cfg.Edge.PrefixCache.Path,
+			"max_size_gb", cfg.Edge.PrefixCache.SizeGB,
+		)
+	} else {
+		logger.Info("prefix cache disabled (edge.prefix_cache.enabled=false) — pin store not built, syncbroadcaster PinPlan handler is no-op")
 	}
-	if err := pinStore.Restore(); err != nil {
-		logger.Error("pin store restore failed (continuing with empty index)", "err", err)
-	}
-	logger.Info("pin store initialized",
-		"prefix_path", cfg.Edge.PrefixCache.Path,
-		"max_size_gb", cfg.Edge.PrefixCache.SizeGB,
-	)
 
 	// -------------------------------------------------------------------
 	// 18. SyncBroadcaster client — receive PinPlan from control plane
 	// -------------------------------------------------------------------
 	_ = nodesync.NewClient(h, func(plan types.PinPlan) {
-		// PinPlan arrives without blob metadata; ApplyPin tolerates empty blobType/role.
+		if pinStore == nil {
+			logger.Debug("syncbroadcaster PinPlan received but prefix cache disabled — skipping",
+				"seq", plan.Seq, "target_node", plan.TargetNode)
+			return
+		}
 		nodepinstrategy.HandlePinPlan(plan, pinStore, nil, nil)
 	}, nil)
 	logger.Info("syncbroadcaster client registered",
@@ -364,19 +426,23 @@ func main() {
 	//     []*cache.VideoMeta shape that Evict expects (one VideoMeta per blob
 	//     hash with a single SegmentMeta carrying the same hash so Evict's
 	//     index.Get(seg.BlobHash) lookup in evict.go:80 succeeds).
-	warmCache.SetPinChecker(pinStore.IsPinned)
-	warmCache.SetPopSource(func() []*cache.VideoMeta {
-		heat := mergedPop.Snapshot()
-		out := make([]*cache.VideoMeta, 0, len(heat))
-		for h, p := range heat {
-			out = append(out, &cache.VideoMeta{
-				BlobHash:   h,
-				Popularity: p,
-				Segments:   []*cache.SegmentMeta{{BlobHash: h}},
-			})
+	if warmCache != nil {
+		if pinStore != nil {
+			warmCache.SetPinChecker(pinStore.IsPinned)
 		}
-		return out
-	})
+		warmCache.SetPopSource(func() []*cache.VideoMeta {
+			heat := mergedPop.Snapshot()
+			out := make([]*cache.VideoMeta, 0, len(heat))
+			for h, p := range heat {
+				out = append(out, &cache.VideoMeta{
+					BlobHash:   h,
+					Popularity: p,
+					Segments:   []*cache.SegmentMeta{{BlobHash: h}},
+				})
+			}
+			return out
+		})
+	}
 
 	// Receive loop: process incoming gossip popularity updates so the local
 	// merged view stays fresh. Exits when rootCtx is cancelled.
@@ -433,6 +499,11 @@ func main() {
 		logger.Info("backhaul manager created (edge mode, no L4)")
 	}
 
+	// T20 — wire the metrics instance into the backhaul manager so
+	// HandleBlobL4/NoL4 can increment edge_cache_request_total +
+	// edge_cache_hit_total + edge_peer_request_total + edge_peer_hit_total.
+	backhaulMgr.SetMetrics(metrics)
+
 	// -------------------------------------------------------------------
 	// 21. Edge router — hash-ring routing with proxy fallback
 	// -------------------------------------------------------------------
@@ -459,6 +530,10 @@ func main() {
 		}
 	})
 
+	// T20 — /metrics endpoint on the same port as /blob. No auth — see
+	// step 10a for the intranet deployment assumption.
+	mux.Handle("GET /metrics", metrics.HTTPHandler())
+
 	httpSrv := &http.Server{
 		Addr:    httpListen,
 		Handler: mux,
@@ -483,8 +558,10 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 
-	if err := pinStore.Close(); err != nil {
-		logger.Error("pin store close error", "err", err)
+	if pinStore != nil {
+		if err := pinStore.Close(); err != nil {
+			logger.Error("pin store close error", "err", err)
+		}
 	}
 	if err := ps.Close(); err != nil {
 		logger.Error("peerstore close error", "err", err)
@@ -540,10 +617,16 @@ type warmCacheBlobStore struct {
 }
 
 func (s warmCacheBlobStore) Has(blobHash string) bool {
+	if s.wc == nil {
+		return false
+	}
 	return s.wc.Has(blobHash)
 }
 
 func (s warmCacheBlobStore) Get(blobHash string) (io.ReadCloser, error) {
+	if s.wc == nil {
+		return nil, fmt.Errorf("warm cache disabled")
+	}
 	data, ok := s.wc.Get(blobHash)
 	if !ok {
 		return nil, fmt.Errorf("blob %s not in warm cache", blobHash)
@@ -611,10 +694,16 @@ type backhaulWarmCache struct {
 }
 
 func (c backhaulWarmCache) Get(blobHash string) ([]byte, bool) {
+	if c.wc == nil {
+		return nil, false
+	}
 	return c.wc.Get(blobHash)
 }
 
 func (c backhaulWarmCache) Put(blobHash string, data []byte, bitrate int) error {
+	if c.wc == nil {
+		return fmt.Errorf("warm cache disabled")
+	}
 	return c.wc.Put(blobHash, data, bitrate)
 }
 
@@ -719,8 +808,10 @@ func parseBootstrapAddrs(addrs []string) []peer.AddrInfo {
 // its desired lead time via the `refresh_before_expiry` YAML field, which the
 // operator is expected to align with the CP's `RefreshBeforeSeconds` policy.
 //
-// On request failure: logs at Error and continues the loop (NO panic/Fatal —
-// consistent with the initial-failure degraded mode). The goroutine exits when
+// On request failure: logs at Error, increments edge_jwt_refresh_failure_total,
+// and continues the loop (NO panic/Fatal — consistent with the initial-failure
+// degraded mode). On success, increments edge_jwt_refresh_success_total and
+// updates edge_jwt_refresh_last_success_timestamp. The goroutine exits when
 // ctx is cancelled (process shutdown via rootCtx).
 func runJWTRefreshLoop(
 	ctx context.Context,
@@ -728,6 +819,7 @@ func runJWTRefreshLoop(
 	cpPubKey ed25519.PublicKey,
 	refreshInterval, refreshBeforeExpiry time.Duration,
 	logger *slog.Logger,
+	metrics *monitor.Metrics,
 ) {
 	// Fallbacks: if config produced zero (e.g. loader path bypassed), use 5m.
 	if refreshInterval <= 0 {
@@ -766,8 +858,15 @@ func runJWTRefreshLoop(
 
 		if _, err := jwtClient.RequestJWT(ctx); err != nil {
 			logger.Error("jwt refresh request failed", "err", err)
+			if metrics != nil {
+				metrics.RecordJWTRefreshFailure()
+			}
 			continue
 		}
 		logger.Info("jwt refreshed")
+		if metrics != nil {
+			metrics.RecordJWTRefreshSuccess()
+			metrics.SetJWTRefreshLastTS(time.Now().Unix())
+		}
 	}
 }
