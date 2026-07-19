@@ -1,13 +1,24 @@
 package jwt
 
 import (
+	"encoding/json"
 	"fmt"
+	"log/slog"
+	"time"
 
 	"github.com/dgraph-io/badger/v4"
 	"github.com/shlande/mediaworker/internal/types"
 )
 
 const whitelistKeyPrefix = "w:"
+
+// WhitelistEntry is the persisted metadata for a single whitelist peer.
+// The JSON-serialized form is stored as the BadgerDB value.
+type WhitelistEntry struct {
+	PeerID  string    `json:"peer_id"`
+	AddedAt time.Time `json:"added_at"`
+	AddedBy string    `json:"added_by"`
+}
 
 // WhitelistStore persists L4 whitelist PeerId entries to BadgerDB.
 // It mirrors the in-memory PeerIdSet, allowing the whitelist to survive
@@ -39,11 +50,20 @@ func makeWhitelistKey(peerID types.PeerId) []byte {
 	return []byte(whitelistKeyPrefix + string(peerID))
 }
 
-// Add persists a PeerId to the whitelist.
-func (s *WhitelistStore) Add(peerID types.PeerId) error {
+// Add persists a PeerId to the whitelist with metadata about who added it.
+func (s *WhitelistStore) Add(peerID types.PeerId, addedBy string) error {
+	entry := WhitelistEntry{
+		PeerID:  string(peerID),
+		AddedAt: time.Now(),
+		AddedBy: addedBy,
+	}
+	val, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("whitelist add marshal: %w", err)
+	}
 	key := makeWhitelistKey(peerID)
 	return s.db.Update(func(txn *badger.Txn) error {
-		return txn.Set(key, []byte{1})
+		return txn.Set(key, val)
 	})
 }
 
@@ -66,9 +86,11 @@ func (s *WhitelistStore) Contains(peerID types.PeerId) bool {
 	return err == nil
 }
 
-// ListAll returns all PeerIds currently in the whitelist.
-func (s *WhitelistStore) ListAll() ([]types.PeerId, error) {
-	var peers []types.PeerId
+// ListAll returns all whitelist entries with their metadata.
+// Legacy entries (value == []byte{1}) are returned with zero AddedAt and empty AddedBy.
+// Corrupt JSON values are returned with empty metadata and a warning log; the list is not aborted.
+func (s *WhitelistStore) ListAll() ([]WhitelistEntry, error) {
+	var entries []WhitelistEntry
 	err := s.db.View(func(txn *badger.Txn) error {
 		opts := badger.DefaultIteratorOptions
 		opts.Prefix = []byte(whitelistKeyPrefix)
@@ -78,16 +100,37 @@ func (s *WhitelistStore) ListAll() ([]types.PeerId, error) {
 		for it.Rewind(); it.Valid(); it.Next() {
 			item := it.Item()
 			key := item.Key()
-			// Strip prefix to get the PeerId string.
-			peerID := types.PeerId(string(key[len(whitelistKeyPrefix):]))
-			peers = append(peers, peerID)
+			peerID := string(key[len(whitelistKeyPrefix):])
+
+			entry := WhitelistEntry{PeerID: peerID}
+
+			val, getErr := item.ValueCopy(nil)
+			if getErr != nil {
+				slog.Warn("whitelist listall get value error, returning empty metadata",
+					"peer_id", peerID, "err", getErr)
+				entries = append(entries, entry)
+				continue
+			}
+
+			// Legacy format: single byte 0x01 (no metadata).
+			if len(val) == 1 && val[0] == 1 {
+				entries = append(entries, entry)
+				continue
+			}
+
+			if err := json.Unmarshal(val, &entry); err != nil {
+				slog.Warn("whitelist listall corrupt json, returning empty metadata",
+					"peer_id", peerID, "err", err)
+				entry = WhitelistEntry{PeerID: peerID}
+			}
+			entries = append(entries, entry)
 		}
 		return nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("whitelist listall: %w", err)
 	}
-	return peers, nil
+	return entries, nil
 }
 
 // Restore loads all whitelist entries from BadgerDB into the in-memory
