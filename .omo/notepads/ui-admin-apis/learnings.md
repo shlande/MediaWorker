@@ -398,3 +398,12 @@ auditlog failure path audit: Added Result/Reason to AuditEntry, extended Log(pee
 - sjwt.VerifyJWTAnyPeerID uses WALL CLOCK for expiry — an "expired" test token must use time.Now()-relative exp, not the injected testNow clock (caught as a failing test).
 - Concurrent agent mid-session `git checkout` swept my uncommitted edits to backhaul.go AND peerscorer.go (new files + l4.go survived). Symptom: undefined-method build failures on code I had just verified. Re-apply + re-verify; pathspec commit protects final state.
 - Package adminapi is HOT: todo-46 agent landed backhaul_handler_test.go mid-task with a colliding fakeBackhaulStats name — rename on collision (mine → fakeStatusBackhaul).
+
+## [2026-07-20T20:30Z] Task: todo-52
+- Overview aggregation: errgroup (golang.org/x/sync v0.20.0) is already a DIRECT dep — no go.mod change needed. Flag-based degradation (all goroutines return nil) makes `_ = g.Wait()` correct; document the invariant or it looks like an oversight.
+- RACE TRAP: N Prom-field goroutines sharing ONE failure flag is a data race — caught only by `-race`, not by plain go test. Shared flag → atomic.Bool; single-writer flags stay plain. Always run dashboard/aggregation handlers with -race.
+- Plan's backhaul success metric names (storage_access_backhaul_success_total/_request_total) DO NOT EXIST in internal/node/monitor/metrics.go — only edge_backhaul_{bytes_total,bandwidth_bytes,capacity_bytes}. Raw QueryScalar per plan fallback yields empty vector → null (designed partial behavior). Verified-before-writing per task instruction.
+- promclient.go was OUT of task scope → raw QueryScalar consts (success-rate, capacity) live in overview_handler.go; *PromClient satisfies OverviewPromReader unchanged.
+- hot_contents = todo-14 ListContents(sort=popularity, pageSize=8) reuse — one SQL query covers title/type/window_24h/replicas_have; no new metadata query needed beyond AccountHealthRate.
+- nodeOnlineMaxAge (60s) already existed in quota_handler.go (todo 53) — reused, same package; don't redeclare.
+- -race also surfaces foreign in-flight breakage in the shared adminapi package; two transient accounts-agent breakages (missing time import, then RegisterAccountsRoutes signature flip 2-arg→4-arg) self-resolved in 30-120s each. Poll, never drive-by fix. TestVendorRules_Matrix failure at commit time is foreign (vendorrules.go, todo 26/58).

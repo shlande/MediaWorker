@@ -53,6 +53,13 @@ func key(vendor types.Vendor, accountID, fileID string) string {
 type LinkPool struct {
 	mu    sync.Mutex
 	cache *lru.Cache[string, *CachedLink]
+
+	// requests counts every GetOrFetch call; hits counts calls served from a
+	// fresh cached entry. Atomics (not mu-guarded) so HitRate reads never
+	// contend with the hot GetOrFetch path. storage/monitor counters are not
+	// readable back, so the pool keeps its own counters for the admin API.
+	requests atomic.Int64
+	hits     atomic.Int64
 }
 
 // NewLinkPool creates a LinkPool with the given maximum entries.
@@ -95,6 +102,8 @@ func (lp *LinkPool) GetOrFetch(
 ) (*types.DownloadLink, error) {
 	k := key(vendor, accountID, fileID)
 
+	lp.requests.Add(1)
+
 	lp.mu.Lock()
 	cached, ok := lp.cache.Get(k)
 	lp.mu.Unlock()
@@ -104,6 +113,7 @@ func (lp *LinkPool) GetOrFetch(
 		staleCutoff := cached.ExpireAt.Add(-staleHardLimit)
 
 		if now.Before(staleCutoff) {
+			lp.hits.Add(1)
 			// Link has plenty of remaining lifetime.
 			// If it is within the refresh window, try a background refresh.
 			refreshCutoff := cached.ExpireAt.Add(-refreshWindowStart)
@@ -184,4 +194,14 @@ func (lp *LinkPool) Len() int {
 	lp.mu.Lock()
 	defer lp.mu.Unlock()
 	return lp.cache.Len()
+}
+
+// HitRate returns hits/requests over the pool's lifetime. Zero requests yield
+// 0 (never NaN — the value is JSON-marshalled by the admin API).
+func (lp *LinkPool) HitRate() float64 {
+	reqs := lp.requests.Load()
+	if reqs == 0 {
+		return 0
+	}
+	return float64(lp.hits.Load()) / float64(reqs)
 }

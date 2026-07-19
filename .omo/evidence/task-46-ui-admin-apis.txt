@@ -1,0 +1,62 @@
+Task: todo-46 — GET /v1/backhaul (L4 限定，非 L4→409)
+Date: 2026-07-20
+Plan: .omo/plans/ui-admin-apis.md lines 510-516
+
+SCOPE
+- internal/node/adminapi/backhaul_handler.go (new, 124 pure LOC)
+- internal/node/adminapi/backhaul_handler_test.go (new)
+- internal/storage/linkpool/pool.go (+atomic hits/requests counters, +HitRate())
+- internal/storage/linkpool/pool_hitrate_test.go (new)
+
+DESIGN
+- RegisterBackhaulRoutes(srv *Server, deps BackhaulDeps) — D1-compliant, no main.go
+  edit (todo 49 consolidates mounts).
+- BackhaulDeps groups all 5 inputs (L4Enabled, BackhaulCapacityMbps, Stats,
+  Linkpool, Pool) — keeps the registration call at 2 params (>3-param smell).
+- Narrow interfaces defined in adminapi: BackhaulStatsReader (Stats24h +
+  BackhaulUtilization, todo 25 signatures), LinkpoolReader (Len + HitRate),
+  AccountSnapshotter (SnapshotAccounts). *backhaul.BackhaulManager,
+  *linkpool.LinkPool, *accountpool.AccountPool satisfy them directly.
+- 409 wording locked verbatim: {"error":"node is not L4; backhaul unavailable"}.
+- used_bps = BackhaulUtilization() * 8 (returns bytes/sec; contract is bits/sec).
+- capacity_bps = backhaul_capacity_mbps * 1e6; 0 -> null (*int64).
+- qps.used = null with in-code comment "令牌桶无回读，v1 不报 used" (Limiter
+  interface has no token read-back); qps.limit from Driver.RateLimitConfig().QPS.
+- health = Account.Health.Load().(types.HealthState).State; unset -> "unknown".
+- circuit = CB.State() int mapped closed|half_open|open; nil CB -> "closed"
+  (no breaker wired = effectively closed); out-of-range -> "unknown".
+- pool == nil (L4 but snapshot not yet arrived) -> accounts=[] (empty JSON
+  array, locked via raw-body assertion `"accounts":[]`).
+- stats/linkpool nil -> zero values / null linkpool block (documented degrade).
+- No fabricated used-qps; SelectForRead untouched; main.go untouched.
+
+LINKPOOL COUNTERS
+- storage/monitor Counters are not readable back, so LinkPool keeps its own
+  atomic.Int64 hits/requests (atomics, not mu-guarded — HitRate reads never
+  contend with the hot GetOrFetch path).
+- requests incremented on every GetOrFetch; hits only when served from a fresh
+  cached entry (before staleHardLimit). Miss / stale / driver-error = not hit.
+- HitRate() returns 0 on zero requests — never NaN (value is JSON-marshalled).
+- Len() already existed; no change needed.
+
+VERIFICATION (all run 2026-07-20)
+- go build ./internal/node/adminapi/ ./internal/storage/linkpool/ : PASS
+- go vet both packages: PASS
+- go test ./internal/node/adminapi/ -run TestBackhaul -v -count=1: 7/7 PASS
+  (NonL4_409, L4FullFields, NilPool_AccountsEmpty, CapacityZero_Null,
+   NilStatsAndLinkpool, CircuitMapping x4, BadToken_401)
+- go test ./internal/storage/linkpool/ -v -count=1: 14/14 PASS
+  (4 new HitRate tests + 10 pre-existing)
+- go test both packages -race -count=1: PASS
+- gofmt -l on all four files: clean
+- Pure LOC: backhaul_handler.go 124, linkpool/pool.go 122 (both healthy)
+
+COLLISION NOTE
+- Mid-session foreign in-flight file status_handler_test.go (todo 42 agent)
+  declared fakeBackhaulStats, colliding with my test fake. Renamed my fakes
+  with bh* prefix (bhStats/bhLinkpool/bhAccountPool/bhCircuitBreaker).
+  Foreign fakeConn breakage self-resolved within ~1 min per notepad policy
+  (never drive-by fix).
+
+COMMIT
+- feat(node-admin): add L4 backhaul status endpoint (pathspec-scoped, 4 files)
