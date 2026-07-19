@@ -27,6 +27,30 @@ import (
 // allow: SIZE_OK — the VendorRules literal is a pure data table (the todo 58
 // form-schema source); the validators below are short and single-purpose.
 
+// FormField describes one input field in the per-vendor dynamic form schema.
+// It is the data source for todo 58's GET /v1/admin/vendors/form-schema.
+type FormField struct {
+	Key       string        `json:"key"`
+	Label     string        `json:"label"`
+	Type      string        `json:"type"`
+	Required  bool          `json:"required"`
+	Sensitive bool          `json:"sensitive,omitempty"`
+	Options   []FieldOption `json:"options,omitempty"`
+	KvHint    []KvHintEntry `json:"kvHint,omitempty"`
+	Help      string        `json:"help,omitempty"`
+}
+
+// FieldOption is a select-enum value/label pair.
+type FieldOption struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+// KvHintEntry is a suggested key-name for a kv-rows field.
+type KvHintEntry struct {
+	Key string `json:"key"`
+}
+
 // VendorRule describes one vendor's auth-field contract.
 type VendorRule struct {
 	AuthType         string                // "oauth2" | "cookie"
@@ -34,6 +58,7 @@ type VendorRule struct {
 	OptionalAuth     []string              // auth keys that may be present
 	RegionValues     []string              // allowed region values (empty = region unused)
 	DefaultRateLimit types.RateLimitConfig // applied when POST omits rate_limit
+	Fields           []FormField           // form-schema field metadata (todo 58)
 	Notes            []string              // operator guidance, surfaced in todo 58 form-schema
 }
 
@@ -45,10 +70,16 @@ var VendorRules = map[types.Vendor]VendorRule{
 		RequiredAuth:     []string{"client_id", "client_secret", "refresh_token"},
 		OptionalAuth:     []string{"redirect_uri"},
 		DefaultRateLimit: types.RateLimitConfig{QPS: 2, Burst: 4, ConcurrentLimit: 8},
+		Fields: []FormField{
+			{Key: "account_id", Label: "账号标识", Type: "text", Required: true, Help: "mw_bak_01"},
+			{Key: "client_id", Label: "AppKey", Type: "text", Required: true},
+			{Key: "client_secret", Label: "SecretKey", Type: "password", Required: true, Sensitive: true},
+			{Key: "refresh_token", Label: "Refresh Token", Type: "password", Required: true, Sensitive: true, Help: "百度开放平台授权码流程换得"},
+			{Key: "redirect_uri", Label: "Redirect URI", Type: "text", Required: false},
+		},
 		Notes: []string{
-			"redirect_uri 选填，若填必须是合法 URL",
-			"百度开放平台建应用拿 AppKey/SecretKey，授权码流程换 refresh_token",
 			"下载链 IP 绑定",
+			"access_token 由系统自动刷新",
 		},
 	},
 	types.VendorOneDrive: {
@@ -56,10 +87,19 @@ var VendorRules = map[types.Vendor]VendorRule{
 		RequiredAuth:     []string{"client_id", "client_secret", "refresh_token", "redirect_uri", "region"},
 		RegionValues:     []string{"global", "cn", "us", "de"},
 		DefaultRateLimit: types.RateLimitConfig{QPS: 10, Burst: 20, ConcurrentLimit: 16},
-		Notes: []string{
-			"redirect_uri 必填（OneDrive 的 refresh grant 必须携带）",
-			"region 决定 token host 与 Graph host",
-			"Azure Portal 按 region 注册应用（全球/世纪互联/US Gov/德国）",
+		Fields: []FormField{
+			{Key: "account_id", Label: "账号标识", Type: "text", Required: true},
+			{Key: "client_id", Label: "Client ID", Type: "text", Required: true},
+			{Key: "client_secret", Label: "Client Secret", Type: "password", Required: true, Sensitive: true},
+			{Key: "refresh_token", Label: "Refresh Token", Type: "password", Required: true, Sensitive: true},
+			{Key: "redirect_uri", Label: "Redirect URI", Type: "text", Required: true},
+			{Key: "region", Label: "区域", Type: "select", Required: true,
+				Options: []FieldOption{
+					{Value: "global", Label: "全球"},
+					{Value: "cn", Label: "世纪互联"},
+					{Value: "us", Label: "US Gov"},
+					{Value: "de", Label: "德国"},
+				}},
 		},
 	},
 	types.VendorAliyundrive: {
@@ -67,28 +107,34 @@ var VendorRules = map[types.Vendor]VendorRule{
 		RequiredAuth:     []string{"refresh_token"},
 		OptionalAuth:     []string{"client_id", "client_secret"},
 		DefaultRateLimit: types.RateLimitConfig{QPS: 5, Burst: 10, ConcurrentLimit: 10},
-		Notes: []string{
-			"client_id/client_secret 必须成对出现（默认公共客户端可省，自建应用时填写）",
-			"阿里开放平台 OAuth2 refresh_token 模式",
+		Fields: []FormField{
+			{Key: "account_id", Label: "账号标识", Type: "text", Required: true},
+			{Key: "refresh_token", Label: "Refresh Token", Type: "password", Required: true, Sensitive: true},
+			{Key: "client_id", Label: "Client ID（自建应用时）", Type: "text", Required: false},
+			{Key: "client_secret", Label: "Client Secret（自建应用时）", Type: "password", Required: false, Sensitive: true},
 		},
 	},
 	types.Vendor115: {
 		AuthType:         "cookie",
 		RequiredAuth:     []string{"cookies"},
 		DefaultRateLimit: types.RateLimitConfig{QPS: 1, Burst: 2, ConcurrentLimit: 5},
-		Notes: []string{
-			"cookies 至少 1 个键；115 网页 API 惯例键 UID/CID/SEID（缺失仅告警不阻断）",
-			"表单按键值对动态行渲染 cookies，不要塞整段 Cookie 字符串",
+		Fields: []FormField{
+			{Key: "account_id", Label: "账号标识", Type: "text", Required: true},
+			{Key: "cookies", Label: "Cookies", Type: "kv-rows", Required: true, Sensitive: true,
+				KvHint: []KvHintEntry{{Key: "UID"}, {Key: "CID"}, {Key: "SEID"}}},
 		},
 	},
 	types.VendorQuark: {
 		AuthType:         "cookie",
 		RequiredAuth:     []string{"cookies"},
 		DefaultRateLimit: types.RateLimitConfig{QPS: 0.5, Burst: 1, ConcurrentLimit: 5},
+		Fields: []FormField{
+			{Key: "account_id", Label: "账号标识", Type: "text", Required: true},
+			{Key: "cookies", Label: "Cookies", Type: "kv-rows", Required: true, Sensitive: true},
+		},
 		Notes: []string{
-			"cookies 至少 1 个键",
-			"下载链 IP 绑定，链接不可跨节点复用",
-			"风控最严，默认 QPS 0.5",
+			"下载链 IP 绑定（链接不可跨节点复用）",
+			"风控最严，限流最低",
 		},
 	},
 }

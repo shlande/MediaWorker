@@ -1,0 +1,30 @@
+# Task 58: form-schema endpoint — Evidence
+## Timestamp: 2026-07-20
+
+## Files changed
+- internal/controlplane/adminapi/vendorrules.go (extended: FormField/FieldOption/KvHintEntry types, Fields field on VendorRule, five vendor field tables)
+- internal/controlplane/adminapi/formschema_handler.go (NEW: 72 pure LOC)
+- internal/controlplane/adminapi/formschema_handler_test.go (NEW: 238 pure LOC, 10 tests)
+
+## Acceptance criteria results
+All 10 tests PASS:
+
+1. TestFormSchema_FiveVendorsPresent — baidu/onedrive/115/quark/aliyundrive all present
+2. TestFormSchema_SchemaVersion — returns "1"
+3. TestFormSchema_BaiduRequiredFields — account_id, client_id, client_secret, refresh_token all required
+4. TestFormSchema_OneDriveRegionOptions — region type=select, options global/cn/us/de with labels
+5. TestFormSchema_115KvHint — cookies kv-rows with UID/CID/SEID kvHint
+6. TestFormSchema_RateLimitDefaults — all five vendors match docs matrix (baidu 2/4/8, onedrive 10/20/16, aliyundrive 5/10/10, 115 1/2/5, quark 0.5/1/5)
+7. TestFormSchema_ConsistencyGuard — ValidateAuth.RequiredAuth == schema required=true (non-account_id keys) for every vendor
+8. TestFormSchema_NoToken401 — unauthenticated GET returns 401
+9. TestFormSchema_AuthTypes — baidu/onedrive/aliyundrive=oauth2, 115/quark=cookie
+10. TestFormSchema_RegisterRoutes — end-to-end test via httptest.Server
+
+Pre-existing vendorrules tests (TestVendorRules_Matrix, all ValidateAuth tests, ValidateAccountID, ValidateRateLimit) all PASS too.
+
+## Compliance
+- Schema generated from VendorRules (single source) — FIELD DATA lives in vendorrules.go
+- No PG persistence (static Go data)
+- No real secrets/account data
+- D1 compliant: RegisterFormSchemaRoutes(srv *Server), no main.go edit
+- Response shape: {schema_version, vendors: {vendor: {auth, fields, defaults, notes}}}
