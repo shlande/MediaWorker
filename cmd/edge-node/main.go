@@ -259,10 +259,18 @@ func main() {
 	// before it expires. On failure logs an Error and continues (does NOT
 	// panic/Fatal — consistent with §11 degraded-mode behaviour). The
 	// goroutine exits when rootCtx is cancelled (process shutdown).
+	// refreshDurations is shared with the admin reload endpoint (todo 47):
+	// the loop reads it every round, the reload handler writes it. todo 49
+	// passes it (with *configPath and cfg) to the Reloader when mounting
+	// POST /v1/admin/reload-config.
 	// -------------------------------------------------------------------
-	go runJWTRefreshLoop(rootCtx, jwtClient, ed25519.PublicKey(cpPubKey),
+	refreshDurations := &config.RefreshDurations{}
+	refreshDurations.Store(
 		cfg.Node.JWTService.ParsedRefreshInterval,
 		cfg.Node.JWTService.ParsedRefreshBeforeExpiry,
+	)
+	go runJWTRefreshLoop(rootCtx, jwtClient, ed25519.PublicKey(cpPubKey),
+		refreshDurations,
 		logger,
 		metrics)
 
@@ -940,6 +948,10 @@ func parseBootstrapAddrs(addrs []string) []peer.AddrInfo {
 //     than the interval, we refresh sooner to avoid drift into an unauthenticated
 //     window.
 //
+// The cadence pair is read from the shared durations holder EVERY round so a
+// hot reload (POST /v1/admin/reload-config, todo 47) takes effect on the next
+// cycle without restarting the loop.
+//
 // The CP-side RefreshBefore hint (jwtResp.RefreshBefore) is honoured indirectly
 // through refreshBeforeExpiry from the node config: the CP informs the node of
 // its desired lead time via the `refresh_before_expiry` YAML field, which the
@@ -954,19 +966,21 @@ func runJWTRefreshLoop(
 	ctx context.Context,
 	jwtClient *nodejwt.JWTClient,
 	cpPubKey ed25519.PublicKey,
-	refreshInterval, refreshBeforeExpiry time.Duration,
+	durations *config.RefreshDurations,
 	logger *slog.Logger,
 	metrics *monitor.Metrics,
 ) {
-	// Fallbacks: if config produced zero (e.g. loader path bypassed), use 5m.
-	if refreshInterval <= 0 {
-		refreshInterval = 5 * time.Minute
-	}
-	if refreshBeforeExpiry <= 0 {
-		refreshBeforeExpiry = 5 * time.Minute
-	}
-
 	for {
+		// Read the live cadence each round; zero (e.g. loader path bypassed)
+		// falls back to 5m.
+		refreshInterval, refreshBeforeExpiry := durations.Load()
+		if refreshInterval <= 0 {
+			refreshInterval = 5 * time.Minute
+		}
+		if refreshBeforeExpiry <= 0 {
+			refreshBeforeExpiry = 5 * time.Minute
+		}
+
 		wait := refreshInterval
 
 		// If we have a cached JWT, refine the wait so we renew at
