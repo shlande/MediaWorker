@@ -2,6 +2,7 @@ package adminapi
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,6 +45,23 @@ func (m *mockPinCountReader) CountByContent() map[string]int {
 	return m.counts
 }
 
+type mockContentMetaReader struct {
+	meta *types.ContentMeta
+	err  error
+}
+
+func (m *mockContentMetaReader) GetContentMeta(_ context.Context, contentID string) (*types.ContentMeta, error) {
+	return m.meta, m.err
+}
+
+type mockContentDeleter struct {
+	err error
+}
+
+func (m *mockContentDeleter) SoftDeleteContent(_ context.Context, contentID string) error {
+	return m.err
+}
+
 // ─── Server builder ───────────────────────────────────────────────────────
 
 const contentsTestSecret = "test-secret-contents-handlers"
@@ -51,9 +69,10 @@ const contentsTestSecret = "test-secret-contents-handlers"
 func makeContentsServer(mc struct {
 	ContentsListReader
 	ContentsDetailReader
-}, dlog PinCountReader) *Server {
+	ContentMetaReader
+}, dlog PinCountReader, deleter ContentDeleter) *Server {
 	srv := NewServer([]byte(contentsTestSecret))
-	RegisterContentsRoutes(srv, mc, dlog)
+	RegisterContentsRoutes(srv, mc, dlog, deleter)
 	return srv
 }
 
@@ -132,6 +151,7 @@ func TestContentsList_HappyPath(t *testing.T) {
 	mc := struct {
 		ContentsListReader
 		ContentsDetailReader
+		ContentMetaReader
 	}{
 		ContentsListReader: &mockContentsListReader{
 			rows: []metadata.AdminContentRow{
@@ -145,11 +165,10 @@ func TestContentsList_HappyPath(t *testing.T) {
 	dlog := &mockPinCountReader{
 		counts: map[string]int{
 			"abc-123-xyz": 3,
-			// def-456-uvw has no entry → 0
 		},
 	}
 
-	srv := makeContentsServer(mc, dlog)
+	srv := makeContentsServer(mc, dlog, nil)
 	token := contentsAuthToken(t)
 
 	resp := contentsGet(t, srv, "/v1/admin/contents", token)
@@ -195,7 +214,6 @@ func TestContentsList_HappyPath(t *testing.T) {
 		t.Errorf("PendingDelete[0] = %v, want false", c0.PendingDelete)
 	}
 
-	// Row 1: empty title → fallback to first 8 chars of content_id
 	c1 := contents[1]
 	if c1.Title != "def-456-" {
 		t.Errorf("Title[1] = %q, want fallback 'def-456-'", c1.Title)
@@ -209,6 +227,7 @@ func TestContentsList_PinNodeCountMerge(t *testing.T) {
 	mc := struct {
 		ContentsListReader
 		ContentsDetailReader
+		ContentMetaReader
 	}{
 		ContentsListReader: &mockContentsListReader{
 			rows: []metadata.AdminContentRow{
@@ -223,11 +242,11 @@ func TestContentsList_PinNodeCountMerge(t *testing.T) {
 		counts: map[string]int{
 			"cont-aaa": 5,
 			"cont-bbb": 1,
-			"cont-ccc": 9, // no matching row, ignored
+			"cont-ccc": 9,
 		},
 	}
 
-	srv := makeContentsServer(mc, dlog)
+	srv := makeContentsServer(mc, dlog, nil)
 	resp := contentsGet(t, srv, "/v1/admin/contents", contentsAuthToken(t))
 
 	contents, _ := decodeContentsList(t, resp)
@@ -246,6 +265,7 @@ func TestContentsList_EmptyTitleFallback(t *testing.T) {
 	mc := struct {
 		ContentsListReader
 		ContentsDetailReader
+		ContentMetaReader
 	}{
 		ContentsListReader: &mockContentsListReader{
 			rows: []metadata.AdminContentRow{
@@ -257,18 +277,16 @@ func TestContentsList_EmptyTitleFallback(t *testing.T) {
 	}
 
 	dlog := &mockPinCountReader{counts: map[string]int{}}
-	srv := makeContentsServer(mc, dlog)
+	srv := makeContentsServer(mc, dlog, nil)
 	resp := contentsGet(t, srv, "/v1/admin/contents", contentsAuthToken(t))
 
 	contents, _ := decodeContentsList(t, resp)
 	if len(contents) != 2 {
 		t.Fatalf("len = %d, want 2", len(contents))
 	}
-	// Long ID → first 8 chars
 	if contents[0].Title != "abcdefgh" {
 		t.Errorf("Title fallback long = %q, want 'abcdefgh'", contents[0].Title)
 	}
-	// Short ID → entire ID
 	if contents[1].Title != "short" {
 		t.Errorf("Title fallback short = %q, want 'short'", contents[1].Title)
 	}
@@ -278,6 +296,7 @@ func TestContentsList_ReplicasDegradedFilter(t *testing.T) {
 	mc := struct {
 		ContentsListReader
 		ContentsDetailReader
+		ContentMetaReader
 	}{
 		ContentsListReader: &mockContentsListReader{
 			rows: []metadata.AdminContentRow{
@@ -292,15 +311,13 @@ func TestContentsList_ReplicasDegradedFilter(t *testing.T) {
 
 	dlog := &mockPinCountReader{counts: map[string]int{}}
 
-	srv := makeContentsServer(mc, dlog)
-	// Without filter → all 4
+	srv := makeContentsServer(mc, dlog, nil)
 	resp := contentsGet(t, srv, "/v1/admin/contents", contentsAuthToken(t))
 	contents, total := decodeContentsList(t, resp)
 	if total != 4 || len(contents) != 4 {
 		t.Fatalf("unfiltered: total=%d, len=%d, want 4", total, len(contents))
 	}
 
-	// replicas=degraded → only have < want (1 or 0)
 	resp = contentsGet(t, srv, "/v1/admin/contents?replicas=degraded", contentsAuthToken(t))
 	contents, total = decodeContentsList(t, resp)
 	if len(contents) != 2 {
@@ -328,6 +345,7 @@ func TestContentsList_MetadataError(t *testing.T) {
 	mc := struct {
 		ContentsListReader
 		ContentsDetailReader
+		ContentMetaReader
 	}{
 		ContentsListReader: &mockContentsListReader{
 			err: errors.New("db connection lost"),
@@ -335,7 +353,7 @@ func TestContentsList_MetadataError(t *testing.T) {
 	}
 
 	dlog := &mockPinCountReader{}
-	srv := makeContentsServer(mc, dlog)
+	srv := makeContentsServer(mc, dlog, nil)
 	resp := contentsGet(t, srv, "/v1/admin/contents", contentsAuthToken(t))
 
 	status, msg := decodeError(t, resp)
@@ -351,9 +369,10 @@ func TestContentsList_NoToken(t *testing.T) {
 	mc := struct {
 		ContentsListReader
 		ContentsDetailReader
+		ContentMetaReader
 	}{}
 	dlog := &mockPinCountReader{}
-	srv := makeContentsServer(mc, dlog)
+	srv := makeContentsServer(mc, dlog, nil)
 	resp := contentsGet(t, srv, "/v1/admin/contents", "")
 
 	if resp.StatusCode != http.StatusUnauthorized {
@@ -365,6 +384,7 @@ func TestContentsList_EmptyResults(t *testing.T) {
 	mc := struct {
 		ContentsListReader
 		ContentsDetailReader
+		ContentMetaReader
 	}{
 		ContentsListReader: &mockContentsListReader{
 			rows:  []metadata.AdminContentRow{},
@@ -373,7 +393,7 @@ func TestContentsList_EmptyResults(t *testing.T) {
 	}
 
 	dlog := &mockPinCountReader{}
-	srv := makeContentsServer(mc, dlog)
+	srv := makeContentsServer(mc, dlog, nil)
 	resp := contentsGet(t, srv, "/v1/admin/contents", contentsAuthToken(t))
 
 	contents, total := decodeContentsList(t, resp)
@@ -389,6 +409,7 @@ func TestContentsList_PaginatedParams(t *testing.T) {
 	mc := struct {
 		ContentsListReader
 		ContentsDetailReader
+		ContentMetaReader
 	}{
 		ContentsListReader: &mockContentsListReader{
 			rows: []metadata.AdminContentRow{
@@ -399,7 +420,7 @@ func TestContentsList_PaginatedParams(t *testing.T) {
 	}
 
 	dlog := &mockPinCountReader{}
-	srv := makeContentsServer(mc, dlog)
+	srv := makeContentsServer(mc, dlog, nil)
 	resp := contentsGet(t, srv, "/v1/admin/contents?page=2&page_size=10&sort=popularity&type=dash", contentsAuthToken(t))
 
 	contents, total := decodeContentsList(t, resp)
@@ -418,6 +439,7 @@ func TestContentsDetail_HappyPath(t *testing.T) {
 	mc := struct {
 		ContentsListReader
 		ContentsDetailReader
+		ContentMetaReader
 	}{
 		ContentsDetailReader: &mockContentsDetailReader{
 			detail: &metadata.AdminContentDetail{
@@ -440,7 +462,7 @@ func TestContentsDetail_HappyPath(t *testing.T) {
 	}
 
 	dlog := &mockPinCountReader{}
-	srv := makeContentsServer(mc, dlog)
+	srv := makeContentsServer(mc, dlog, nil)
 	resp := contentsGet(t, srv, "/v1/admin/contents/detail-abc", contentsAuthToken(t))
 
 	if resp.StatusCode != http.StatusOK {
@@ -502,13 +524,14 @@ func TestContentsDetail_NotFound(t *testing.T) {
 	mc := struct {
 		ContentsListReader
 		ContentsDetailReader
+		ContentMetaReader
 	}{
 		ContentsDetailReader: &mockContentsDetailReader{
 			err: fmt.Errorf("wrap: %w", metadata.ErrContentNotFound),
 		},
 	}
 	dlog := &mockPinCountReader{}
-	srv := makeContentsServer(mc, dlog)
+	srv := makeContentsServer(mc, dlog, nil)
 	resp := contentsGet(t, srv, "/v1/admin/contents/nonexistent", contentsAuthToken(t))
 
 	if resp.StatusCode != http.StatusNotFound {
@@ -521,6 +544,7 @@ func TestContentsDetail_PendingDelete(t *testing.T) {
 	mc := struct {
 		ContentsListReader
 		ContentsDetailReader
+		ContentMetaReader
 	}{
 		ContentsDetailReader: &mockContentsDetailReader{
 			detail: &metadata.AdminContentDetail{
@@ -534,7 +558,7 @@ func TestContentsDetail_PendingDelete(t *testing.T) {
 	}
 
 	dlog := &mockPinCountReader{}
-	srv := makeContentsServer(mc, dlog)
+	srv := makeContentsServer(mc, dlog, nil)
 	resp := contentsGet(t, srv, "/v1/admin/contents/soft-deleted-content", contentsAuthToken(t))
 
 	if resp.StatusCode != http.StatusOK {
@@ -551,20 +575,21 @@ func TestContentsDetail_NotDeleted(t *testing.T) {
 	mc := struct {
 		ContentsListReader
 		ContentsDetailReader
+		ContentMetaReader
 	}{
 		ContentsDetailReader: &mockContentsDetailReader{
 			detail: &metadata.AdminContentDetail{
 				Meta: &types.ContentMeta{
 					ContentID:  "alive-content",
 					ContentType: "dash",
-					DeletedAt: nil, // not deleted
+					DeletedAt:  nil,
 				},
 			},
 		},
 	}
 
 	dlog := &mockPinCountReader{}
-	srv := makeContentsServer(mc, dlog)
+	srv := makeContentsServer(mc, dlog, nil)
 	resp := contentsGet(t, srv, "/v1/admin/contents/alive-content", contentsAuthToken(t))
 
 	detail := decodeContentDetail(t, resp)
@@ -577,6 +602,7 @@ func TestContentsDetail_MetadataError(t *testing.T) {
 	mc := struct {
 		ContentsListReader
 		ContentsDetailReader
+		ContentMetaReader
 	}{
 		ContentsDetailReader: &mockContentsDetailReader{
 			err: errors.New("database crashed"),
@@ -584,7 +610,7 @@ func TestContentsDetail_MetadataError(t *testing.T) {
 	}
 
 	dlog := &mockPinCountReader{}
-	srv := makeContentsServer(mc, dlog)
+	srv := makeContentsServer(mc, dlog, nil)
 	resp := contentsGet(t, srv, "/v1/admin/contents/any-id", contentsAuthToken(t))
 
 	status, msg := decodeError(t, resp)
@@ -600,9 +626,10 @@ func TestContentsDetail_NoToken(t *testing.T) {
 	mc := struct {
 		ContentsListReader
 		ContentsDetailReader
+		ContentMetaReader
 	}{}
 	dlog := &mockPinCountReader{}
-	srv := makeContentsServer(mc, dlog)
+	srv := makeContentsServer(mc, dlog, nil)
 	resp := contentsGet(t, srv, "/v1/admin/contents/any-id", "")
 
 	if resp.StatusCode != http.StatusUnauthorized {
@@ -614,14 +641,12 @@ func TestContentsDetail_BadContentIDShort(t *testing.T) {
 	mc := struct {
 		ContentsListReader
 		ContentsDetailReader
+		ContentMetaReader
 	}{
-		ContentsDetailReader: &mockContentsDetailReader{
-			// Should never be called for short IDs.
-		},
+		ContentsDetailReader: &mockContentsDetailReader{},
 	}
 	dlog := &mockPinCountReader{}
-	srv := makeContentsServer(mc, dlog)
-	// ID shorter than contentIDMinLen (4) → 404
+	srv := makeContentsServer(mc, dlog, nil)
 	resp := contentsGet(t, srv, "/v1/admin/contents/ab", contentsAuthToken(t))
 
 	if resp.StatusCode != http.StatusNotFound {
@@ -633,19 +658,20 @@ func TestContentsDetail_TitleFallback(t *testing.T) {
 	mc := struct {
 		ContentsListReader
 		ContentsDetailReader
+		ContentMetaReader
 	}{
 		ContentsDetailReader: &mockContentsDetailReader{
 			detail: &metadata.AdminContentDetail{
 				Meta: &types.ContentMeta{
 					ContentID: "titleless-content-xyz",
-					Title:     "", // empty → fallback
+					Title:     "",
 				},
 			},
 		},
 	}
 
 	dlog := &mockPinCountReader{}
-	srv := makeContentsServer(mc, dlog)
+	srv := makeContentsServer(mc, dlog, nil)
 	resp := contentsGet(t, srv, "/v1/admin/contents/titleless-content-xyz", contentsAuthToken(t))
 
 	detail := decodeContentDetail(t, resp)
@@ -658,6 +684,7 @@ func TestContentsDetail_NilBlobsAndLocations(t *testing.T) {
 	mc := struct {
 		ContentsListReader
 		ContentsDetailReader
+		ContentMetaReader
 	}{
 		ContentsDetailReader: &mockContentsDetailReader{
 			detail: &metadata.AdminContentDetail{
@@ -672,7 +699,7 @@ func TestContentsDetail_NilBlobsAndLocations(t *testing.T) {
 	}
 
 	dlog := &mockPinCountReader{}
-	srv := makeContentsServer(mc, dlog)
+	srv := makeContentsServer(mc, dlog, nil)
 	resp := contentsGet(t, srv, "/v1/admin/contents/minimal", contentsAuthToken(t))
 
 	detail := decodeContentDetail(t, resp)
@@ -693,11 +720,10 @@ func TestContentsDetail_NilBlobsAndLocations(t *testing.T) {
 // ─── Route prefix clash check ─────────────────────────────────────────────
 
 func TestContentsRoutes_NoPrefixClash(t *testing.T) {
-	// Verify that /v1/admin/contents and /v1/admin/contents/{id} coexist
-	// without one shadowing the other on Go 1.22+ ServeMux.
 	mc := struct {
 		ContentsListReader
 		ContentsDetailReader
+		ContentMetaReader
 	}{
 		ContentsListReader: &mockContentsListReader{
 			rows:  []metadata.AdminContentRow{},
@@ -709,22 +735,19 @@ func TestContentsRoutes_NoPrefixClash(t *testing.T) {
 	}
 
 	dlog := &mockPinCountReader{}
-	srv := makeContentsServer(mc, dlog)
+	srv := makeContentsServer(mc, dlog, nil)
 	token := contentsAuthToken(t)
 
-	// List endpoint works
 	resp := contentsGet(t, srv, "/v1/admin/contents", token)
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("list status = %d, want 200", resp.StatusCode)
 	}
 
-	// Detail endpoint with ID works (404 because mock returns not found)
 	resp = contentsGet(t, srv, "/v1/admin/contents/some-id-here", token)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("detail status = %d, want 404", resp.StatusCode)
 	}
 
-	// Query params on list still work
 	resp = contentsGet(t, srv, "/v1/admin/contents?page=1", token)
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("list with query status = %d, want 200", resp.StatusCode)
@@ -750,5 +773,239 @@ func eqStrSlice(t *testing.T, got, want []string) {
 	}
 }
 
-// unused_import is a compile-time assertion that strings import is used.
 var _ = strings.Repeat
+
+// ─── Delete helpers ────────────────────────────────────────────────────────
+
+func contentsDelete(t *testing.T, srv *Server, path, token string) *http.Response {
+	t.Helper()
+	ts := httptest.NewServer(srv.mux)
+	t.Cleanup(ts.Close)
+
+	req, err := http.NewRequest(http.MethodDelete, ts.URL+path, nil)
+	if err != nil {
+		t.Fatalf("NewRequest DELETE: %v", err)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DELETE %s: %v", path, err)
+	}
+	return resp
+}
+
+func decodeDeleteResponse(t *testing.T, resp *http.Response) contentDeleteResponse {
+	t.Helper()
+	defer resp.Body.Close()
+	var body contentDeleteResponse
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode delete response: %v", err)
+	}
+	return body
+}
+
+// ─── Delete tests ──────────────────────────────────────────────────────────
+
+func TestDeleteContent_HappyPath(t *testing.T) {
+	mc := struct {
+		ContentsListReader
+		ContentsDetailReader
+		ContentMetaReader
+	}{
+		ContentMetaReader: &mockContentMetaReader{
+			meta: &types.ContentMeta{
+				ContentID:   "content-to-delete",
+				ContentType: "dash",
+			},
+		},
+	}
+	deleter := &mockContentDeleter{}
+	srv := makeContentsServer(mc, &mockPinCountReader{}, deleter)
+	token := contentsAuthToken(t)
+
+	resp := contentsDelete(t, srv, "/v1/admin/contents/content-to-delete", token)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	body := decodeDeleteResponse(t, resp)
+	if body.ContentID != "content-to-delete" {
+		t.Errorf("content_id = %q, want content-to-delete", body.ContentID)
+	}
+	if !body.PendingDelete {
+		t.Error("pending_delete = false, want true")
+	}
+	if body.Note != deleteNoteFirst {
+		t.Errorf("note = %q, want %q", body.Note, deleteNoteFirst)
+	}
+}
+
+func TestDeleteContent_AlreadyDeleted(t *testing.T) {
+	deletedAt := time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)
+	mc := struct {
+		ContentsListReader
+		ContentsDetailReader
+		ContentMetaReader
+	}{
+		ContentMetaReader: &mockContentMetaReader{
+			meta: &types.ContentMeta{
+				ContentID:   "already-deleted-content",
+				ContentType: "dash",
+				DeletedAt:   &deletedAt,
+			},
+		},
+	}
+	deleter := &mockContentDeleter{}
+	srv := makeContentsServer(mc, &mockPinCountReader{}, deleter)
+	token := contentsAuthToken(t)
+
+	resp := contentsDelete(t, srv, "/v1/admin/contents/already-deleted-content", token)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	body := decodeDeleteResponse(t, resp)
+	if body.ContentID != "already-deleted-content" {
+		t.Errorf("content_id = %q", body.ContentID)
+	}
+	if !body.PendingDelete {
+		t.Error("pending_delete = false, want true")
+	}
+	if body.Note != deleteNoteAlreadyDeleted {
+		t.Errorf("note = %q, want %q", body.Note, deleteNoteAlreadyDeleted)
+	}
+}
+
+func TestDeleteContent_NotFound(t *testing.T) {
+	mc := struct {
+		ContentsListReader
+		ContentsDetailReader
+		ContentMetaReader
+	}{
+		ContentMetaReader: &mockContentMetaReader{
+			err: sql.ErrNoRows,
+		},
+	}
+	srv := makeContentsServer(mc, &mockPinCountReader{}, &mockContentDeleter{})
+	token := contentsAuthToken(t)
+
+	resp := contentsDelete(t, srv, "/v1/admin/contents/nonexistent", token)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestDeleteContent_MetadataError(t *testing.T) {
+	mc := struct {
+		ContentsListReader
+		ContentsDetailReader
+		ContentMetaReader
+	}{
+		ContentMetaReader: &mockContentMetaReader{
+			err: errors.New("db crashed"),
+		},
+	}
+	srv := makeContentsServer(mc, &mockPinCountReader{}, &mockContentDeleter{})
+	token := contentsAuthToken(t)
+
+	resp := contentsDelete(t, srv, "/v1/admin/contents/any-id", token)
+	status, msg := decodeError(t, resp)
+	if status != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", status)
+	}
+	if msg != "internal error" {
+		t.Errorf("error msg = %q, want 'internal error'", msg)
+	}
+}
+
+func TestDeleteContent_DeleterError(t *testing.T) {
+	mc := struct {
+		ContentsListReader
+		ContentsDetailReader
+		ContentMetaReader
+	}{
+		ContentMetaReader: &mockContentMetaReader{
+			meta: &types.ContentMeta{
+				ContentID:   "fail-delete",
+				ContentType: "dash",
+			},
+		},
+	}
+	deleter := &mockContentDeleter{err: errors.New("tx commit failed")}
+	srv := makeContentsServer(mc, &mockPinCountReader{}, deleter)
+	token := contentsAuthToken(t)
+
+	resp := contentsDelete(t, srv, "/v1/admin/contents/fail-delete", token)
+	status, msg := decodeError(t, resp)
+	if status != http.StatusInternalServerError {
+		t.Errorf("status = %d, want 500", status)
+	}
+	if msg != "internal error" {
+		t.Errorf("error msg = %q, want 'internal error'", msg)
+	}
+}
+
+func TestDeleteContent_NoToken(t *testing.T) {
+	mc := struct {
+		ContentsListReader
+		ContentsDetailReader
+		ContentMetaReader
+	}{}
+	srv := makeContentsServer(mc, &mockPinCountReader{}, &mockContentDeleter{})
+
+	resp := contentsDelete(t, srv, "/v1/admin/contents/any-id", "")
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+func TestDeleteContent_ShortID(t *testing.T) {
+	mc := struct {
+		ContentsListReader
+		ContentsDetailReader
+		ContentMetaReader
+	}{}
+	srv := makeContentsServer(mc, &mockPinCountReader{}, &mockContentDeleter{})
+	token := contentsAuthToken(t)
+
+	resp := contentsDelete(t, srv, "/v1/admin/contents/ab", token)
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+func TestDeleteContent_SubsequentGetShowsPendingDelete(t *testing.T) {
+	deletedAt := time.Date(2026, 7, 20, 0, 0, 0, 0, time.UTC)
+
+	detailReader := &mockContentsDetailReader{
+		detail: &metadata.AdminContentDetail{
+			Meta: &types.ContentMeta{
+				ContentID:   "post-delete-check",
+				ContentType: "dash",
+				DeletedAt:   &deletedAt,
+			},
+		},
+	}
+
+	mc := struct {
+		ContentsListReader
+		ContentsDetailReader
+		ContentMetaReader
+	}{
+		ContentsDetailReader: detailReader,
+	}
+	srv := makeContentsServer(mc, &mockPinCountReader{}, &mockContentDeleter{})
+	token := contentsAuthToken(t)
+
+	resp := contentsGet(t, srv, "/v1/admin/contents/post-delete-check", token)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("detail status = %d, want 200", resp.StatusCode)
+	}
+
+	detail := decodeContentDetail(t, resp)
+	if !detail.Meta.PendingDelete {
+		t.Error("PendingDelete = false, want true after delete")
+	}
+}
