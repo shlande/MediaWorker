@@ -1,0 +1,83 @@
+# Task 27 — accounts 操作 API：rotate / ban / unban / circuit
+Date: 2026-07-20
+Plan: .omo/plans/ui-admin-apis.md lines 342-348
+
+## Files
+- internal/controlplane/adminapi/accounts_handlers.go (extended, +ops section)
+- internal/controlplane/adminapi/accounts_handlers_test.go (extended, +TestAccountOps suite)
+
+## Implementation
+- RegisterAccountsRoutes(srv, mc, registry, broadcaster) — 4-arg now (D1: no
+  cmd/control-plane/main.go edit; todo 54 wires). Broadcaster injected as the
+  narrow EventBroadcaster interface (Broadcast(eventType, payload) error),
+  satisfied by *syncbroadcaster.SyncBroadcaster.
+- AdminAccountsWriter extended with Ban/Unban (todo 6 registry semantics:
+  Ban writes account_health + BAN event; Unban clears + UNBAN event).
+- rotate: POST /v1/admin/accounts/{vendor}/{id}/rotate — request body IS the
+  vendor auth field set; routed through todo 26's SAME ApplyAuthPatch path
+  (read → OverlayAuthPatch → ValidateAuth → write changed → exactly ONE
+  OnCredentialChange → CREDENTIAL_UPDATE broadcast carrying the new
+  credential+client_config). No duplicated logic. Empty body/{} → 400
+  field_errors.auth="required"; B4 failure → 400; missing account → 404.
+- ban: body {reason?, ban_until?}; ban_until RFC3339, default now+24h
+  (defaultBanDuration); empty body accepted (io.EOF tolerated); bad
+  ban_until → 400 field_errors.ban_until. No second confirmation (UI's job).
+- unban: registry.Unban(vendor, id).
+- circuit: body {action:"force_open"|"force_close"}; other values → 400
+  field_errors.action. Broadcasts types.EventCircuitForceOpen/Close with
+  types.CircuitPayload{Vendor, AccountID} DIRECTLY via the injected
+  broadcaster. Does NOT write account_health (node-local semantics) — locked
+  by TestAccountOps_CircuitEdgeCases/no_account_health_write. Nil
+  broadcaster → 500 "circuit broadcaster not configured", no panic.
+- All four respond 202 {vendor, account_id, effective:"propagating"}
+  (rotate also carries warnings when present). 202 = write/event accepted;
+  nodes apply via todo 9's dispatcher.
+- validateAccountPath helper extracted from todo 26's PUT handler and reused
+  by all four ops handlers (vendor enum + account_id shape → 400).
+- Zero secret leak preserved: ops responses echo only vendor/account_id/
+  effective/warnings; rotate response grepped for sentinel values.
+
+## Verification (commands + results)
+- go build ./internal/controlplane/adminapi/ → OK
+- go vet ./internal/controlplane/adminapi/ → OK
+- gofmt -l on both files → clean
+- go test ./internal/controlplane/adminapi/ -run TestAccountOps -v →
+  8 tests PASS:
+  - TestAccountOps_RotateBroadcastsNewCredential (CREDENTIAL_UPDATE payload
+    carries rotated refresh_token + new client_id; stored material agrees)
+  - TestAccountOps_RotateEdgeCases (empty {} / no body / B4 failure / 404)
+  - TestAccountOps_BanDefaultsTo24h (banUntil within [before+24h, after+24h];
+    reason passed through)
+  - TestAccountOps_BanExplicitAndEdgeCases (explicit ban_until honored; empty
+    body defaults; bad ban_until 400; registry error 500)
+  - TestAccountOps_Unban (exact vendor/account_id arg)
+  - TestAccountOps_CircuitBroadcastsEvent (force_open → CIRCUIT_FORCE_OPEN,
+    force_close → CIRCUIT_FORCE_CLOSE; CircuitPayload vendor+id correct)
+  - TestAccountOps_CircuitEdgeCases (bad action 400 + zero broadcasts;
+    broadcast failure 500; no account_health write)
+  - TestAccountOps_CircuitNilBroadcasterIs500 (500, no panic — defense test)
+  - TestAccountOps_NoToken (all four endpoints 401)
+- go test ./internal/controlplane/adminapi/ -run 'TestAccount|TestListAccounts'
+  -count=1 → ok (todo 20/26 suites unregressed)
+- go test ./internal/controlplane/adminapi/ -run TestAccountOps -race -count=1
+  → ok
+
+## QA scenarios
+- happy: rotate with new auth → CREDENTIAL_UPDATE broadcast, new credential in
+  payload (fake mirrors production OnCredentialChange re-read semantics);
+  ban → registry.Ban args correct with default 24h; circuit force_open →
+  EventCircuitForceOpen broadcast + correct payload.
+- failure: bad circuit action → 400; nil broadcaster → 500 no panic; no
+  token → 401; bad ban_until → 400; rotate on missing account → 404.
+
+## MUST-NOT compliance
+- circuit does NOT write account_health (test-locked).
+- cmd/control-plane/main.go untouched (D1).
+- vendorrules.go untouched; no sibling files edited.
+- ban has no second confirmation.
+
+## Incident note
+A concurrent agent repeatedly restored stale snapshots of both target files
+mid-session (wiped edits 3×). Recovered by atomic single-write re-application
+(saved suite copy in TMPDIR) + immediate verification. Pathspec-scoped commit
+protects against sweeping in foreign staged/untracked files.

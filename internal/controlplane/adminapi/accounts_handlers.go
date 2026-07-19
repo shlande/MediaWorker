@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"time"
 
 	"github.com/shlande/mediaworker/internal/controlplane/accountregistry"
 	"github.com/shlande/mediaworker/internal/storage/metadata"
@@ -142,13 +144,18 @@ func listAccountsHandler(mc AdminAccountsReader) http.Handler {
 
 // ─── Route registration (for todo 54) ─────────────────────────────────────
 
-// RegisterAccountsRoutes mounts the accounts read + write handlers on srv. It
-// is designed to be a one-line call in todo 54's route consolidation.
-// mc serves GET (todo 20); registry serves POST/PUT (todo 26, B2 CRUD).
-func RegisterAccountsRoutes(srv *Server, mc AdminAccountsReader, registry AdminAccountsWriter) {
+// RegisterAccountsRoutes mounts the accounts read + write + ops handlers on
+// srv. It is designed to be a one-line call in todo 54's route consolidation.
+// mc serves GET (todo 20); registry serves POST/PUT/rotate/ban/unban (todo 26/
+// 27, B2 CRUD); broadcaster serves circuit force open/close (todo 27).
+func RegisterAccountsRoutes(srv *Server, mc AdminAccountsReader, registry AdminAccountsWriter, broadcaster EventBroadcaster) {
 	srv.Handle("GET /v1/admin/accounts", listAccountsHandler(mc), true)
 	srv.Handle("POST /v1/admin/accounts", createAccountHandler(registry), true)
 	srv.Handle("PUT /v1/admin/accounts/{vendor}/{id}", updateAccountHandler(registry), true)
+	srv.Handle("POST /v1/admin/accounts/{vendor}/{id}/rotate", rotateAccountHandler(registry), true)
+	srv.Handle("POST /v1/admin/accounts/{vendor}/{id}/ban", banAccountHandler(registry), true)
+	srv.Handle("POST /v1/admin/accounts/{vendor}/{id}/unban", unbanAccountHandler(registry), true)
+	srv.Handle("POST /v1/admin/accounts/{vendor}/{id}/circuit", circuitAccountHandler(broadcaster), true)
 }
 
 // ─── Write side (todo 26, B2 structured CRUD) ─────────────────────────────
@@ -168,6 +175,15 @@ type AdminAccountsWriter interface {
 	SetEnabled(ctx context.Context, vendor types.Vendor, accountID string, enabled bool) error
 	SetRateLimit(ctx context.Context, vendor types.Vendor, accountID string, cfg types.RateLimitConfig) error
 	SetVendorProfile(ctx context.Context, vendor types.Vendor, accountID string, vp types.VendorProfile) error
+	// Ban/Unban write account_health and broadcast BAN/UNBAN (todo 6).
+	Ban(ctx context.Context, vendor types.Vendor, accountID, reason string, banUntil time.Time) error
+	Unban(ctx context.Context, vendor types.Vendor, accountID string) error
+}
+
+// EventBroadcaster is the event-emit surface the circuit handler needs.
+// *syncbroadcaster.SyncBroadcaster satisfies it; nil is tolerated (500).
+type EventBroadcaster interface {
+	Broadcast(eventType string, payload any) error
 }
 
 type createAccountRequest struct {
@@ -261,14 +277,7 @@ func updateAccountHandler(registry AdminAccountsWriter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		vendor := types.Vendor(r.PathValue("vendor"))
 		id := r.PathValue("id")
-		pathErrors := map[string]string{}
-		if _, ok := VendorRules[vendor]; !ok {
-			pathErrors["vendor"] = vendorEnumHint
-		}
-		if err := ValidateAccountID(id); err != nil {
-			pathErrors["account_id"] = accountIDHint
-		}
-		if len(pathErrors) > 0 {
+		if pathErrors := validateAccountPath(vendor, id); len(pathErrors) > 0 {
 			writeFieldErrors(w, pathErrors)
 			return
 		}
@@ -336,6 +345,178 @@ func updateAccountHandler(registry AdminAccountsWriter) http.Handler {
 			Convergence: "credential=event_<1s; enabled=next_snapshot_<=60s",
 			Note:        note,
 			Warnings:    warnings,
+		})
+	})
+}
+
+// validateAccountPath enforces the vendor enum + account_id shape on path
+// parameters; a non-empty result is written as a 400 field_errors body.
+func validateAccountPath(vendor types.Vendor, id string) map[string]string {
+	pathErrors := map[string]string{}
+	if _, ok := VendorRules[vendor]; !ok {
+		pathErrors["vendor"] = vendorEnumHint
+	}
+	if err := ValidateAccountID(id); err != nil {
+		pathErrors["account_id"] = accountIDHint
+	}
+	return pathErrors
+}
+
+// ─── Operations (todo 27: rotate / ban / unban / circuit) ─────────────────
+//
+// All four respond 202 {vendor, account_id, effective:"propagating"} — the
+// write/event is accepted by the control plane; nodes apply it via the
+// broadcast dispatcher (todo 9). Circuit does NOT write account_health: the
+// breaker is node-local semantics; the 202 only means the event was emitted.
+// Ban needs no second confirmation (the UI owns that interaction).
+
+// accountOpResponse is the shared 202 body for the four operation endpoints.
+// Warnings is populated only by rotate (e.g. 115 missing recommended keys).
+type accountOpResponse struct {
+	Vendor    string   `json:"vendor"`
+	AccountID string   `json:"account_id"`
+	Effective string   `json:"effective"`
+	Warnings  []string `json:"warnings,omitempty"`
+}
+
+type banAccountRequest struct {
+	Reason   string `json:"reason,omitempty"`
+	BanUntil string `json:"ban_until,omitempty"` // RFC3339; default +24h
+}
+
+type circuitAccountRequest struct {
+	Action string `json:"action"`
+}
+
+// defaultBanDuration applies when ban_until is absent from the ban body.
+const defaultBanDuration = 24 * time.Hour
+
+// rotateAccountHandler serves POST /v1/admin/accounts/{vendor}/{id}/rotate.
+// The request body IS the vendor's auth field set; internally it is exactly
+// the PUT-with-only-auth path (todo 26's ApplyAuthPatch) — on any credential/
+// client_config change ONE CREDENTIAL_UPDATE broadcast fires with the new
+// material, applied immediately by nodes (todo 9 dispatcher).
+func rotateAccountHandler(registry AdminAccountsWriter) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		vendor := types.Vendor(r.PathValue("vendor"))
+		id := r.PathValue("id")
+		if pathErrors := validateAccountPath(vendor, id); len(pathErrors) > 0 {
+			writeFieldErrors(w, pathErrors)
+			return
+		}
+		var auth map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&auth); err != nil {
+			WriteError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		if len(auth) == 0 {
+			writeFieldErrors(w, map[string]string{"auth": "required"})
+			return
+		}
+		fieldErrors, warnings, err := ApplyAuthPatch(r.Context(), registry, vendor, id, auth)
+		if err != nil {
+			writeRegistryError(w, "rotate", err)
+			return
+		}
+		if len(fieldErrors) > 0 {
+			writeFieldErrors(w, fieldErrors)
+			return
+		}
+		WriteJSON(w, http.StatusAccepted, accountOpResponse{
+			Vendor: string(vendor), AccountID: id, Effective: "propagating", Warnings: warnings,
+		})
+	})
+}
+
+// banAccountHandler serves POST /v1/admin/accounts/{vendor}/{id}/ban.
+// ban_until defaults to +24h; an empty body is accepted (all defaults).
+func banAccountHandler(registry AdminAccountsWriter) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		vendor := types.Vendor(r.PathValue("vendor"))
+		id := r.PathValue("id")
+		if pathErrors := validateAccountPath(vendor, id); len(pathErrors) > 0 {
+			writeFieldErrors(w, pathErrors)
+			return
+		}
+		var req banAccountRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			WriteError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		banUntil := time.Now().Add(defaultBanDuration)
+		if req.BanUntil != "" {
+			parsed, err := time.Parse(time.RFC3339, req.BanUntil)
+			if err != nil {
+				writeFieldErrors(w, map[string]string{"ban_until": "must be RFC3339"})
+				return
+			}
+			banUntil = parsed
+		}
+		if err := registry.Ban(r.Context(), vendor, id, req.Reason, banUntil); err != nil {
+			writeRegistryError(w, "ban", err)
+			return
+		}
+		WriteJSON(w, http.StatusAccepted, accountOpResponse{
+			Vendor: string(vendor), AccountID: id, Effective: "propagating",
+		})
+	})
+}
+
+// unbanAccountHandler serves POST /v1/admin/accounts/{vendor}/{id}/unban.
+func unbanAccountHandler(registry AdminAccountsWriter) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		vendor := types.Vendor(r.PathValue("vendor"))
+		id := r.PathValue("id")
+		if pathErrors := validateAccountPath(vendor, id); len(pathErrors) > 0 {
+			writeFieldErrors(w, pathErrors)
+			return
+		}
+		if err := registry.Unban(r.Context(), vendor, id); err != nil {
+			writeRegistryError(w, "unban", err)
+			return
+		}
+		WriteJSON(w, http.StatusAccepted, accountOpResponse{
+			Vendor: string(vendor), AccountID: id, Effective: "propagating",
+		})
+	})
+}
+
+// circuitAccountHandler serves POST /v1/admin/accounts/{vendor}/{id}/circuit.
+// It broadcasts CIRCUIT_FORCE_OPEN/CLOSE directly via the injected
+// broadcaster; a nil broadcaster (not wired) yields 500, never a panic.
+func circuitAccountHandler(broadcaster EventBroadcaster) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		vendor := types.Vendor(r.PathValue("vendor"))
+		id := r.PathValue("id")
+		if pathErrors := validateAccountPath(vendor, id); len(pathErrors) > 0 {
+			writeFieldErrors(w, pathErrors)
+			return
+		}
+		var req circuitAccountRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			WriteError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
+		var eventType string
+		switch req.Action {
+		case "force_open":
+			eventType = types.EventCircuitForceOpen
+		case "force_close":
+			eventType = types.EventCircuitForceClose
+		default:
+			writeFieldErrors(w, map[string]string{"action": "must be one of force_open|force_close"})
+			return
+		}
+		if broadcaster == nil {
+			WriteError(w, http.StatusInternalServerError, "circuit broadcaster not configured")
+			return
+		}
+		if err := broadcaster.Broadcast(eventType, types.CircuitPayload{Vendor: vendor, AccountID: id}); err != nil {
+			WriteError(w, http.StatusInternalServerError, fmt.Sprintf("broadcast circuit event: %v", err))
+			return
+		}
+		WriteJSON(w, http.StatusAccepted, accountOpResponse{
+			Vendor: string(vendor), AccountID: id, Effective: "propagating",
 		})
 	})
 }

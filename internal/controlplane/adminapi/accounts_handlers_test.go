@@ -67,7 +67,7 @@ func healthView(state string, latency int, errMsg string, banUntil *time.Time, l
 func makeServer(mc AdminAccountsReader, w AdminAccountsWriter) *Server {
 	secret := []byte("test-secret-key-for-admin-tokens")
 	srv := NewServer(secret)
-	RegisterAccountsRoutes(srv, mc, w)
+	RegisterAccountsRoutes(srv, mc, w, nil)
 	return srv
 }
 
@@ -482,6 +482,7 @@ type fakeAccountRegistry struct {
 	accounts map[string]accountregistry.AccountInfo
 
 	createErr error // injected CreateAccount failure
+	banErr    error // injected Ban failure
 
 	setEnabledCalls       []bool
 	setRateLimitCalls     []types.RateLimitConfig
@@ -489,6 +490,16 @@ type fakeAccountRegistry struct {
 	credentialUpdates     int
 	clientConfigUpdates   int
 	broadcasts            int
+	lastCredPayload       types.CredentialChangePayload
+	banCalls              []banCall
+	unbanCalls            []string
+}
+
+type banCall struct {
+	vendor    types.Vendor
+	accountID string
+	reason    string
+	banUntil  time.Time
 }
 
 func newFakeAccountRegistry() *fakeAccountRegistry {
@@ -541,8 +552,46 @@ func (f *fakeAccountRegistry) UpdateClientConfig(_ context.Context, vendor types
 	return nil
 }
 
-func (f *fakeAccountRegistry) OnCredentialChange(_ context.Context, _ types.Vendor, _ string) {
+func (f *fakeAccountRegistry) OnCredentialChange(_ context.Context, vendor types.Vendor, accountID string) {
 	f.broadcasts++
+	// Mirror production OnCredentialChange: re-read the stored material so the
+	// captured payload is exactly what would be broadcast.
+	cred, cc, err := f.GetAccountSecret(context.Background(), vendor, accountID)
+	if err != nil {
+		return
+	}
+	f.lastCredPayload = types.CredentialChangePayload{
+		Vendor: vendor, AccountID: accountID, Credential: cred, ClientConfig: cc,
+	}
+}
+
+func (f *fakeAccountRegistry) Ban(_ context.Context, vendor types.Vendor, accountID, reason string, banUntil time.Time) error {
+	if f.banErr != nil {
+		return f.banErr
+	}
+	f.banCalls = append(f.banCalls, banCall{vendor: vendor, accountID: accountID, reason: reason, banUntil: banUntil})
+	return nil
+}
+
+func (f *fakeAccountRegistry) Unban(_ context.Context, vendor types.Vendor, accountID string) error {
+	f.unbanCalls = append(f.unbanCalls, fakeKey(vendor, accountID))
+	return nil
+}
+
+// fakeBroadcaster captures Broadcast calls for the circuit handler tests.
+type fakeBroadcaster struct {
+	eventTypes []string
+	payloads   []any
+	err        error // injected Broadcast failure
+}
+
+func (f *fakeBroadcaster) Broadcast(eventType string, payload any) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.eventTypes = append(f.eventTypes, eventType)
+	f.payloads = append(f.payloads, payload)
+	return nil
 }
 
 func (f *fakeAccountRegistry) SetEnabled(_ context.Context, vendor types.Vendor, accountID string, enabled bool) error {
@@ -684,21 +733,22 @@ func decodeFieldErrors(t *testing.T, body string) map[string]string {
 	return parsed.FieldErrors
 }
 
-func makeWriteServer(t *testing.T) (*fakeAccountRegistry, *httptest.Server, string) {
+func makeWriteServer(t *testing.T) (*fakeAccountRegistry, *fakeBroadcaster, *httptest.Server, string) {
 	t.Helper()
 	reg := newFakeAccountRegistry()
+	bc := &fakeBroadcaster{}
 	secret := []byte("test-secret-key-for-admin-tokens")
 	srv := NewServer(secret)
-	RegisterAccountsRoutes(srv, reg, reg)
+	RegisterAccountsRoutes(srv, reg, reg, bc)
 	ts := httptest.NewServer(srv.mux)
 	t.Cleanup(ts.Close)
-	return reg, ts, signAdminToken(t, secret)
+	return reg, bc, ts, signAdminToken(t, secret)
 }
 
 // Given valid baidu input, when POST then GET, then 201 and the read model
 // shows credential_meta.has_refresh_token=true (full link through the fake).
 func TestAccountsWrite_PostThenGetShowsCredentialMeta(t *testing.T) {
-	reg, ts, token := makeWriteServer(t)
+	reg, _, ts, token := makeWriteServer(t)
 
 	status, body := doRaw(t, ts, http.MethodPost, "/v1/admin/accounts", token, jsonBody(t, map[string]any{
 		"vendor":     "baidu",
@@ -757,7 +807,7 @@ func TestAccountsWrite_PostThenGetShowsCredentialMeta(t *testing.T) {
 // Given B4 violations, when POST /v1/admin/accounts, then 400 with the
 // documented field_errors entry.
 func TestAccountsWrite_PostValidationErrors(t *testing.T) {
-	_, ts, token := makeWriteServer(t)
+	_, _, ts, token := makeWriteServer(t)
 	cases := []struct {
 		name      string
 		payload   map[string]any
@@ -865,7 +915,7 @@ func TestAccountsWrite_PostValidationErrors(t *testing.T) {
 // Given an existing account, when POST repeats (vendor, account_id), then
 // 409 {"error":"account exists"}.
 func TestAccountsWrite_PostConflict(t *testing.T) {
-	reg, ts, token := makeWriteServer(t)
+	reg, _, ts, token := makeWriteServer(t)
 	seedAccount(t, reg, accountregistry.AccountInfo{
 		Vendor:    types.VendorBaidu,
 		AccountID: "mw_bak_01",
@@ -888,7 +938,7 @@ func TestAccountsWrite_PostConflict(t *testing.T) {
 // Given a stored account, when PUT carries only {enabled:false}, then
 // credentials stay byte-identical and SetEnabled is called — no broadcast.
 func TestAccountsWrite_PutEnabledOnlyCredentialsUntouched(t *testing.T) {
-	reg, ts, token := makeWriteServer(t)
+	reg, _, ts, token := makeWriteServer(t)
 	seedAccount(t, reg, accountregistry.AccountInfo{
 		Vendor:       types.VendorBaidu,
 		AccountID:    "mw_bak_01",
@@ -930,7 +980,7 @@ func TestAccountsWrite_PutEnabledOnlyCredentialsUntouched(t *testing.T) {
 // refresh_token, then the credential rotates, client_secret stays, and ONE
 // CREDENTIAL_UPDATE broadcast fires.
 func TestAccountsWrite_PutAuthRotatesRefreshTokenOnly(t *testing.T) {
-	reg, ts, token := makeWriteServer(t)
+	reg, _, ts, token := makeWriteServer(t)
 	seedAccount(t, reg, accountregistry.AccountInfo{
 		Vendor:       types.VendorBaidu,
 		AccountID:    "mw_bak_01",
@@ -970,7 +1020,7 @@ func TestAccountsWrite_PutAuthRotatesRefreshTokenOnly(t *testing.T) {
 // Given a stored 115 account, when PUT auth carries cookies, then the cookie
 // map is replaced wholesale (old keys gone) with one broadcast.
 func TestAccountsWrite_PutCookiesWholesaleReplacement(t *testing.T) {
-	reg, ts, token := makeWriteServer(t)
+	reg, _, ts, token := makeWriteServer(t)
 	seedAccount(t, reg, accountregistry.AccountInfo{
 		Vendor:    types.Vendor115,
 		AccountID: "mw_115_01",
@@ -1013,7 +1063,7 @@ func TestAccountsWrite_PutCookiesWholesaleReplacement(t *testing.T) {
 // Given PUT misuse, when the body is empty/absent or the path is bad or the
 // account is missing, then the documented 400/404 results hold.
 func TestAccountsWrite_PutEdgeCases(t *testing.T) {
-	reg, ts, token := makeWriteServer(t)
+	reg, _, ts, token := makeWriteServer(t)
 	seedAccount(t, reg, accountregistry.AccountInfo{
 		Vendor:     types.VendorBaidu,
 		AccountID:  "mw_bak_01",
@@ -1103,7 +1153,7 @@ func TestAccountsWrite_PutEdgeCases(t *testing.T) {
 // Given a stored account, when PUT carries vendor_profile, then the PG-record
 // value is written (Vendor pinned) and the response keeps the B2 note.
 func TestAccountsWrite_PutVendorProfileWritesRecordWithNote(t *testing.T) {
-	reg, ts, token := makeWriteServer(t)
+	reg, _, ts, token := makeWriteServer(t)
 	seedAccount(t, reg, accountregistry.AccountInfo{
 		Vendor:    types.VendorBaidu,
 		AccountID: "mw_bak_01",
@@ -1131,7 +1181,7 @@ func TestAccountsWrite_PutVendorProfileWritesRecordWithNote(t *testing.T) {
 
 // Given no bearer token, when POST or PUT is attempted, then 401.
 func TestAccountsWrite_NoToken(t *testing.T) {
-	_, ts, _ := makeWriteServer(t)
+	_, _, ts, _ := makeWriteServer(t)
 	status, _ := doRaw(t, ts, http.MethodPost, "/v1/admin/accounts", "", jsonBody(t, map[string]any{}))
 	if status != http.StatusUnauthorized {
 		t.Errorf("POST status = %d, want 401", status)
@@ -1145,7 +1195,7 @@ func TestAccountsWrite_NoToken(t *testing.T) {
 // Given the full CRUD journey, when every response body is grepped, then no
 // sentinel secret value appears anywhere.
 func TestAccountsWrite_ZeroSecretLeakAcrossResponses(t *testing.T) {
-	reg, ts, token := makeWriteServer(t)
+	reg, _, ts, token := makeWriteServer(t)
 	var bodies []string
 	collect := func(status int, body string) int {
 		bodies = append(bodies, body)
@@ -1201,4 +1251,326 @@ func TestAccountsWrite_ZeroSecretLeakAcrossResponses(t *testing.T) {
 		}
 	}
 	_ = reg
+}
+
+// ─── Operations (todo 27: rotate / ban / unban / circuit) ─────────────────
+
+// Given a stored baidu account, when POST .../rotate carries a new auth field
+// set, then the credential rotates through the SAME ApplyAuthPatch path as
+// PUT and exactly ONE CREDENTIAL_UPDATE fires with the new material in the
+// payload.
+func TestAccountOps_RotateBroadcastsNewCredential(t *testing.T) {
+	reg, _, ts, token := makeWriteServer(t)
+	seedAccount(t, reg, accountregistry.AccountInfo{
+		Vendor:       types.VendorBaidu,
+		AccountID:    "mw_bak_01",
+		Credential:   types.Credential{RefreshToken: "old-rt"},
+		ClientConfig: types.ClientConfig{ClientID: "cid", ClientSecret: sentinelClientSecret},
+		Enabled:      true,
+	})
+
+	status, body := doRaw(t, ts, http.MethodPost, "/v1/admin/accounts/baidu/mw_bak_01/rotate", token,
+		jsonBody(t, map[string]any{"refresh_token": sentinelRefreshToken, "client_id": "cid-2"}))
+	if status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 (body=%s)", status, body)
+	}
+	assertNoSecretLeak(t, body)
+	if !strings.Contains(body, `"effective":"propagating"`) {
+		t.Errorf("body = %s, want effective propagating", body)
+	}
+	if reg.broadcasts != 1 {
+		t.Fatalf("broadcasts = %d, want exactly 1 CREDENTIAL_UPDATE", reg.broadcasts)
+	}
+	p := reg.lastCredPayload
+	if p.Vendor != types.VendorBaidu || p.AccountID != "mw_bak_01" {
+		t.Errorf("payload id = %s/%s, want baidu/mw_bak_01", p.Vendor, p.AccountID)
+	}
+	if p.Credential.RefreshToken != sentinelRefreshToken {
+		t.Errorf("payload credential.refresh_token not rotated")
+	}
+	if p.ClientConfig.ClientID != "cid-2" || p.ClientConfig.ClientSecret != sentinelClientSecret {
+		t.Errorf("payload client_config = %+v, want cid-2/<sentinel>", p.ClientConfig)
+	}
+	// Stored material agrees (ApplyAuthPatch wrote through the same path).
+	cred, cc, err := reg.GetAccountSecret(context.Background(), types.VendorBaidu, "mw_bak_01")
+	if err != nil {
+		t.Fatalf("GetAccountSecret: %v", err)
+	}
+	if cred.RefreshToken != sentinelRefreshToken || cc.ClientID != "cid-2" {
+		t.Errorf("stored material = %q/%+v, want rotated", cred.RefreshToken, cc)
+	}
+}
+
+// Given rotate misuse, when the body is empty/absent or fails B4 validation
+// or the account is missing, then the documented 400/404 results hold.
+func TestAccountOps_RotateEdgeCases(t *testing.T) {
+	reg, _, ts, token := makeWriteServer(t)
+	seedAccount(t, reg, accountregistry.AccountInfo{
+		Vendor:       types.VendorBaidu,
+		AccountID:    "mw_bak_01",
+		Credential:   types.Credential{RefreshToken: sentinelRefreshToken},
+		ClientConfig: types.ClientConfig{ClientID: "cid", ClientSecret: sentinelClientSecret},
+		Enabled:      true,
+	})
+
+	t.Run("empty JSON object", func(t *testing.T) {
+		status, body := doRaw(t, ts, http.MethodPost, "/v1/admin/accounts/baidu/mw_bak_01/rotate", token, jsonBody(t, map[string]any{}))
+		if status != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400 (body=%s)", status, body)
+		}
+		fe := decodeFieldErrors(t, body)
+		if fe["auth"] != "required" {
+			t.Errorf("field_errors = %v, want auth required", fe)
+		}
+	})
+	t.Run("no body at all", func(t *testing.T) {
+		status, _ := doRaw(t, ts, http.MethodPost, "/v1/admin/accounts/baidu/mw_bak_01/rotate", token, nil)
+		if status != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", status)
+		}
+	})
+	t.Run("B4 validation failure", func(t *testing.T) {
+		status, body := doRaw(t, ts, http.MethodPost, "/v1/admin/accounts/baidu/mw_bak_01/rotate", token,
+			jsonBody(t, map[string]any{"redirect_uri": "not-a-url"}))
+		if status != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400 (body=%s)", status, body)
+		}
+		assertNoSecretLeak(t, body)
+		fe := decodeFieldErrors(t, body)
+		if !strings.Contains(fe["redirect_uri"], "valid URL") {
+			t.Errorf("field_errors = %v, want redirect_uri URL error", fe)
+		}
+		if reg.broadcasts != 0 {
+			t.Errorf("broadcasts = %d, want 0 (validation failed before write)", reg.broadcasts)
+		}
+	})
+	t.Run("missing account", func(t *testing.T) {
+		status, _ := doRaw(t, ts, http.MethodPost, "/v1/admin/accounts/baidu/ghost_01/rotate", token,
+			jsonBody(t, map[string]any{"refresh_token": "x"}))
+		if status != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", status)
+		}
+	})
+}
+
+// Given a stored account, when POST .../ban carries only {reason}, then
+// registry.Ban fires with ban_until defaulting to +24h and the response is
+// 202 propagating (no second confirmation — that is the UI's job).
+func TestAccountOps_BanDefaultsTo24h(t *testing.T) {
+	reg, _, ts, token := makeWriteServer(t)
+	seedAccount(t, reg, accountregistry.AccountInfo{
+		Vendor: types.VendorBaidu, AccountID: "mw_bak_01", Enabled: true,
+	})
+	before := time.Now()
+	status, body := doRaw(t, ts, http.MethodPost, "/v1/admin/accounts/baidu/mw_bak_01/ban", token,
+		jsonBody(t, map[string]any{"reason": "vendor throttling"}))
+	after := time.Now()
+	if status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 (body=%s)", status, body)
+	}
+	if !strings.Contains(body, `"effective":"propagating"`) {
+		t.Errorf("body = %s, want effective propagating", body)
+	}
+	if len(reg.banCalls) != 1 {
+		t.Fatalf("banCalls = %d, want 1", len(reg.banCalls))
+	}
+	call := reg.banCalls[0]
+	if call.vendor != types.VendorBaidu || call.accountID != "mw_bak_01" {
+		t.Errorf("ban target = %s/%s, want baidu/mw_bak_01", call.vendor, call.accountID)
+	}
+	if call.reason != "vendor throttling" {
+		t.Errorf("ban reason = %q, want vendor throttling", call.reason)
+	}
+	lo := before.Add(defaultBanDuration)
+	hi := after.Add(defaultBanDuration)
+	if call.banUntil.Before(lo) || call.banUntil.After(hi) {
+		t.Errorf("banUntil = %v, want within [%v, %v] (default +24h)", call.banUntil, lo, hi)
+	}
+}
+
+// Given explicit ban inputs, when POST .../ban carries ban_until or an
+// invalid value or an empty body, then the documented parse/default/400
+// behaviors hold.
+func TestAccountOps_BanExplicitAndEdgeCases(t *testing.T) {
+	reg, _, ts, token := makeWriteServer(t)
+	seedAccount(t, reg, accountregistry.AccountInfo{
+		Vendor: types.VendorBaidu, AccountID: "mw_bak_01", Enabled: true,
+	})
+
+	t.Run("explicit ban_until honored", func(t *testing.T) {
+		want := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+		status, body := doRaw(t, ts, http.MethodPost, "/v1/admin/accounts/baidu/mw_bak_01/ban", token,
+			jsonBody(t, map[string]any{"reason": "abuse", "ban_until": want.Format(time.RFC3339)}))
+		if status != http.StatusAccepted {
+			t.Fatalf("status = %d, want 202 (body=%s)", status, body)
+		}
+		call := reg.banCalls[len(reg.banCalls)-1]
+		if !call.banUntil.Equal(want) {
+			t.Errorf("banUntil = %v, want %v", call.banUntil, want)
+		}
+	})
+	t.Run("empty body uses all defaults", func(t *testing.T) {
+		status, _ := doRaw(t, ts, http.MethodPost, "/v1/admin/accounts/baidu/mw_bak_01/ban", token, nil)
+		if status != http.StatusAccepted {
+			t.Fatalf("status = %d, want 202", status)
+		}
+		call := reg.banCalls[len(reg.banCalls)-1]
+		if call.reason != "" {
+			t.Errorf("reason = %q, want empty", call.reason)
+		}
+	})
+	t.Run("bad ban_until is 400", func(t *testing.T) {
+		status, body := doRaw(t, ts, http.MethodPost, "/v1/admin/accounts/baidu/mw_bak_01/ban", token,
+			jsonBody(t, map[string]any{"ban_until": "tomorrow"}))
+		if status != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400 (body=%s)", status, body)
+		}
+		fe := decodeFieldErrors(t, body)
+		if !strings.Contains(fe["ban_until"], "RFC3339") {
+			t.Errorf("field_errors = %v, want ban_until RFC3339 hint", fe)
+		}
+	})
+	t.Run("registry error is 500", func(t *testing.T) {
+		reg.banErr = errors.New("pg down")
+		defer func() { reg.banErr = nil }()
+		status, _ := doRaw(t, ts, http.MethodPost, "/v1/admin/accounts/baidu/mw_bak_01/ban", token,
+			jsonBody(t, map[string]any{}))
+		if status != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want 500", status)
+		}
+	})
+}
+
+// Given a stored account, when POST .../unban fires, then registry.Unban is
+// called with the exact vendor/account_id and the response is 202.
+func TestAccountOps_Unban(t *testing.T) {
+	reg, _, ts, token := makeWriteServer(t)
+	seedAccount(t, reg, accountregistry.AccountInfo{
+		Vendor: types.Vendor115, AccountID: "mw_115_01", Enabled: true,
+	})
+	status, body := doRaw(t, ts, http.MethodPost, "/v1/admin/accounts/115/mw_115_01/unban", token, nil)
+	if status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 (body=%s)", status, body)
+	}
+	if !strings.Contains(body, `"effective":"propagating"`) {
+		t.Errorf("body = %s, want effective propagating", body)
+	}
+	if len(reg.unbanCalls) != 1 || reg.unbanCalls[0] != "115/mw_115_01" {
+		t.Errorf("unbanCalls = %v, want [115/mw_115_01]", reg.unbanCalls)
+	}
+}
+
+// Given a wired broadcaster, when POST .../circuit carries force_open or
+// force_close, then exactly one matching event with the correct CircuitPayload
+// is broadcast and the response is 202 (event emitted; node applies it).
+func TestAccountOps_CircuitBroadcastsEvent(t *testing.T) {
+	_, bc, ts, token := makeWriteServer(t)
+	cases := []struct {
+		action    string
+		wantEvent string
+	}{
+		{"force_open", types.EventCircuitForceOpen},
+		{"force_close", types.EventCircuitForceClose},
+	}
+	for _, tc := range cases {
+		t.Run(tc.action, func(t *testing.T) {
+			status, body := doRaw(t, ts, http.MethodPost, "/v1/admin/accounts/quark/mw_qk_01/circuit", token,
+				jsonBody(t, map[string]any{"action": tc.action}))
+			if status != http.StatusAccepted {
+				t.Fatalf("status = %d, want 202 (body=%s)", status, body)
+			}
+			if !strings.Contains(body, `"effective":"propagating"`) {
+				t.Errorf("body = %s, want effective propagating", body)
+			}
+			if len(bc.eventTypes) != 1 {
+				t.Fatalf("broadcasts = %d, want 1", len(bc.eventTypes))
+			}
+			if bc.eventTypes[0] != tc.wantEvent {
+				t.Errorf("eventType = %q, want %q", bc.eventTypes[0], tc.wantEvent)
+			}
+			payload, ok := bc.payloads[0].(types.CircuitPayload)
+			if !ok {
+				t.Fatalf("payload type = %T, want types.CircuitPayload", bc.payloads[0])
+			}
+			if payload.Vendor != types.VendorQuark || payload.AccountID != "mw_qk_01" {
+				t.Errorf("payload = %+v, want quark/mw_qk_01", payload)
+			}
+			bc.eventTypes, bc.payloads = nil, nil
+		})
+	}
+}
+
+// Given circuit misuse, when the action is unknown or the broadcaster fails,
+// then 400/500 hold; circuit never touches account_health (no Ban/Unban call).
+func TestAccountOps_CircuitEdgeCases(t *testing.T) {
+	reg, bc, ts, token := makeWriteServer(t)
+
+	t.Run("unknown action is 400", func(t *testing.T) {
+		status, body := doRaw(t, ts, http.MethodPost, "/v1/admin/accounts/quark/mw_qk_01/circuit", token,
+			jsonBody(t, map[string]any{"action": "trip"}))
+		if status != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400 (body=%s)", status, body)
+		}
+		fe := decodeFieldErrors(t, body)
+		if !strings.Contains(fe["action"], "force_open|force_close") {
+			t.Errorf("field_errors = %v, want action enum hint", fe)
+		}
+		if len(bc.eventTypes) != 0 {
+			t.Errorf("broadcasts = %d, want 0 for bad action", len(bc.eventTypes))
+		}
+	})
+	t.Run("broadcast failure is 500", func(t *testing.T) {
+		bc.err = errors.New("no peers")
+		defer func() { bc.err = nil }()
+		status, _ := doRaw(t, ts, http.MethodPost, "/v1/admin/accounts/quark/mw_qk_01/circuit", token,
+			jsonBody(t, map[string]any{"action": "force_open"}))
+		if status != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want 500", status)
+		}
+	})
+	t.Run("no account_health write", func(t *testing.T) {
+		status, _ := doRaw(t, ts, http.MethodPost, "/v1/admin/accounts/quark/mw_qk_01/circuit", token,
+			jsonBody(t, map[string]any{"action": "force_close"}))
+		if status != http.StatusAccepted {
+			t.Fatalf("status = %d, want 202", status)
+		}
+		if len(reg.banCalls) != 0 || len(reg.unbanCalls) != 0 {
+			t.Errorf("circuit touched registry health: bans=%v unbans=%v", reg.banCalls, reg.unbanCalls)
+		}
+	})
+}
+
+// Given a server built WITHOUT a broadcaster (nil), when POST .../circuit is
+// attempted, then 500 is returned without panic.
+func TestAccountOps_CircuitNilBroadcasterIs500(t *testing.T) {
+	reg := newFakeAccountRegistry()
+	secret := []byte("test-secret-key-for-admin-tokens")
+	srv := NewServer(secret)
+	RegisterAccountsRoutes(srv, reg, reg, nil)
+	ts := httptest.NewServer(srv.mux)
+	t.Cleanup(ts.Close)
+	token := signAdminToken(t, secret)
+
+	status, body := doRaw(t, ts, http.MethodPost, "/v1/admin/accounts/quark/mw_qk_01/circuit", token,
+		jsonBody(t, map[string]any{"action": "force_open"}))
+	if status != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500 (body=%s)", status, body)
+	}
+}
+
+// Given no bearer token, when any operation endpoint is attempted, then 401.
+func TestAccountOps_NoToken(t *testing.T) {
+	_, _, ts, _ := makeWriteServer(t)
+	body := jsonBody(t, map[string]any{"action": "force_open"})
+	for _, path := range []string{
+		"/v1/admin/accounts/baidu/mw_01/rotate",
+		"/v1/admin/accounts/baidu/mw_01/ban",
+		"/v1/admin/accounts/baidu/mw_01/unban",
+		"/v1/admin/accounts/baidu/mw_01/circuit",
+	} {
+		status, _ := doRaw(t, ts, http.MethodPost, path, "", body)
+		if status != http.StatusUnauthorized {
+			t.Errorf("POST %s status = %d, want 401", path, status)
+		}
+	}
 }
