@@ -58,13 +58,22 @@ func (m *mockBackendUploader) Put(_ context.Context, blobHash string, reader io.
 
 // mockBackendPool returns fixed mock uploaders and records the last K requested.
 type mockBackendPool struct {
+	mu        sync.Mutex
 	err       error
 	uploaders []*mockBackendUploader
 	gotK      int // last K passed to SelectKForUpload
 }
 
+func (m *mockBackendPool) gotKLocked() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.gotK
+}
+
 func (m *mockBackendPool) SelectKForUpload(k int) ([]BackendUploader, error) {
+	m.mu.Lock()
 	m.gotK = k
+	m.mu.Unlock()
 	if m.err != nil {
 		return nil, m.err
 	}
@@ -400,8 +409,8 @@ func TestIngest_RedundancyK3(t *testing.T) {
 	}
 
 	pool := p.backends.(*mockBackendPool)
-	if pool.gotK != 3 {
-		t.Errorf("SelectKForUpload called with k=%d, want 3", pool.gotK)
+	if got := pool.gotKLocked(); got != 3 {
+		t.Errorf("SelectKForUpload called with k=%d, want 3", got)
 	}
 }
 
@@ -444,8 +453,8 @@ func TestIngest_RedundancyNormalizesTo2(t *testing.T) {
 			}
 
 			pool := p.backends.(*mockBackendPool)
-			if pool.gotK != 2 {
-				t.Errorf("SelectKForUpload called with k=%d, want 2 (normalized from %d)", pool.gotK, tt.redundancy)
+			if got := pool.gotKLocked(); got != 2 {
+				t.Errorf("SelectKForUpload called with k=%d, want 2 (normalized from %d)", got, tt.redundancy)
 			}
 		})
 	}
