@@ -7,6 +7,7 @@ data:
   ingest-worker.yaml: |
     http:
       listen: ":8080"
+      max_upload_bytes: 10737418240
 
     metadata:
       pg_dsn: "postgres://mediaworker:mediaworker@pg-mediaworker-rw.mediaworker-test.svc.cluster.local:5432/mediaworker?sslmode=disable"
@@ -52,6 +53,10 @@ data:
       ffmpeg_path: "/usr/bin/ffmpeg"
       work_dir: "/data/ingest"
       redundancy: 2
+
+    control_plane:
+      multiaddr: "/dns4/control-plane.mediaworker-test.svc.cluster.local/tcp/9001/p2p/12D3KooWSjSukohQ1Wkohcq21z3FoQ6iikANHRvs1i11yWfUBTLQ"
+      priv_key_path: "/data/identity/ingest-worker-libp2p.key"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -72,6 +77,19 @@ spec:
         app.kubernetes.io/name: ingest-worker
         app.kubernetes.io/part-of: mediaworker
     spec:
+      initContainers:
+        - name: ensure-data-dirs
+          image: ghcr.io/shlande/ingest-worker:latest
+          imagePullPolicy: Always
+          command:
+            - "sh"
+            - "-c"
+            - "mkdir -p /data/identity && chown -R app:app /data"
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - mountPath: /data
+              name: data
       containers:
         - name: ingest-worker
           image: ghcr.io/shlande/ingest-worker:latest
@@ -85,6 +103,9 @@ spec:
           env:
             - name: GOMAXPROCS
               value: "2"
+            # LIBP2P_PSK: set to hex-encoded 32-byte PSK if private_network.enabled is true
+            # - name: LIBP2P_PSK
+            #   value: "<hex-psk>"
           resources:
             requests:
               cpu: 100m
@@ -115,7 +136,21 @@ spec:
           configMap:
             name: ingest-worker-config
         - name: data
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: ingest-worker-data
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ingest-worker-data
+  namespace: mediaworker-test
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 1Gi
 ---
 apiVersion: v1
 kind: Service

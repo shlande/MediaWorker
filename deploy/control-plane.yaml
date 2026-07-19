@@ -1,0 +1,189 @@
+# control-plane.yaml -- MediaWorker control-plane (test env, namespace: mediaworker-test)
+# Extracted from live cluster with T17-deprecated `metadata.popularity_query_interval` removed.
+# Do not edit by hand without consulting the live cluster state.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: control-plane-config
+  namespace: mediaworker-test
+  labels:
+    app.kubernetes.io/name: control-plane
+    app.kubernetes.io/part-of: mediaworker
+data:
+  control-plane.yaml: |
+    # control-plane.yaml -- 测试环境配置 (k8s namespace: mediaworker-test)
+    jwt_http:
+      listen: ":8443"
+      read_timeout: "10s"
+      write_timeout: "10s"
+
+    l4_whitelist:
+      db_path: "/data/controlplane/l4-whitelist.db"
+
+    pin_orchestrator:
+      rebalance_interval: "10m"
+      top_contents_limit: 5000
+
+    dht_bootstrap:
+      listen_addrs:
+        - "/ip4/0.0.0.0/tcp/9001"
+        - "/ip4/0.0.0.0/udp/9001/quic"
+      namespace: "edge"
+      advertise_ttl: "2m"
+      advertise_interval: "30s"
+      bootstrap_peers: []
+
+    sync_broadcaster:
+      protocol_id: "/mediaworker/sync/0.1.0"
+      send_timeout: "30s"
+
+    # DSN 指向同 namespace 下的 CNPG Cluster (deploy/postgres.yaml)
+    # 密码由 CNPG operator 自动生成, 存于 secret pg-mediaworker-app
+    # TODO: move to Secret ref before production
+    metadata:
+      pg_dsn: "postgres://mediaworker:REPLACE_VIA_CLUSTER_LOCAL_SECRET@pg-mediaworker-rw.mediaworker-test.svc.cluster.local:5432/mediaworker?sslmode=disable"
+
+    identity:
+      priv_key_path: "/data/controlplane/ed25519-jwt.key"
+      libp2p_priv_key_path: "/data/controlplane/ed25519-libp2p.key"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: control-plane-data
+  namespace: mediaworker-test
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+  storageClassName: local-path
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: control-plane
+  namespace: mediaworker-test
+  labels:
+    app.kubernetes.io/name: control-plane
+    app.kubernetes.io/part-of: mediaworker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: control-plane
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: control-plane
+        app.kubernetes.io/part-of: mediaworker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 100
+        fsGroup: 100
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - oci-sg
+      initContainers:
+        - name: ensure-data-dirs
+          image: ghcr.io/shlande/control-plane:latest
+          imagePullPolicy: Always
+          command:
+            - sh
+            - -c
+            - mkdir -p /data/controlplane
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      containers:
+        - name: control-plane
+          image: ghcr.io/shlande/control-plane:latest
+          imagePullPolicy: Always
+          args:
+            - -config
+            - /etc/mediaworker/control-plane.yaml
+          ports:
+            - name: jwt-http
+              containerPort: 8443
+              protocol: TCP
+            - name: dht
+              containerPort: 9001
+              protocol: TCP
+            - name: dht-quic
+              containerPort: 9001
+              protocol: UDP
+          env:
+            - name: GOMAXPROCS
+              value: "2"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          livenessProbe:
+            tcpSocket:
+              port: jwt-http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            tcpSocket:
+              port: jwt-http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 6
+          volumeMounts:
+            - name: config
+              mountPath: /etc/mediaworker
+              readOnly: true
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: config
+          configMap:
+            name: control-plane-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: control-plane-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: control-plane
+  namespace: mediaworker-test
+  labels:
+    app.kubernetes.io/name: control-plane
+    app.kubernetes.io/part-of: mediaworker
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: control-plane
+  ports:
+    - name: jwt-http
+      port: 8443
+      protocol: TCP
+      targetPort: jwt-http
+    - name: dht
+      port: 9001
+      protocol: TCP
+      targetPort: dht
+    - name: dht-quic
+      port: 9001
+      protocol: UDP
+      targetPort: dht-quic

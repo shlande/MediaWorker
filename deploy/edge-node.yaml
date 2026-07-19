@@ -1,0 +1,207 @@
+# edge-node.yaml -- MediaWorker edge-node (test env, namespace: mediaworker-test)
+# Extracted from live cluster with T17-deprecated `access_layer.fetch_segment_client` removed
+# (T17 deleted this field from the Go struct; keeping it would emit a deprecation Warn).
+# Adds the Deployment + PVC that the live cluster is missing -- control-plane logs show
+# `failed to find any peer in table` because no edge-node was running.
+# Do not edit by hand without consulting the live cluster state.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: edge-node-config
+  namespace: mediaworker-test
+  labels:
+    app.kubernetes.io/name: edge-node
+    app.kubernetes.io/part-of: mediaworker
+data:
+  node.yaml: |
+    # node.yaml -- edge-node 测试环境配置 (k8s namespace: mediaworker-test)
+    node:
+      identity:
+        priv_key_path: "/data/identity/ed25519.key"
+
+      declared_capabilities:
+        edge: true
+        l4_backhaul: false
+        relay_provider: false
+        peer_icp: true
+
+      libp2p:
+        listen:
+          - "/ip4/0.0.0.0/tcp/9001"
+          - "/ip4/0.0.0.0/udp/9001/quic"
+        private_network:
+          enabled: false
+          force_pnet_env: false
+        dht:
+          mode: server
+          namespace: "edge"
+          advertise_ttl: "2m"
+          advertise_interval: "30s"
+          bootstrap_peers:
+            # peerid 来自 control-plane 启动日志: 12D3KooWSjSukohQ1Wkohcq21z3FoQ6iikANHRvs1i11yWfUBTLQ
+            # k8s Service 只提供 A 记录, 必须用 /dns4/ 而非 /dnsaddr/ (后者需要 SRV 记录)
+            - "/dns4/control-plane.mediaworker-test.svc.cluster.local/tcp/9001/p2p/12D3KooWSjSukohQ1Wkohcq21z3FoQ6iikANHRvs1i11yWfUBTLQ"
+        nat_traversal:
+          autonat: false
+          auto_relay: false
+          dcutr: false
+        peer_store:
+          path: "/data/identity/peerstore.db"
+          gc_interval: "1h"
+        conn_gater:
+          ip_rate_limit: 50
+
+      jwt_service:
+        endpoint: "http://control-plane.mediaworker-test.svc.cluster.local:8443/v1/node/jwt"
+        refresh_interval: "5m"
+        refresh_before_expiry: "5m"
+
+    edge:
+      prefix_cache: { enabled: true, path: "/data/prefix", size_gb: 1 }
+      warm_cache:   { enabled: true, path: "/data/warm",   size_gb: 1 }
+
+    access_layer:
+      data_plane:
+        enabled: false
+      # T17 removed `fetch_segment_client` from the Go config struct (EdgeRouter +
+      # backhaulICPFetcher are wired unconditionally now). Live cluster still has
+      # this key; dropping it here so `kubectl apply` is idempotent and warning-free.
+
+    hash_ring:
+      replicas: 150
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: edge-node-data
+  namespace: mediaworker-test
+  labels:
+    app.kubernetes.io/name: edge-node
+    app.kubernetes.io/part-of: mediaworker
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+  storageClassName: local-path
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edge-node
+  namespace: mediaworker-test
+  labels:
+    app.kubernetes.io/name: edge-node
+    app.kubernetes.io/part-of: mediaworker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: edge-node
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: edge-node
+        app.kubernetes.io/part-of: mediaworker
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 100
+        runAsGroup: 100
+        fsGroup: 100
+      initContainers:
+        - name: ensure-data-dirs
+          image: ghcr.io/shlande/edge-node:latest
+          imagePullPolicy: Always
+          command:
+            - sh
+            - -c
+            - mkdir -p /data/identity /data/warm /data/prefix && chown -R app:app /data
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      containers:
+        - name: edge-node
+          image: ghcr.io/shlande/edge-node:latest
+          imagePullPolicy: Always
+          args:
+            - -config
+            - /etc/mediaworker/node.yaml
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+            - name: dht
+              containerPort: 9001
+              protocol: TCP
+            - name: dht-quic
+              containerPort: 9001
+              protocol: UDP
+          env:
+            - name: GOMAXPROCS
+              value: "2"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          # cmd/edge-node/main.go only registers /blob/{hash} and /metrics on :8080 --
+          # no /healthz endpoint, so use tcpSocket probe on the http port.
+          livenessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 15
+            periodSeconds: 20
+          readinessProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          volumeMounts:
+            - name: config
+              mountPath: /etc/mediaworker
+              readOnly: true
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: config
+          configMap:
+            name: edge-node-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: edge-node-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: edge-node
+  namespace: mediaworker-test
+  labels:
+    app.kubernetes.io/name: edge-node
+    app.kubernetes.io/part-of: mediaworker
+spec:
+  type: ClusterIP
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: edge-node
+  ports:
+    - name: http
+      port: 8080
+      protocol: TCP
+      targetPort: http
+    - name: dht
+      port: 9001
+      protocol: TCP
+      targetPort: dht
+    - name: dht-quic
+      port: 9001
+      protocol: UDP
+      targetPort: dht-quic
