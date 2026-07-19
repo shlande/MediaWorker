@@ -105,7 +105,9 @@ spec:
             - -c
             - mkdir -p /data/controlplane
           securityContext:
-            runAsUser: 0
+            runAsNonRoot: true
+            runAsUser: 100
+            runAsGroup: 100
           volumeMounts:
             - name: data
               mountPath: /data

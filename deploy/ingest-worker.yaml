@@ -84,9 +84,11 @@ spec:
           command:
             - "sh"
             - "-c"
-            - "mkdir -p /data/identity && chown -R app:app /data"
+            - "mkdir -p /data/identity"
           securityContext:
-            runAsUser: 0
+            runAsNonRoot: true
+            runAsUser: 100
+            runAsGroup: 100
           volumeMounts:
             - mountPath: /data
               name: data

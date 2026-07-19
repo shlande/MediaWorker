@@ -120,9 +120,11 @@ spec:
           command:
             - sh
             - -c
-            - mkdir -p /data/identity /data/warm /data/prefix && chown -R app:app /data
+            - mkdir -p /data/identity /data/warm /data/prefix
           securityContext:
-            runAsUser: 0
+            runAsNonRoot: true
+            runAsUser: 100
+            runAsGroup: 100
           volumeMounts:
             - name: data
               mountPath: /data
