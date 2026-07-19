@@ -148,7 +148,7 @@ func (d *OneDriveDriver) do(req *http.Request) (*http.Response, error) {
 	if resp.StatusCode == http.StatusForbidden ||
 		resp.StatusCode == http.StatusMethodNotAllowed ||
 		resp.StatusCode == http.StatusTooManyRequests {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, &types.BanSignalError{
 			Code: resp.StatusCode,
 			Msg:  "onedrive: api returned " + resp.Status,
@@ -201,10 +201,10 @@ func (d *OneDriveDriver) List(ctx context.Context, dirID string, page int) ([]ty
 		}
 		var listResp graphListResponse
 		if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("onedrive: list decode: %w", err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 
 		currentPage++
 		if currentPage == page {
@@ -356,14 +356,14 @@ func (d *OneDriveDriver) putLarge(ctx context.Context, dirID, name string, reade
 		if end == size-1 || n < uploadChunkSize {
 			var item graphDriveItem
 			if err := json.NewDecoder(chunkResp.Body).Decode(&item); err != nil {
-				chunkResp.Body.Close()
+				_ = chunkResp.Body.Close()
 				return nil, fmt.Errorf("onedrive: final chunk decode: %w", err)
 			}
-			chunkResp.Body.Close()
+			_ = chunkResp.Body.Close()
 			fi := toFileInfo(item)
 			return &fi, nil
 		}
-		chunkResp.Body.Close()
+		_ = chunkResp.Body.Close()
 		start += int64(n)
 	}
 

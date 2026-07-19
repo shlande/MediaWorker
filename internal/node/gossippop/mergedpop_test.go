@@ -173,7 +173,7 @@ func TestGossipSub_Snapshot_PropagatesAcrossHosts(t *testing.T) {
 		payload, _ := update.payloadForSigning()
 		update.Sig = ed25519.Sign(ed25519.PrivateKey(rawPriv), payload)
 		data := mustEncode(t, update)
-		nodeA.topic.Publish(context.Background(), data)
+		_ = nodeA.topic.Publish(context.Background(), data) // best-effort: test fixture
 	}()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

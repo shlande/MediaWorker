@@ -19,7 +19,7 @@ func newTestPinStore(t *testing.T, fetchFunc func(string) ([]byte, error)) *PinS
 	if err != nil {
 		t.Fatalf("NewPinStore: %v", err)
 	}
-	t.Cleanup(func() { ps.Close() })
+	t.Cleanup(func() { _ = ps.Close() })
 	return ps
 }
 
@@ -223,7 +223,7 @@ func TestRestore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPinStore (reopen): %v", err)
 	}
-	defer ps2.Close()
+	defer func() { _ = ps2.Close() }()
 
 	if err := ps2.Restore(); err != nil {
 		t.Fatalf("Restore: %v", err)

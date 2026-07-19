@@ -239,7 +239,7 @@ func TestStorageDistribution_Baidu(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"access_token":  "mock-baidu-access-token",
 			"refresh_token": "mock-baidu-refresh-token",
 			"expires_in":    3600,
@@ -262,7 +262,7 @@ func TestStorageDistribution_Baidu(t *testing.T) {
 			// Return dlink pointing back to our own server.
 			// fs_id must be a JSON number (int64 in Go), not a string.
 			dlink := "http://" + r.Host + "/cdn/" + mockFileID + "/download?dlink=1"
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{ // best-effort: test fixture
 				"errno": 0,
 				"list": []map[string]interface{}{
 					{
@@ -285,7 +285,7 @@ func TestStorageDistribution_Baidu(t *testing.T) {
 			w.Header().Set("Content-Type", "application/octet-stream")
 			w.Header().Set("Content-Length", strconv.Itoa(len(mockBlobData)))
 			w.WriteHeader(http.StatusOK)
-			w.Write(mockBlobData)
+			_, _ = w.Write(mockBlobData) // best-effort: test fixture
 
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -428,14 +428,14 @@ func TestStorageDistribution_Baidu(t *testing.T) {
 				if token == "mock-token-deg-1" {
 					// Account 1 returns 403 (banned).
 					w.WriteHeader(http.StatusForbidden)
-					json.NewEncoder(w).Encode(map[string]interface{}{
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{
 						"errno":  0,
 						"errmsg": "account banned",
 					})
 				} else {
 					// Account 2 returns valid dlink.
 					dlink := "http://" + r.Host + "/cdn/" + mockFileID + "/download?dlink=1"
-					json.NewEncoder(w).Encode(map[string]interface{}{
+					_ = json.NewEncoder(w).Encode(map[string]interface{}{
 						"errno": 0,
 						"list": []map[string]interface{}{
 							{
@@ -455,7 +455,7 @@ func TestStorageDistribution_Baidu(t *testing.T) {
 
 			case path == "/cdn/"+mockFileID+"/real-content":
 				w.WriteHeader(http.StatusOK)
-				w.Write(mockBlobData)
+				_, _ = w.Write(mockBlobData) // best-effort: test fixture
 
 			default:
 				w.WriteHeader(http.StatusNotFound)
@@ -485,7 +485,7 @@ func TestStorageDistribution_Baidu(t *testing.T) {
 			default:
 				accessToken = "mock-token-unknown"
 			}
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"access_token":  accessToken,
 				"refresh_token": refreshToken,
 				"expires_in":    3600,
@@ -605,7 +605,7 @@ func TestStorageDistribution_OneDrive(t *testing.T) {
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"access_token":  "mock-onedrive-access-token",
 			"refresh_token": "mock-onedrive-refresh-token",
 			"expires_in":    3600,
@@ -626,7 +626,7 @@ func TestStorageDistribution_OneDrive(t *testing.T) {
 			w.Header().Set("Content-Type", "application/octet-stream")
 			w.Header().Set("Content-Length", strconv.Itoa(len(mockBlobData)))
 			w.WriteHeader(http.StatusOK)
-			w.Write(mockBlobData)
+			_, _ = w.Write(mockBlobData) // best-effort: test fixture
 			return
 		}
 
@@ -638,7 +638,7 @@ func TestStorageDistribution_OneDrive(t *testing.T) {
 
 		if path == "/v1.0/me/drive/items/"+mockFileID {
 			dlURL := "http://" + r.Host + "/cdn-onedrive/" + mockFileID
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"id":                           mockFileID,
 				"name":                         "test_blob.dat",
 				"size":                         len(mockBlobData),
@@ -649,7 +649,7 @@ func TestStorageDistribution_OneDrive(t *testing.T) {
 
 		// Health check: GET /v1.0/me/drive
 		if path == "/v1.0/me/drive" {
-			json.NewEncoder(w).Encode(map[string]interface{}{
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
 				"id": "root-drive-id",
 			})
 			return

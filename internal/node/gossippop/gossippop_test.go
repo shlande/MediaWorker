@@ -371,7 +371,7 @@ func TestGossipSub_2NodePopularitySync(t *testing.T) {
 		}
 		update.Sig = ed25519.Sign(ed25519.PrivateKey(rawPriv), payload)
 		data := mustEncode(t, update)
-		nodeA.topic.Publish(context.Background(), data)
+		_ = nodeA.topic.Publish(context.Background(), data) // best-effort: test fixture
 	}()
 
 	// When: node B receives and processes.
@@ -463,12 +463,12 @@ func TestGossipSub_3NodePoisoningDefense(t *testing.T) {
 	// When: attacker publishes poisoned update.
 	rawPrivAtt, _ := nodeAtt.identity.PrivKey.Raw()
 	attUpdate := createUpdate(t, nodeAtt.identity.PeerID, ed25519.PrivateKey(rawPrivAtt), map[string]int64{"blob1": 99999})
-	nodeAtt.topic.Publish(context.Background(), mustEncode(t, attUpdate))
+	_ = nodeAtt.topic.Publish(context.Background(), mustEncode(t, attUpdate)) // best-effort: test fixture
 
 	// When: honest node 1 publishes truthful update.
 	rawPrivH1, _ := nodeH1.identity.PrivKey.Raw()
 	h1Update := createUpdate(t, nodeH1.identity.PeerID, ed25519.PrivateKey(rawPrivH1), map[string]int64{"blob1": 10})
-	nodeH1.topic.Publish(context.Background(), mustEncode(t, h1Update))
+	_ = nodeH1.topic.Publish(context.Background(), mustEncode(t, h1Update)) // best-effort: test fixture
 
 	// Then: process messages sequentially — attacker's dropped, honest's merged.
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

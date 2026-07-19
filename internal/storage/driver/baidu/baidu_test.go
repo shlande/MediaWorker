@@ -96,7 +96,7 @@ func newMockBaiduServer() *mockBaiduServer {
 
 	// Token endpoint
 	mux.HandleFunc("/oauth/2.0/token", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{
 			"access_token":  accessToken,
 			"refresh_token": "new-refresh-token",
 			"expires_in":    3600,
@@ -159,7 +159,7 @@ func TestBaiduDriver_List_mapsFileInfo(t *testing.T) {
 			t.Errorf("dir = %q, want /apps/test", q.Get("dir"))
 		}
 
-		json.NewEncoder(w).Encode(pcsListResponse{
+		_ = json.NewEncoder(w).Encode(pcsListResponse{
 			Errno: 0,
 			List: []pcsFileEntry{
 				{FsID: 12345, Filename: "file1.txt", Size: 1024, IsDir: 0, ServerMtime: 1710000000, MD5: "abc123"},
@@ -217,7 +217,7 @@ func TestBaiduDriver_List_banSignal(t *testing.T) {
 
 	srv.handle("/rest/2.0/xpan/file", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(403)
-		json.NewEncoder(w).Encode(pcsListResponse{Errno: 403, Errmsg: "access denied"})
+		_ = json.NewEncoder(w).Encode(pcsListResponse{Errno: 403, Errmsg: "access denied"})
 	})
 
 	d := makeBaiduDriver(t, srv)
@@ -248,7 +248,7 @@ func TestBaiduDriver_Get_returnsFileInfo(t *testing.T) {
 			t.Errorf("fsids = %q, should contain 99999", fsids)
 		}
 
-		json.NewEncoder(w).Encode(pcsMetaResponse{
+		_ = json.NewEncoder(w).Encode(pcsMetaResponse{
 			Errno: 0,
 			List: []pcsMetaEntry{
 				{FsID: 99999, Filename: "bigfile.zip", Size: 1024000, IsDir: 0, ServerMtime: 1700000000, MD5: "deadbeef"},
@@ -280,7 +280,7 @@ func TestBaiduDriver_Get_notFound(t *testing.T) {
 	defer srv.Close()
 
 	srv.handle("/rest/2.0/xpan/file", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(pcsMetaResponse{Errno: 0, List: []pcsMetaEntry{}})
+		_ = json.NewEncoder(w).Encode(pcsMetaResponse{Errno: 0, List: []pcsMetaEntry{}})
 	})
 
 	d := makeBaiduDriver(t, srv)
@@ -301,7 +301,7 @@ func TestBaiduDriver_GetLink_returnsIPBoundLink(t *testing.T) {
 
 	// Need two endpoints: filemetas for dlink, then a catch-all for the HEAD to dlink
 	srv.handle("/rest/2.0/xpan/file", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(pcsMetaResponse{
+		_ = json.NewEncoder(w).Encode(pcsMetaResponse{
 			Errno: 0,
 			List: []pcsMetaEntry{
 				{FsID: 88888, Filename: "video.mp4", Size: 500000, IsDir: 0, ServerMtime: 1700000000, MD5: "md5hash", Dlink: srv.URL + "/dlink"},
@@ -349,7 +349,7 @@ func TestBaiduDriver_GetLink_noDlink(t *testing.T) {
 	defer srv.Close()
 
 	srv.handle("/rest/2.0/xpan/file", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(pcsMetaResponse{
+		_ = json.NewEncoder(w).Encode(pcsMetaResponse{
 			Errno: 0,
 			List:  []pcsMetaEntry{{FsID: 1, Dlink: ""}},
 		})
@@ -368,7 +368,7 @@ func TestBaiduDriver_GetLink_banSignal(t *testing.T) {
 
 	srv.handle("/rest/2.0/xpan/file", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(429)
-		json.NewEncoder(w).Encode(pcsMetaResponse{Errno: 429})
+		_ = json.NewEncoder(w).Encode(pcsMetaResponse{Errno: 429})
 	})
 
 	d := makeBaiduDriver(t, srv)
@@ -402,10 +402,10 @@ func TestBaiduDriver_Put_threeStepUpload(t *testing.T) {
 					t.Errorf("precreate isdir = %q", r.Form.Get("isdir"))
 				}
 			}
-			json.NewEncoder(w).Encode(pcsPrecreateResponse{Errno: 0, UploadID: "upload-123"})
+			_ = json.NewEncoder(w).Encode(pcsPrecreateResponse{Errno: 0, UploadID: "upload-123"})
 		case "create":
 			createCalled.Store(true)
-			json.NewEncoder(w).Encode(pcsCreateResponse{
+			_ = json.NewEncoder(w).Encode(pcsCreateResponse{
 				Errno: 0,
 				Info:  &pcsCreateInfo{FsID: 77777, Path: "/apps/test/upload.txt", Size: 6, IsDir: 0, MD5: "newmd5", ServerMtime: 1700000000},
 			})
@@ -417,7 +417,7 @@ func TestBaiduDriver_Put_threeStepUpload(t *testing.T) {
 
 	srv.handle("/rest/2.0/pcs/superfile2", func(w http.ResponseWriter, r *http.Request) {
 		uploadCalled.Store(true)
-		json.NewEncoder(w).Encode(pcsUploadResponse{Errno: 0})
+		_ = json.NewEncoder(w).Encode(pcsUploadResponse{Errno: 0})
 	})
 
 	d := makeBaiduDriver(t, srv)
@@ -462,9 +462,9 @@ func TestBaiduDriver_Put_emptyFile(t *testing.T) {
 		method := q.Get("method")
 		switch method {
 		case "precreate":
-			json.NewEncoder(w).Encode(pcsPrecreateResponse{Errno: 0, UploadID: "upload-empty"})
+			_ = json.NewEncoder(w).Encode(pcsPrecreateResponse{Errno: 0, UploadID: "upload-empty"})
 		case "create":
-			json.NewEncoder(w).Encode(pcsCreateResponse{
+			_ = json.NewEncoder(w).Encode(pcsCreateResponse{
 				Errno: 0,
 				Info:  &pcsCreateInfo{FsID: 88888, Path: "/apps/test/empty.txt", Size: 0, IsDir: 0, MD5: "d41d8cd98f00b204e9800998ecf8427e", ServerMtime: 1700000000},
 			})
@@ -494,7 +494,7 @@ func TestBaiduDriver_Remove_success(t *testing.T) {
 		if q.Get("method") != "delete" {
 			t.Errorf("method = %q, want delete", q.Get("method"))
 		}
-		json.NewEncoder(w).Encode(pcsDeleteResponse{Errno: 0})
+		_ = json.NewEncoder(w).Encode(pcsDeleteResponse{Errno: 0})
 	})
 
 	d := makeBaiduDriver(t, srv)
@@ -513,7 +513,7 @@ func TestBaiduDriver_Remove_banSignal(t *testing.T) {
 
 	srv.handle("/api/filemanager", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(405)
-		json.NewEncoder(w).Encode(pcsDeleteResponse{Errno: 405})
+		_ = json.NewEncoder(w).Encode(pcsDeleteResponse{Errno: 405})
 	})
 
 	d := makeBaiduDriver(t, srv)
@@ -549,7 +549,7 @@ func TestBaiduDriver_Mkdir_createsDir(t *testing.T) {
 			}
 		}
 
-		json.NewEncoder(w).Encode(pcsCreateResponse{
+		_ = json.NewEncoder(w).Encode(pcsCreateResponse{
 			Errno: 0,
 			Info:  &pcsCreateInfo{FsID: 55555, Path: "/parent/newdir", IsDir: 1},
 		})
@@ -578,7 +578,7 @@ func TestBaiduDriver_HealthCheck_healthy(t *testing.T) {
 	defer srv.Close()
 
 	srv.handle("/rest/2.0/xpan/nas", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(pcsUInfoResponse{Errno: 0})
+		_ = json.NewEncoder(w).Encode(pcsUInfoResponse{Errno: 0})
 	})
 
 	d := makeBaiduDriver(t, srv)
@@ -654,7 +654,7 @@ func TestBaiduDriver_banSignalOnAnyCall(t *testing.T) {
 
 			srv.handle("/rest/2.0/xpan/file", func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(tt.statusCode)
-				json.NewEncoder(w).Encode(pcsListResponse{Errno: tt.statusCode, Errmsg: "rate limited"})
+				_ = json.NewEncoder(w).Encode(pcsListResponse{Errno: tt.statusCode, Errmsg: "rate limited"})
 			})
 
 			d := makeBaiduDriver(t, srv)
@@ -695,32 +695,32 @@ func TestBaiduDriver_implementsDriver(t *testing.T) {
 		method := r.URL.Query().Get("method")
 		switch method {
 		case "list":
-			json.NewEncoder(w).Encode(pcsListResponse{Errno: 0, List: []pcsFileEntry{
+			_ = json.NewEncoder(w).Encode(pcsListResponse{Errno: 0, List: []pcsFileEntry{
 				{FsID: 1, Filename: "f.txt", Size: 10, ServerMtime: 1},
 			}})
 		case "filemetas":
-			json.NewEncoder(w).Encode(pcsMetaResponse{Errno: 0, List: []pcsMetaEntry{
+			_ = json.NewEncoder(w).Encode(pcsMetaResponse{Errno: 0, List: []pcsMetaEntry{
 				{FsID: 1, Filename: "f.txt", Size: 10, ServerMtime: 1, Dlink: srv.URL + "/dlink"},
 			}})
 		case "precreate":
-			json.NewEncoder(w).Encode(pcsPrecreateResponse{Errno: 0, UploadID: "up-1"})
+			_ = json.NewEncoder(w).Encode(pcsPrecreateResponse{Errno: 0, UploadID: "up-1"})
 		case "create":
-			json.NewEncoder(w).Encode(pcsCreateResponse{Errno: 0, Info: &pcsCreateInfo{
+			_ = json.NewEncoder(w).Encode(pcsCreateResponse{Errno: 0, Info: &pcsCreateInfo{
 				FsID: 1, Path: "/d/f.txt", Size: 10, ServerMtime: 1, MD5: "hash",
 			}})
 		}
 	})
 
 	srv.handle("/api/filemanager", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(pcsDeleteResponse{Errno: 0})
+		_ = json.NewEncoder(w).Encode(pcsDeleteResponse{Errno: 0})
 	})
 
 	srv.handle("/rest/2.0/pcs/superfile2", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(pcsUploadResponse{Errno: 0})
+		_ = json.NewEncoder(w).Encode(pcsUploadResponse{Errno: 0})
 	})
 
 	srv.handle("/rest/2.0/xpan/nas", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(pcsUInfoResponse{Errno: 0})
+		_ = json.NewEncoder(w).Encode(pcsUInfoResponse{Errno: 0})
 	})
 
 	srv.handle("/dlink", func(w http.ResponseWriter, r *http.Request) {
@@ -839,7 +839,7 @@ func TestBaiduDriver_List_badJSON(t *testing.T) {
 	defer srv.Close()
 
 	srv.handle("/rest/2.0/xpan/file", func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("not json"))
+		_, _ = w.Write([]byte("not json")) // best-effort: test fixture
 	})
 
 	d := makeBaiduDriver(t, srv)
@@ -857,7 +857,7 @@ func TestBaiduDriver_List_errnoNonBan(t *testing.T) {
 
 	srv.handle("/rest/2.0/xpan/file", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
-		json.NewEncoder(w).Encode(pcsListResponse{Errno: 110, Errmsg: "invalid parameter"})
+		_ = json.NewEncoder(w).Encode(pcsListResponse{Errno: 110, Errmsg: "invalid parameter"})
 	})
 
 	d := makeBaiduDriver(t, srv)
@@ -878,7 +878,7 @@ func TestBaiduDriver_HealthCheck_degradedSlow(t *testing.T) {
 
 	srv.handle("/rest/2.0/xpan/nas", func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(2500 * time.Millisecond)
-		json.NewEncoder(w).Encode(pcsUInfoResponse{Errno: 0})
+		_ = json.NewEncoder(w).Encode(pcsUInfoResponse{Errno: 0})
 	})
 
 	d := makeBaiduDriver(t, srv)
@@ -899,7 +899,7 @@ func TestBaiduDriver_GetLink_noLocation(t *testing.T) {
 	defer srv.Close()
 
 	srv.handle("/rest/2.0/xpan/file", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(pcsMetaResponse{
+		_ = json.NewEncoder(w).Encode(pcsMetaResponse{
 			Errno: 0,
 			List:  []pcsMetaEntry{{FsID: 1, Dlink: srv.URL + "/dlink2"}},
 		})
@@ -931,9 +931,9 @@ func TestBaiduDriver_Put_concurrent(t *testing.T) {
 		switch method {
 		case "precreate":
 			precreateCount.Add(1)
-			json.NewEncoder(w).Encode(pcsPrecreateResponse{Errno: 0, UploadID: fmt.Sprintf("up-%d", precreateCount.Load())})
+			_ = json.NewEncoder(w).Encode(pcsPrecreateResponse{Errno: 0, UploadID: fmt.Sprintf("up-%d", precreateCount.Load())})
 		case "create":
-			json.NewEncoder(w).Encode(pcsCreateResponse{Errno: 0, Info: &pcsCreateInfo{
+			_ = json.NewEncoder(w).Encode(pcsCreateResponse{Errno: 0, Info: &pcsCreateInfo{
 				FsID: int64(precreateCount.Load()), Path: "/apps/test/file", Size: 4,
 				ServerMtime: 1700000000, MD5: "hash",
 			}})
@@ -941,7 +941,7 @@ func TestBaiduDriver_Put_concurrent(t *testing.T) {
 	})
 
 	srv.handle("/rest/2.0/pcs/superfile2", func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(pcsUploadResponse{Errno: 0})
+		_ = json.NewEncoder(w).Encode(pcsUploadResponse{Errno: 0})
 	})
 
 	d := makeBaiduDriver(t, srv)

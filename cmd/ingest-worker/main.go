@@ -253,7 +253,7 @@ func handleIngest(w http.ResponseWriter, r *http.Request, pipeline *ingest.Inges
 		http.Error(w, fmt.Sprintf("parse multipart: %v", err), http.StatusBadRequest)
 		return
 	}
-	defer r.MultipartForm.RemoveAll()
+	defer func() { _ = r.MultipartForm.RemoveAll() }() // best-effort: temp file cleanup
 
 	file, _, err := r.FormFile("file")
 	if err != nil {

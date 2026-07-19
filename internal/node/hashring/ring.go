@@ -240,7 +240,7 @@ func (h *HashRing) OnHeartbeatMiss(peerID types.PeerId) {
 	if count >= h.missThreshold {
 		h.logger.Warn("peer evicted from ring (heartbeat miss threshold reached)",
 			"peer", peerID, "misses", count, "threshold", h.missThreshold)
-		h.entryStore.MarkStale(peerID, fmt.Sprintf("heartbeat_miss_threshold_reached=%d", count))
+		_ = h.entryStore.MarkStale(peerID, fmt.Sprintf("heartbeat_miss_threshold_reached=%d", count))
 	} else {
 		h.logger.Debug("peer heartbeat miss recorded",
 			"peer", peerID, "misses", count, "threshold", h.missThreshold)

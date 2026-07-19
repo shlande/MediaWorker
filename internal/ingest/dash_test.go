@@ -35,7 +35,7 @@ func TestDashIngester_Process_WithFFmpeg(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer input.Close()
+	defer func() { _ = input.Close() }()
 
 	result, err := d.Process(context.Background(), input, ProcessOptions{
 		ContentID: "test-dash-content",

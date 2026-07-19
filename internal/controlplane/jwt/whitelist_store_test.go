@@ -57,8 +57,12 @@ func TestWhitelistStore_removePersists(t *testing.T) {
 
 	peerA := types.PeerId("12D3KooWTestPeerA")
 	peerB := types.PeerId("12D3KooWTestPeerB")
-	store.Add(peerA)
-	store.Add(peerB)
+	if err := store.Add(peerA); err != nil {
+		t.Fatalf("add peerA: %v", err)
+	}
+	if err := store.Add(peerB); err != nil {
+		t.Fatalf("add peerB: %v", err)
+	}
 
 	// When: remove peerA and close.
 	if err := store.Remove(peerA); err != nil {
@@ -93,8 +97,12 @@ func TestWhitelistStore_restoreIntoPeerIdSet(t *testing.T) {
 
 	peer1 := types.PeerId("12D3KooWRestorePeer1")
 	peer2 := types.PeerId("12D3KooWRestorePeer2")
-	store.Add(peer1)
-	store.Add(peer2)
+	if err := store.Add(peer1); err != nil {
+		t.Fatalf("add peer1: %v", err)
+	}
+	if err := store.Add(peer2); err != nil {
+		t.Fatalf("add peer2: %v", err)
+	}
 	store.Close()
 
 	// When: reopen and Restore into an empty PeerIdSet.

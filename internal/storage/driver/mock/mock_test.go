@@ -224,9 +224,9 @@ func TestMockDriver_List_byDirID(t *testing.T) {
 	d := NewMockDriver(types.Vendor115, MockDriverConfig{})
 	ctx := context.Background()
 
-	d.Put(ctx, "a", "f1.txt", strings.NewReader(""), 0)
-	d.Put(ctx, "a", "f2.txt", strings.NewReader(""), 0)
-	d.Put(ctx, "b", "f3.txt", strings.NewReader(""), 0)
+	_, _ = d.Put(ctx, "a", "f1.txt", strings.NewReader(""), 0) // test setup
+	_, _ = d.Put(ctx, "a", "f2.txt", strings.NewReader(""), 0)
+	_, _ = d.Put(ctx, "b", "f3.txt", strings.NewReader(""), 0)
 
 	// List under "a" — should get 2 files
 	files, err := d.List(ctx, "a", 0)

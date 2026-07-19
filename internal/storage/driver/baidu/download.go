@@ -35,7 +35,7 @@ func (d *BaiduDriver) resolveCDNURL(ctx context.Context, dlink, token string) (s
 	if err != nil {
 		return "", fmt.Errorf("head request: %w", err)
 	}
-	defer headResp.Body.Close()
+	defer func() { _ = headResp.Body.Close() }()
 
 	cdnURL := headResp.Header.Get("Location")
 	if cdnURL == "" {

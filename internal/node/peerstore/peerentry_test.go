@@ -27,7 +27,7 @@ func openStore(t *testing.T) *PeerEntryStore {
 	if err != nil {
 		t.Fatalf("NewPeerEntryStore: %v", err)
 	}
-	t.Cleanup(func() { store.Close() })
+	t.Cleanup(func() { _ = store.Close() })
 	return store
 }
 
@@ -93,7 +93,7 @@ func TestPeerEntryStore_Restore(t *testing.T) {
 		id := fmt.Sprintf("peer-%d", i)
 		entry := makeTestEntry(id, float64(i))
 		if err := store.Put(types.PeerId(id), entry); err != nil {
-			store.Close()
+			_ = store.Close() // best-effort cleanup before t.Fatalf
 			t.Fatalf("Put %s: %v", id, err)
 		}
 	}
@@ -106,7 +106,7 @@ func TestPeerEntryStore_Restore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	defer store2.Close()
+	defer func() { _ = store2.Close() }()
 
 	if err := store2.Restore(); err != nil {
 		t.Fatalf("Restore: %v", err)
@@ -133,19 +133,19 @@ func TestPeerEntryStore_ActivePeers(t *testing.T) {
 
 	// 2 stale, 1 low-score (below -20), 2 healthy → ActivePeers returns 2.
 	// peer-a: healthy (Score=5)
-	store.Put("peer-a", makeTestEntry("peer-a", 5.0))
+	_ = store.Put("peer-a", makeTestEntry("peer-a", 5.0)) // test setup; error would surface in ActivePeers
 	// peer-b: healthy (Score=-5, above GraylistThreshold -20)
-	store.Put("peer-b", makeTestEntry("peer-b", -5.0))
+	_ = store.Put("peer-b", makeTestEntry("peer-b", -5.0))
 	// peer-c: stale (should be excluded)
 	e := makeTestEntry("peer-c", 5.0)
 	e.Stale = true
-	store.Put("peer-c", e)
+	_ = store.Put("peer-c", e)
 	// peer-d: stale + low score (excluded)
 	e2 := makeTestEntry("peer-d", -15.0)
 	e2.Stale = true
-	store.Put("peer-d", e2)
+	_ = store.Put("peer-d", e2)
 	// peer-e: low score below GraylistThreshold (excluded at -25.0)
-	store.Put("peer-e", makeTestEntry("peer-e", -25.0))
+	_ = store.Put("peer-e", makeTestEntry("peer-e", -25.0))
 
 	active := store.ActivePeers()
 
@@ -207,7 +207,7 @@ func TestPeerEntryStore_CorruptDB(t *testing.T) {
 		t.Fatalf("NewPeerEntryStore: %v", err)
 	}
 	if err := store.Put("peer1", makeTestEntry("peer1", 5.0)); err != nil {
-		store.Close()
+		_ = store.Close() // best-effort cleanup before t.Fatalf
 		t.Fatalf("Put: %v", err)
 	}
 	if err := store.Close(); err != nil {
@@ -223,7 +223,7 @@ func TestPeerEntryStore_CorruptDB(t *testing.T) {
 	// Reopen + Restore must return an error, not panic.
 	store2, err := NewPeerEntryStore(path)
 	if err == nil {
-		defer store2.Close()
+		defer func() { _ = store2.Close() }()
 
 		// Restore may return an error, but must not panic.
 		restoreErr := store2.Restore()
@@ -246,7 +246,7 @@ func TestPeerEntryStore_PersistenceAcrossReopen(t *testing.T) {
 	e := makeTestEntry("peer-f", 42.0)
 	e.JWTExp = 99999999
 	if err := store.Put("peer-f", e); err != nil {
-		store.Close()
+		_ = store.Close() // best-effort cleanup before t.Fatalf
 		t.Fatalf("Put: %v", err)
 	}
 	if err := store.Close(); err != nil {
@@ -258,7 +258,7 @@ func TestPeerEntryStore_PersistenceAcrossReopen(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopen: %v", err)
 	}
-	defer store2.Close()
+	defer func() { _ = store2.Close() }()
 
 	if err := store2.Restore(); err != nil {
 		t.Fatalf("Restore: %v", err)

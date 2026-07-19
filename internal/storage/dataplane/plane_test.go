@@ -113,7 +113,7 @@ func TestFetchBlobLocal_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchBlobLocal failed: %v", err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	data, err := io.ReadAll(reader)
 	if err != nil {
@@ -256,7 +256,7 @@ func TestFetchBlobLocal_NilCtxDoesNotPanic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchBlobLocal with nil ctx failed: %v", err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	data, err := io.ReadAll(reader)
 	if err != nil {

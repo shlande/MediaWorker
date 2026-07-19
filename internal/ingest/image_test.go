@@ -164,7 +164,9 @@ func TestExtractOrientation_JPEGNoExif(t *testing.T) {
 func TestExtractOrientation_JPEGWithExif(t *testing.T) {
 	img := image.NewRGBA(image.Rect(0, 0, 10, 10))
 	var buf strings.Builder
-	jpeg.Encode(&buf, img, nil)
+	if err := jpeg.Encode(&buf, img, nil); err != nil {
+		t.Fatalf("jpeg.Encode: %v", err)
+	}
 	data := []byte(buf.String())
 
 	// Insert a minimal APP1 Exif marker after SOI (0xFFD8) and before the first APP0.

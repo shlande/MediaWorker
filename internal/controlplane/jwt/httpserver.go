@@ -168,11 +168,11 @@ func (s *JWTHTTPServer) handleJWTRequest(w http.ResponseWriter, req *http.Reques
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp) // client may have disconnected; not actionable
 }
 
 func writeHTTPError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(map[string]string{"error": msg})
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg}) // client may have disconnected; not actionable
 }

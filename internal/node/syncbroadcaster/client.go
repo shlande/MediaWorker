@@ -136,26 +136,26 @@ func (c *Client) handleStream(stream network.Stream) {
 
 	length, err := binary.ReadUvarint(br)
 	if err != nil {
-		stream.Reset()
+		_ = stream.Reset()
 		return
 	}
 
 	data := make([]byte, length)
 	if _, err := io.ReadFull(br, data); err != nil {
-		stream.Reset()
+		_ = stream.Reset()
 		return
 	}
 
 	var msg WireMessage
 	if err := json.Unmarshal(data, &msg); err != nil {
-		stream.Reset()
+		_ = stream.Reset()
 		return
 	}
 
 	if msg.Type == "PIN_PLAN_UPDATE" && c.onPlan != nil {
 		var plan types.PinPlan
 		if err := json.Unmarshal(msg.Payload, &plan); err != nil {
-			stream.Reset()
+			_ = stream.Reset()
 			return
 		}
 		c.onPlan(plan)

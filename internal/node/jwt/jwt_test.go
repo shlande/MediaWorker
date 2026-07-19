@@ -460,13 +460,13 @@ func TestJWT_Dedup(t *testing.T) {
 				handlerCalled <- struct{}{}
 			})
 
-			// Seed store with existing entry
-			if tc.existingExp > 0 {
-				store.Put(types.PeerStoreEntry{
-					PeerID: types.PeerId(host2.ID().String()),
-					JWTExp: tc.existingExp,
-					JWT:    types.CapabilityJWT("old-jwt-" + tc.name),
-				})
+		// Seed store with existing entry
+		if tc.existingExp > 0 {
+			_ = store.Put(types.PeerStoreEntry{ // test setup
+				PeerID: types.PeerId(host2.ID().String()),
+				JWTExp: tc.existingExp,
+				JWT:    types.CapabilityJWT("old-jwt-" + tc.name),
+			})
 			}
 
 			// Build JWT with requested exp
@@ -643,14 +643,14 @@ func TestJWT_ClientIntegration(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		_ = json.NewEncoder(w).Encode(resp) // best-effort: test fixture
 	})
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	go http.Serve(listener, mux)
+	go func() { _ = http.Serve(listener, mux) }()
 
 	endpoint := "http://" + listener.Addr().String() + "/v1/node/jwt"
 
@@ -842,7 +842,7 @@ func TestJWT_ClientSendsDeclaredCapabilities(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	go http.Serve(listener, mux)
+	go func() { _ = http.Serve(listener, mux) }()
 	defer listener.Close()
 
 	endpoint := "http://" + listener.Addr().String() + "/v1/node/jwt"
@@ -996,7 +996,7 @@ func TestJWT_RefreshLoopFiresMultipleTimes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	go http.Serve(listener, mux)
+	go func() { _ = http.Serve(listener, mux) }()
 	defer listener.Close()
 
 	endpoint := "http://" + listener.Addr().String() + "/v1/node/jwt"
@@ -1054,7 +1054,7 @@ func TestJWT_RefreshLoopToleratesServerErrors(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	go http.Serve(listener, mux)
+	go func() { _ = http.Serve(listener, mux) }()
 	defer listener.Close()
 
 	endpoint := "http://" + listener.Addr().String() + "/v1/node/jwt"

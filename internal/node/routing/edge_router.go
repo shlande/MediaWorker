@@ -136,17 +136,17 @@ func (er *EdgeRouter) proxyToPeer(ctx context.Context, w io.Writer, targetPeer p
 	lenBuf := make([]byte, binary.MaxVarintLen64)
 	n := binary.PutUvarint(lenBuf, uint64(len(hashBytes)))
 	if _, err := s.Write(lenBuf[:n]); err != nil {
-		s.Reset()
+		_ = s.Reset()
 		return fmt.Errorf("write hash length to %s: %w", targetPeer.ShortString(), err)
 	}
 	if _, err := s.Write(hashBytes); err != nil {
-		s.Reset()
+		_ = s.Reset()
 		return fmt.Errorf("write hash to %s: %w", targetPeer.ShortString(), err)
 	}
 
 	// Close write side so peer sees EOF after hash.
 	if err := s.CloseWrite(); err != nil {
-		s.Reset()
+		_ = s.Reset()
 		return fmt.Errorf("close write side: %w", err)
 	}
 

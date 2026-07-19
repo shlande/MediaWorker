@@ -396,7 +396,7 @@ func (sb *SyncBroadcaster) handleStream(stream network.Stream) {
 
 	msg, err := ReadWireMessage(stream)
 	if err != nil {
-		stream.Reset()
+		_ = stream.Reset()
 		return
 	}
 

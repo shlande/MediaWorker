@@ -200,7 +200,7 @@ func newMultipartForm(buf *bytes.Buffer, fieldname, filename, contentType string
 		fieldname, filename,
 	))
 	buf.WriteString("Content-Type: " + contentType + "\r\n\r\n")
-	io.Copy(buf, reader)
+	_, _ = io.Copy(buf, reader)
 	buf.WriteString("\r\n--" + boundary + "--\r\n")
 	return &multipartForm{buf: buf, boundary: boundary}
 }

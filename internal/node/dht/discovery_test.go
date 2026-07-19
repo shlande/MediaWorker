@@ -81,8 +81,8 @@ func connectMutual(t *testing.T, ctx context.Context, a, b host.Host) {
 // populateRoutingTables triggers DHT FindPeer in both directions so both
 // routing tables learn about each other.
 func populateRoutingTables(ctx context.Context, a, b *kaddht.IpfsDHT, aid, bid peer.ID) {
-	go a.FindPeer(ctx, bid)
-	b.FindPeer(ctx, aid)
+	go func() { _, _ = a.FindPeer(ctx, bid) }()
+	_, _ = b.FindPeer(ctx, aid)
 	time.Sleep(500 * time.Millisecond) // let async queries land
 }
 

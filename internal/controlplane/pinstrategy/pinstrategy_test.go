@@ -131,7 +131,7 @@ func newTestPinStore(t *testing.T) *pinstore.PinStore {
 	if err != nil {
 		t.Fatalf("NewPinStore: %v", err)
 	}
-	t.Cleanup(func() { ps.Close() })
+	t.Cleanup(func() { _ = ps.Close() })
 	return ps
 }
 

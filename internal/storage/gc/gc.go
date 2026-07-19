@@ -186,7 +186,7 @@ SELECT blob_hash
 	if err != nil {
 		return SweepResult{}, fmt.Errorf("gc: sweep query: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var blobHashes []string
 	for rows.Next() {
@@ -351,7 +351,7 @@ func (c *Collector) fetchLocations(ctx context.Context, hash string) ([]types.Bl
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	var out []types.BlobLocation
 	for rows.Next() {
 		var loc types.BlobLocation

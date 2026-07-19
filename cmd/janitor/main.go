@@ -71,7 +71,7 @@ func run(configPath string, onceFlag, dryRunFlag bool) error {
 	if err != nil {
 		return fmt.Errorf("metadata client: %w", err)
 	}
-	defer mc.Close()
+	defer func() { _ = mc.Close() }()
 
 	pool := accountpool.BuildFromConfig(cfg.Storage.ToAccountPoolConfig(), nil)
 	if len(pool.SnapshotAccounts()) == 0 {

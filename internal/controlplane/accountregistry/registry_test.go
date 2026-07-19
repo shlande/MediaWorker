@@ -46,7 +46,7 @@ func TestCreateAccountAndListByVendor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	b := &mockBroadcaster{}
 	ar := NewAccountRegistry(db, b)
@@ -128,7 +128,7 @@ func TestUpdateCredential_TriggersBroadcast(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	b := &mockBroadcaster{}
 	ar := NewAccountRegistry(db, b)
@@ -178,7 +178,7 @@ func TestUpdateCredential_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	b := &mockBroadcaster{}
 	ar := NewAccountRegistry(db, b)
@@ -213,7 +213,7 @@ func TestRevoke(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	b := &mockBroadcaster{}
 	ar := NewAccountRegistry(db, b)
@@ -262,7 +262,7 @@ func TestStartSync_EmitsSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	b := &mockBroadcaster{}
 	ar := NewAccountRegistry(db, b)
@@ -345,7 +345,7 @@ func TestStartSync_NoAccounts_NoBroadcast(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	b := &mockBroadcaster{}
 	ar := NewAccountRegistry(db, b)
@@ -392,7 +392,7 @@ func TestListByVendor_Empty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	b := &mockBroadcaster{}
 	ar := NewAccountRegistry(db, b)
@@ -421,7 +421,7 @@ func TestNewAccountRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	b := &mockBroadcaster{}
 	ar := NewAccountRegistry(db, b)

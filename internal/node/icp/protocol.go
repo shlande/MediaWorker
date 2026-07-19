@@ -178,10 +178,10 @@ func HandleBlobGet(stream network.Stream, blobStore BlobStore) error {
 	if err != nil {
 		// Reset before the deferred Close so the client sees a stream error,
 		// not a clean EOF.
-		stream.Reset()
+		_ = stream.Reset()
 		return fmt.Errorf("get blob %s: %w", blobHash, err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	if _, err := io.Copy(stream, reader); err != nil {
 		return fmt.Errorf("stream blob %s: %w", blobHash, err)
@@ -199,12 +199,12 @@ func HandleBlobGet(stream network.Stream, blobStore BlobStore) error {
 func RegisterHandlers(h host.Host, store BlobStore) {
 	h.SetStreamHandler(BlobHeadProtocol, func(s network.Stream) {
 		if err := HandleBlobHead(s, store); err != nil {
-			s.Reset()
+			_ = s.Reset()
 		}
 	})
 	h.SetStreamHandler(BlobGetProtocol, func(s network.Stream) {
 		if err := HandleBlobGet(s, store); err != nil {
-			s.Reset()
+			_ = s.Reset()
 		}
 	})
 }

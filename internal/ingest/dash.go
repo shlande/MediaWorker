@@ -49,24 +49,24 @@ func (d *DashIngester) Process(ctx context.Context, input io.Reader, opts Proces
 	// 1. Write input to temporary source file.
 	srcPath := filepath.Join(d.workDir, contentID+"_src.mp4")
 	if err := writeToFile(input, srcPath); err != nil {
-		os.RemoveAll(outDir)
+		_ = os.RemoveAll(outDir) // best-effort cleanup of partial dir
 		return nil, fmt.Errorf("write source: %w", err)
 	}
-	defer os.Remove(srcPath)
+	defer func() { _ = os.Remove(srcPath) }() // best-effort cleanup of temp source
 
 	// 2. ffmpeg DASH transcode.
 	bitrates := firstNonEmpty(opts.Metadata["dash_bitrates"], "500k,1500k,4000k")
 	segDuration := firstNonEmpty(opts.Metadata["dash_seg_duration"], "4")
 
 	if err := d.runFFmpeg(ctx, srcPath, outDir, bitrates, segDuration); err != nil {
-		os.RemoveAll(outDir)
+		_ = os.RemoveAll(outDir) // best-effort cleanup of failed transcode
 		return nil, fmt.Errorf("ffmpeg: %w", err)
 	}
 
 	// 3. Scan output directory.
 	blobs, roles, blobFiles, duration, err := d.scanDashOutput(outDir)
 	if err != nil {
-		os.RemoveAll(outDir)
+		_ = os.RemoveAll(outDir) // best-effort cleanup of unreadable output
 		return nil, fmt.Errorf("scan output: %w", err)
 	}
 
@@ -237,7 +237,7 @@ func hashFile(path string) (hash string, size int64, err error) {
 	if err != nil {
 		return "", 0, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	h := sha256.New()
 	if size, err = io.Copy(h, f); err != nil {
@@ -253,7 +253,7 @@ func writeToFile(r io.Reader, path string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	_, err = io.Copy(f, r)
 	return err
 }

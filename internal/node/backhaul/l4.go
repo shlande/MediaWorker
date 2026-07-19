@@ -22,7 +22,7 @@ func (bm *BackhaulManager) HandleBlobL4(ctx context.Context, w io.Writer, blobHa
 		if err == nil && ok {
 			bm.recordICPRequest(true)
 			rc := reader.(io.ReadCloser)
-			defer rc.Close()
+			defer func() { _ = rc.Close() }()
 			if wc, isCacheWriter := bm.cache.(CacheWriter); isCacheWriter {
 				return streamThrough(w, rc, wc, blobHash)
 			}
@@ -40,7 +40,7 @@ func (bm *BackhaulManager) HandleBlobL4(ctx context.Context, w io.Writer, blobHa
 		if wc, isCacheWriter := bm.cache.(CacheWriter); isCacheWriter {
 			return drainAndCache(stream, stream, wc, blobHash)
 		}
-		defer stream.Close()
+		defer func() { _ = stream.Close() }()
 		var buf bytes.Buffer
 		if _, copyErr := io.Copy(&buf, stream); copyErr != nil {
 			return nil, copyErr

@@ -21,7 +21,7 @@ func (bm *BackhaulManager) HandleBlobNoL4(ctx context.Context, w io.Writer, blob
 		if err == nil && ok {
 			bm.recordICPRequest(true)
 			rc := reader.(io.ReadCloser)
-			defer rc.Close()
+			defer func() { _ = rc.Close() }()
 			if wc, isCacheWriter := bm.cache.(CacheWriter); isCacheWriter {
 				return streamThrough(w, rc, wc, blobHash)
 			}

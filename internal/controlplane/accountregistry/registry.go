@@ -137,7 +137,7 @@ func (ar *AccountRegistry) ListByVendor(ctx context.Context, vendor types.Vendor
 	if err != nil {
 		return nil, fmt.Errorf("accountregistry: list by vendor %s: %w", vendor, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var accounts []AccountInfo
 	for rows.Next() {
