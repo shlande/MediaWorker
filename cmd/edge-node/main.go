@@ -44,6 +44,7 @@ import (
 	"github.com/shlande/mediaworker/internal/node/peerstore"
 	"github.com/shlande/mediaworker/internal/node/pinstore"
 	nodepinstrategy "github.com/shlande/mediaworker/internal/node/pinstrategy"
+	"github.com/shlande/mediaworker/internal/node/planlog"
 	"github.com/shlande/mediaworker/internal/node/reporter"
 	"github.com/shlande/mediaworker/internal/node/routing"
 	nodesync "github.com/shlande/mediaworker/internal/node/syncbroadcaster"
@@ -428,7 +429,16 @@ func main() {
 	// -------------------------------------------------------------------
 	// 18. SyncBroadcaster client — receive PinPlan from control plane
 	// -------------------------------------------------------------------
+	planLog := planlog.New()
 	syncClient := nodesync.NewClient(h, func(plan types.PinPlan) {
+		pins, unpins := planlog.Counts(plan)
+		planLog.Add(planlog.Record{
+			Seq:        plan.Seq,
+			ReceivedAt: time.Now(),
+			Pins:       pins,
+			Unpins:     unpins,
+			Applied:    pinStore != nil,
+		})
 		if pinStore == nil {
 			logger.Debug("syncbroadcaster PinPlan received but prefix cache disabled — skipping",
 				"seq", plan.Seq, "target_node", plan.TargetNode)
@@ -436,6 +446,7 @@ func main() {
 		}
 		nodepinstrategy.HandlePinPlan(plan, pinStore, nil, nil)
 	}, dispatcher.HandleEvent)
+	// todo 49 mounts GET /v1/pin-plans/recent using planLog
 	logger.Info("syncbroadcaster client registered",
 		"protocol", string(nodesync.ControlProtocol),
 	)
