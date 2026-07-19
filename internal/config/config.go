@@ -19,10 +19,11 @@ import (
 
 // Config is the root configuration for a MediaWorker edge node.
 type Config struct {
-	Node     NodeConfig     `yaml:"node"`
-	Edge     EdgeConfig     `yaml:"edge"`
-	Access   AccessConfig   `yaml:"access_layer"`
-	HashRing HashRingConfig `yaml:"hash_ring"`
+	Node     NodeConfig         `yaml:"node"`
+	Edge     EdgeConfig         `yaml:"edge"`
+	Access   AccessConfig       `yaml:"access_layer"`
+	HashRing HashRingConfig     `yaml:"hash_ring"`
+	AdminAPI NodeAdminAPIConfig `yaml:"admin_api"`
 }
 
 // ---------------------------------------------------------------------------
@@ -240,6 +241,40 @@ type LinkPoolConfig struct {
 }
 
 // ---------------------------------------------------------------------------
+// Node-local admin API
+// ---------------------------------------------------------------------------
+
+// NodeAdminAPIConfig controls the node-local admin HTTP server
+// (internal/node/adminapi). The server is opt-in: a fully-empty admin_api
+// stanza (and no NODE_ADMIN_TOKEN in the environment) leaves Listen empty,
+// which main treats as "admin server disabled".
+type NodeAdminAPIConfig struct {
+	Listen string `yaml:"listen"` // default "127.0.0.1:8081" when enabled; empty = admin server disabled
+	Token  string `yaml:"token"`  // empty -> env NODE_ADMIN_TOKEN; still empty -> startup error when Listen is set
+}
+
+const (
+	defaultNodeAdminAPIListen = "127.0.0.1:8081"
+
+	// nodeAdminAPITokenEnv is the environment fallback for admin_api.token.
+	// The token is never logged.
+	nodeAdminAPITokenEnv = "NODE_ADMIN_TOKEN"
+)
+
+// applyNodeAdminAPIDefaults normalises a in-place, mirroring the CP
+// applyAdminAPIDefaults enablement rule: an explicitly-set Listen, or a Token
+// from yaml/env, activates the server (empty Listen then falls back to the
+// default address); a completely empty stanza keeps Listen empty (disabled).
+func applyNodeAdminAPIDefaults(a *NodeAdminAPIConfig) {
+	if a.Token == "" {
+		a.Token = os.Getenv(nodeAdminAPITokenEnv)
+	}
+	if a.Listen == "" && a.Token != "" {
+		a.Listen = defaultNodeAdminAPIListen
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Vendor profiles, rate limits, health check & cloud accounts
 // ---------------------------------------------------------------------------
 //
@@ -404,6 +439,11 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if cfg.Access.DataPlane.Enabled && cfg.Access.DataPlane.LocationEndpoint == "" {
 		return nil, fmt.Errorf("config: access_layer.data_plane.location_endpoint is required when access_layer.data_plane.enabled is true")
+	}
+
+	applyNodeAdminAPIDefaults(&cfg.AdminAPI)
+	if cfg.AdminAPI.Listen != "" && cfg.AdminAPI.Token == "" {
+		return nil, fmt.Errorf("config: admin_api.token required when admin_api.listen is set (yaml token or env NODE_ADMIN_TOKEN)")
 	}
 
 	normalizeJWTRefreshDurations(&cfg.Node.JWTService)

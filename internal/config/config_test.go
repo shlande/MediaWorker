@@ -497,6 +497,115 @@ access_layer:
 }
 
 // ---------------------------------------------------------------------------
+// admin_api (node-local admin server) validation + defaults
+// ---------------------------------------------------------------------------
+
+func TestNodeAdminAPI_DefaultEmpty_StaysDisabled(t *testing.T) {
+	// Given: no admin_api stanza and no NODE_ADMIN_TOKEN in the environment
+	t.Setenv("NODE_ADMIN_TOKEN", "")
+	path := writeTempYAML(t, minimalValidNodeYAML)
+
+	// When: the config is loaded
+	cfg, err := LoadConfig(path)
+
+	// Then: loading succeeds with the admin server disabled
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.AdminAPI.Listen != "" || cfg.AdminAPI.Token != "" {
+		t.Fatalf("admin API should be disabled, got listen=%q token-set=%v",
+			cfg.AdminAPI.Listen, cfg.AdminAPI.Token != "")
+	}
+}
+
+func TestNodeAdminAPI_ListenSet_TokenMissing_Errors(t *testing.T) {
+	// Given: admin_api.listen set but no token in yaml or environment
+	t.Setenv("NODE_ADMIN_TOKEN", "")
+	path := writeTempYAML(t, minimalValidNodeYAML+`
+admin_api:
+  listen: "127.0.0.1:8081"
+`)
+
+	// When: the config is loaded
+	_, err := LoadConfig(path)
+
+	// Then: loading fails and the error names admin_api.token
+	if err == nil {
+		t.Fatal("expected error for missing admin token, got nil")
+	}
+	if !strings.Contains(err.Error(), "admin_api.token") {
+		t.Fatalf("error must name admin_api.token, got: %v", err)
+	}
+}
+
+func TestNodeAdminAPI_TokenFromEnv_ActivatesDefaultListen(t *testing.T) {
+	// Given: no yaml token but NODE_ADMIN_TOKEN set in the environment
+	t.Setenv("NODE_ADMIN_TOKEN", "env-secret")
+	path := writeTempYAML(t, minimalValidNodeYAML)
+
+	// When: the config is loaded
+	cfg, err := LoadConfig(path)
+
+	// Then: the env token activates the server on the default listen address
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.AdminAPI.Token != "env-secret" {
+		t.Fatalf("Token = %q, want env value", cfg.AdminAPI.Token)
+	}
+	if cfg.AdminAPI.Listen != "127.0.0.1:8081" {
+		t.Fatalf("Listen = %q, want default 127.0.0.1:8081", cfg.AdminAPI.Listen)
+	}
+}
+
+func TestNodeAdminAPI_YamlTokenOnly_ActivatesDefaultListen(t *testing.T) {
+	// Given: token in yaml but no listen
+	t.Setenv("NODE_ADMIN_TOKEN", "")
+	path := writeTempYAML(t, minimalValidNodeYAML+`
+admin_api:
+  token: "yaml-secret"
+`)
+
+	// When: the config is loaded
+	cfg, err := LoadConfig(path)
+
+	// Then: the yaml token activates the server on the default listen address
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.AdminAPI.Token != "yaml-secret" {
+		t.Fatalf("Token = %q, want yaml value", cfg.AdminAPI.Token)
+	}
+	if cfg.AdminAPI.Listen != "127.0.0.1:8081" {
+		t.Fatalf("Listen = %q, want default 127.0.0.1:8081", cfg.AdminAPI.Listen)
+	}
+}
+
+func TestNodeAdminAPI_YamlTokenBeatsEnv(t *testing.T) {
+	// Given: token in both yaml and environment
+	t.Setenv("NODE_ADMIN_TOKEN", "env-secret")
+	path := writeTempYAML(t, minimalValidNodeYAML+`
+admin_api:
+  listen: "127.0.0.1:9999"
+  token: "yaml-secret"
+`)
+
+	// When: the config is loaded
+	cfg, err := LoadConfig(path)
+
+	// Then: the yaml token wins and the explicit listen round-trips
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.AdminAPI.Token != "yaml-secret" {
+		t.Fatalf("Token = %q, want yaml value (yaml beats env)", cfg.AdminAPI.Token)
+	}
+	if cfg.AdminAPI.Listen != "127.0.0.1:9999" {
+		t.Fatalf("Listen = %q, want explicit value", cfg.AdminAPI.Listen)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // Failure: nonexistent file
 // ---------------------------------------------------------------------------
 

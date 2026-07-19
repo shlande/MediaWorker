@@ -51,3 +51,9 @@ access_layer:
 
 hash_ring:
   replicas: 150
+
+# Node-local admin API (X-Admin-Token auth, independent listen — not the :8080 client mux).
+# Fully-commented = disabled. Uncomment to enable:
+# admin_api:
+#   listen: "127.0.0.1:8081"   # default when enabled; empty = disabled
+#   token: ""                  # or env NODE_ADMIN_TOKEN; required when listen is set

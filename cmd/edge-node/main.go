@@ -31,6 +31,7 @@ import (
 	"golang.org/x/time/rate"
 
 	"github.com/shlande/mediaworker/internal/config"
+	nodeadmin "github.com/shlande/mediaworker/internal/node/adminapi"
 	"github.com/shlande/mediaworker/internal/node/backhaul"
 	"github.com/shlande/mediaworker/internal/node/cache"
 	"github.com/shlande/mediaworker/internal/node/dht"
@@ -643,6 +644,27 @@ func main() {
 			logger.Error("HTTP server error", "err", err)
 		}
 	}()
+
+	// -------------------------------------------------------------------
+	// 22b. Node-local admin server (gated by admin_api.listen, empty =
+	// disabled). Independent listen address — does NOT share the :8080
+	// client mux above; /blob and /metrics stay unauthenticated per the
+	// intranet assumption in section 10a. Every admin route requires the
+	// X-Admin-Token header. The token is never logged.
+	// -------------------------------------------------------------------
+	if cfg.AdminAPI.Listen != "" {
+		adminSrv := nodeadmin.NewServer(cfg.AdminAPI.Token)
+		adminSrv.Handle("GET /v1/healthz", func(w http.ResponseWriter, r *http.Request) {
+			nodeadmin.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		})
+		// NODE ADMIN ROUTES: consolidated mounts below (todo 49)
+		go func() {
+			if err := adminSrv.Serve(rootCtx, cfg.AdminAPI.Listen); err != nil {
+				logger.Error("node admin server error", "err", err)
+			}
+		}()
+		logger.Info("node admin server listening", "addr", cfg.AdminAPI.Listen)
+	}
 
 	// -------------------------------------------------------------------
 	// 22. Wait for shutdown signal
