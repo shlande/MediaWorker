@@ -1,0 +1,86 @@
+# Task 42 Evidence — GET /v1/status（edge-node 身份+JWT 生命线+瞬时指标）
+
+Date: 2026-07-20
+Plan: .omo/plans/ui-admin-apis.md lines 478-484
+Commit message: feat(node-admin): add GET /v1/status
+
+## Scope delivered
+
+### 1. internal/node/adminapi/status_handler.go (NEW, 157 pure LOC)
+- `RegisterStatusRoutes(srv *Server, deps StatusDeps)` — D1-compliant, NO main.go edit.
+- Response contract (all X-Admin-Token gated by server middleware):
+  `{peer_id, capabilities[], mode("l4"|"edge"), region, version, uptime_sec, healthy,
+    jwt:{exp, refresh_before, last_refresh_at, last_refresh_ok, refresh_fail_count_24h},
+    score_view:{graylisted_peers}, conn:{total, inbound, outbound},
+    cache_hit_rate:{prefix, warm}, ttfb_p95_ms, relay_bytes_24h}`
+- Narrow interfaces (defined in adminapi, per MUST DO):
+  - `StatusJWTClient`: CurrentJWT/IsDegraded/RefreshStats — *jwt.JWTClient satisfies directly.
+  - `GraylistCounter`: GraylistedCount() int — *gossippop.PeerScorer satisfies; scorer internal maps NOT exposed.
+  - `NetworkReporter`: ConnCounts() (total, inbound, outbound int) — pre-aggregated counts chosen over
+    []network.Conn because Go has no slice covariance and mocking libp2p's ~15-method network.Conn in
+    tests is worse. `Libp2pNetworkReporter(h.Network())` adapter lives IN adminapi (direction loop is
+    unit-tested); todo 49 wiring = one line. Documented choice per task brief.
+  - `BackhaulStatsReporter`: WarmCacheHitRate()/TTFBP95Ms() — *backhaul.BackhaulManager satisfies.
+- jwt.exp: decodes current JWT via sjwt.VerifyJWTAnyPeerID(deps.ControlPlanePubKey).
+  No JWT → null. Expired/unverifiable → null (VerifyJWTAnyPeerID rejects expired tokens) — commented.
+- healthy = !jwtClient.IsDegraded(). mode from deps.L4Mode (cfg.Access.DataPlane.Enabled).
+- Nil-tolerance: every nil interface dep degrades its section to zero values, no panic.
+- `Now func() time.Time` clock-injection seam for deterministic uptime_sec in tests (todo-24 pattern).
+
+### 2. internal/node/gossippop/peerscorer.go (+GraylistedCount)
+- `GraylistedCount() int` — scans scores map, counts CURRENT score <= GraylistThreshold (-20).
+- Deliberately NOT the sticky graylisted set: marks are never cleared but scores recover; the two views
+  diverge and the spec asks for "当前低于阈值的 peer 数". Divergence documented in docstring + locked
+  by TestGraylistedCount_RecoveredPeerExcluded.
+
+### 3. internal/node/backhaul/backhaul.go (+ttfb ring, +warm hit counters)
+- ttfb observation ring `ttfbMs []int64` (cap 10k, same oldest-half eviction as todo-25 wins ring),
+  guarded by obsMu. `recordTTFB` called in l4.go singleflight closure on successful stream acquisition
+  (ttfb = fetch start → stream ready; first-payload-byte not observable through DataPlane interface —
+  v1 approximation, commented). L4-only, consistent with todo-25 observation scope (NoL4 fetch is
+  counted on the remote L4).
+- `TTFBP95Ms() int64` — nearest-rank P95 over ring; 0 when empty; cumulative (not windowed), commented.
+- Warm hit-rate: cacheReqs/cacheHits atomic.Int64 in recordCacheRequest — ALWAYS advance (prometheus
+  increments stay metrics-gated; CounterVec unreadable per plan line 481). `WarmCacheHitRate()` =
+  hits/requests, 0 (not NaN) at zero requests; cumulative since process start, commented.
+- prefix tier: NO counting point exists (pin store has no read-serving path in the /blob flow —
+  HandlePrefixPull is never mounted) → prefix rate恒 0 with comment, per "otherwise return 0" clause.
+- relay_bytes_24h: 计数点未接入（edge_relay_bytes_total has zero production callers）→ 恒 0 with comment.
+
+## MUST NOT compliance
+- No fabricated trend series: only instantaneous values; response comments + accessor docstrings state
+  "trends come from Prometheus directly".
+- No scorer internal map exposure: GraylistCounter returns one int.
+- No main.go edit (D1): RegisterStatusRoutes only; todo 49 mounts.
+- Files touched ONLY within allowed scope: adminapi/status_handler.go(+test), gossippop/peerscorer.go(+test),
+  backhaul/backhaul.go, backhaul/l4.go(+1 line recordTTFB), backhaul/backhaul_status_test.go (new).
+  Cache layer needed NO edits (clean hook found in backhaul manager funnel, spec-sanctioned).
+
+## Verification (all run, all green)
+- `go build ./internal/node/adminapi/ ./internal/node/gossippop/ ./internal/node/backhaul/` → OK
+- `go vet` same 3 packages → clean
+- `go test ./internal/node/adminapi/ -run 'TestStatus|TestLibp2pNetworkReporter' -v -count=1` → 8/8 PASS:
+  TestStatus_AllFields (every contract field asserted from mocks, exp from real signed JWT),
+  TestStatus_NoJWT_ExpNull (no JWT → jwt.exp=null, no panic),
+  TestStatus_Degraded_NotHealthy, TestStatus_ExpiredJWT_ExpNull,
+  TestStatus_ZeroTraffic_HitRateZero (0, not NaN), TestStatus_ModeEdge,
+  TestStatus_BadToken_401, TestLibp2pNetworkReporter_ClassifiesDirections.
+- `go test ./internal/node/gossippop/ ./internal/node/backhaul/ ./internal/node/adminapi/ -count=1` →
+  all 3 packages ok (full suites, no regression).
+- Race: `go test ./internal/node/adminapi/ -run 'TestStatus|TestLibp2pNetworkReporter' -race` ok;
+  `go test ./internal/node/backhaul/ -run 'TestWarmCacheHitRate|TestTTFB|TestRecordTTFB|TestHandleBlobL4' -race` ok.
+- New backhaul tests (backhaul_status_test.go): zero-traffic rate=0 not NaN; hit+miss→0.5 with nil metrics;
+  TTFBP95Ms empty→0, 1..100→95, ring bounded at 10k, HandleBlobL4 success records exactly 1 sample.
+- New gossippop tests (peerscorer_test.go): zero→0; at/below threshold counted, above not;
+  recovered peer excluded (sticky-set divergence locked).
+
+## Incidents
+- Concurrent foreign agent ran a broad `git checkout` mid-task that silently reverted my committed-scope
+  edits to backhaul.go and peerscorer.go (l4.go and new files survived). Detected via build failure,
+  re-applied, re-verified. Pathspec-scoped commit below protects the final state.
+
+## Git
+- One atomic commit, pathspec-scoped:
+  internal/node/adminapi/status_handler.go internal/node/adminapi/status_handler_test.go
+  internal/node/gossippop/peerscorer.go internal/node/gossippop/peerscorer_test.go
+  internal/node/backhaul/backhaul.go internal/node/backhaul/l4.go internal/node/backhaul/backhaul_status_test.go

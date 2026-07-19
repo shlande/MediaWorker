@@ -29,6 +29,10 @@ const (
 	// entries the p95 sort touches at most ~10k int64s per call.
 	backhaulObservationCapacity = 10_000
 
+	// ttfbObservationCapacity bounds the ttfb sample ring (todo 42): same
+	// memory-bound reasoning as backhaulObservationCapacity.
+	ttfbObservationCapacity = 10_000
+
 	backhaulStatsWindow = 24 * time.Hour
 
 	backhaulUtilizationWindow = time.Minute
@@ -56,9 +60,23 @@ type BackhaulManager struct {
 	obsMu sync.Mutex
 	wins  []observation
 
+	// ttfbMs is a bounded ring (same eviction pattern as wins) of ttfb
+	// samples in milliseconds from successful L4 data-plane fetches.
+	// ttfb = fetch start → stream ready (response headers received); the
+	// first payload byte is not separately observable through the DataPlane
+	// stream interface, so stream-ready is the v1 approximation.
+	ttfbMs []int64
+
 	// bytesTotal mirrors edge_backhaul_bytes_total; atomic so Stats24h
 	// reads it without obsMu.
 	bytesTotal atomic.Int64
+
+	// cacheReqs/cacheHits are process-lifetime warm-cache request/hit
+	// counters for the admin status endpoint (todo 42). The prometheus
+	// CounterVec cannot be read back, hence private atomics. The derived
+	// rate is CUMULATIVE since process start, not a windowed rate.
+	cacheReqs atomic.Int64
+	cacheHits atomic.Int64
 }
 
 type ICPFetcher interface {
@@ -98,7 +116,13 @@ func (bm *BackhaulManager) SetMetrics(m *monitor.Metrics) {
 // recordCacheRequest is a nil-safe helper for the cache hit/miss counters.
 // cache_type="warm" matches the existing edge_cache_hit_total alert rule
 // (LowCacheHitRate) — keep the label aligned with the alert queries.
+// The atomic counters ALWAYS advance (they back WarmCacheHitRate); the
+// prometheus increments stay metrics-gated.
 func (bm *BackhaulManager) recordCacheRequest(hit bool) {
+	bm.cacheReqs.Add(1)
+	if hit {
+		bm.cacheHits.Add(1)
+	}
 	if bm.metrics == nil {
 		return
 	}
@@ -106,6 +130,49 @@ func (bm *BackhaulManager) recordCacheRequest(hit bool) {
 	if hit {
 		bm.metrics.RecordCacheHit("warm")
 	}
+}
+
+// WarmCacheHitRate returns the cumulative warm-cache hit rate since process
+// start (hits/requests over the /blob serving path). Zero requests yield
+// exactly 0, never NaN. v1 simplification: cumulative, not windowed —
+// trend series come from Prometheus directly.
+func (bm *BackhaulManager) WarmCacheHitRate() float64 {
+	reqs := bm.cacheReqs.Load()
+	if reqs == 0 {
+		return 0
+	}
+	return float64(bm.cacheHits.Load()) / float64(reqs)
+}
+
+// recordTTFB appends one ttfb sample (ms) to the bounded ring.
+func (bm *BackhaulManager) recordTTFB(d time.Duration) {
+	ms := d.Milliseconds()
+	bm.obsMu.Lock()
+	bm.ttfbMs = append(bm.ttfbMs, ms)
+	if len(bm.ttfbMs) > ttfbObservationCapacity {
+		drop := len(bm.ttfbMs) - ttfbObservationCapacity/2
+		copy(bm.ttfbMs, bm.ttfbMs[drop:])
+		bm.ttfbMs = bm.ttfbMs[:len(bm.ttfbMs)-drop]
+	}
+	bm.obsMu.Unlock()
+}
+
+// TTFBP95Ms returns the nearest-rank P95 over the ttfb sample ring. Zero
+// samples yield 0. Cumulative since process start (the ring is not
+// time-windowed) — v1 simplification; trends come from Prometheus.
+func (bm *BackhaulManager) TTFBP95Ms() int64 {
+	bm.obsMu.Lock()
+	if len(bm.ttfbMs) == 0 {
+		bm.obsMu.Unlock()
+		return 0
+	}
+	sorted := make([]int64, len(bm.ttfbMs))
+	copy(sorted, bm.ttfbMs)
+	bm.obsMu.Unlock()
+
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	rank := (95*len(sorted) + 99) / 100 // ceil(0.95 * n)
+	return sorted[rank-1]
 }
 
 // recordICPRequest is a nil-safe helper for the peer ICP hit/miss counters.

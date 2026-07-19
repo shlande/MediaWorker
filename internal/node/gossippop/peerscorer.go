@@ -113,6 +113,23 @@ func (s *PeerScorer) IsGraylisted(p types.PeerId) bool {
 	return ok
 }
 
+// GraylistedCount reports the number of peers whose CURRENT score is at or
+// below GraylistThreshold. It scans the scores map rather than the sticky
+// graylisted set: RecordMisbehavior marks the set at crossing time and
+// nothing ever un-marks it, while scores can later recover above the
+// threshold — the two views diverge, and the admin status endpoint wants the
+// live "currently below threshold" count. O(peers); not for the hot path.
+func (s *PeerScorer) GraylistedCount() int {
+	n := 0
+	s.scores.Range(func(_, v any) bool {
+		if v.(float64) <= GraylistThreshold {
+			n++
+		}
+		return true
+	})
+	return n
+}
+
 // markGraylisted records that the peer is below GraylistThreshold.
 func (s *PeerScorer) markGraylisted(p types.PeerId) {
 	s.graylisted.Store(p, struct{}{})

@@ -45,6 +45,7 @@ func (bm *BackhaulManager) HandleBlobL4(ctx context.Context, w io.Writer, blobHa
 			bm.recordObservation(observation{ts: time.Now(), latencyMs: time.Since(start).Milliseconds()})
 			return nil, fetchErr
 		}
+		bm.recordTTFB(time.Since(start))
 		if wc, isCacheWriter := bm.cache.(CacheWriter); isCacheWriter {
 			data, drainErr := drainAndCache(stream, stream, wc, blobHash)
 			if drainErr != nil {
