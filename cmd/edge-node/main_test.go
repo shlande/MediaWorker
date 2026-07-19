@@ -262,7 +262,7 @@ func TestBackhaulICPFetcher_SelfTargetSkipsNetwork(t *testing.T) {
 func TestEd25519PeerstoreAdapter_ReturnsRawEd25519Key(t *testing.T) {
 	psk := t12GenPSK(t)
 	h, _ := t12GenHost(t, psk)
-	defer h.Close()
+	defer func() { _ = h.Close() }()
 
 	adapter := ed25519PeerstoreAdapter{h: h}
 
@@ -293,13 +293,13 @@ func TestEd25519PeerstoreAdapter_ReturnsRawEd25519Key(t *testing.T) {
 func TestEd25519PeerstoreAdapter_NonExistentPeerReturnsNil(t *testing.T) {
 	psk := t12GenPSK(t)
 	h, _ := t12GenHost(t, psk)
-	defer h.Close()
+	defer func() { _ = h.Close() }()
 
 	adapter := ed25519PeerstoreAdapter{h: h}
 
 	// Generate a different host's peer.ID — h's peerstore has no key for it.
 	other, _ := t12GenHost(t, psk)
-	defer other.Close()
+	defer func() { _ = other.Close() }()
 
 	got := adapter.Peerstore().PubKey(other.ID())
 	// Ed25519PubKey uses id.ExtractPublicKey which works only if the peer.ID

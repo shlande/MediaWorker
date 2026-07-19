@@ -39,7 +39,7 @@ func spawnTwoHosts(t *testing.T) (cpHost host.Host, nodeHost host.Host, nodePeer
 	nodeID := genTestIdentity(t)
 	nodeH, err := libp2phost.NewEdgeHost(nodeID, []string{"/ip4/127.0.0.1/tcp/0"}, nil, nil)
 	if err != nil {
-		cpH.Close()
+		_ = cpH.Close()
 		t.Fatalf("node host: %v", err)
 	}
 
@@ -49,14 +49,14 @@ func spawnTwoHosts(t *testing.T) (cpHost host.Host, nodeHost host.Host, nodePeer
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := cpH.Connect(ctx, peer.AddrInfo{ID: nodeH.ID(), Addrs: nodeH.Addrs()}); err != nil {
-		cpH.Close()
-		nodeH.Close()
+		_ = cpH.Close()
+		_ = nodeH.Close()
 		t.Fatalf("connect: %v", err)
 	}
 
 	cleanup = func() {
-		cpH.Close()
-		nodeH.Close()
+		_ = cpH.Close()
+		_ = nodeH.Close()
 	}
 	return cpH, nodeH, nodeH.ID(), cleanup
 }
@@ -89,7 +89,7 @@ func cpSendEvent(t *testing.T, cpHost host.Host, nodePeer peer.ID, eventType str
 	if err != nil {
 		t.Fatalf("open stream: %v", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 	if err := writeWireMessage(stream, msg); err != nil {
 		t.Fatalf("write wire message: %v", err)
 	}

@@ -56,7 +56,7 @@ func run(configPath string) error {
 	if err != nil {
 		return fmt.Errorf("metadata client: %w", err)
 	}
-	defer mc.Close()
+	defer func() { _ = mc.Close() }()
 
 	// 3. Build AccountPool from cloud account configs (upload-only, no libp2p/metadata query).
 	pool := accountpool.BuildFromConfig(cfg.Storage.ToAccountPoolConfig(), nil)
@@ -77,7 +77,7 @@ func run(configPath string) error {
 	if err != nil {
 		return fmt.Errorf("sync publisher: %w", err)
 	}
-	defer syncPub.Close()
+	defer func() { _ = syncPub.Close() }()
 
 	// Fail closed: if the CP is unreachable at startup, refuse to serve
 	// traffic rather than silently dropping every event (plan line 48 —
@@ -260,7 +260,7 @@ func handleIngest(w http.ResponseWriter, r *http.Request, pipeline *ingest.Inges
 		http.Error(w, fmt.Sprintf("missing 'file' field: %v", err), http.StatusBadRequest)
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	var opts ingest.ProcessOptions
 	if metadataJSON := r.FormValue("metadata"); metadataJSON != "" {

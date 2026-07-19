@@ -89,7 +89,7 @@ func Test_List_when_page_advances_expect_next_link_followed(t *testing.T) {
 		if strings.Contains(r.URL.String(), "nextLink") {
 			_, _ = w.Write([]byte(`{"value":[{"id":"page2","name":"pg2.txt","size":5,"file":{},"fileSystemInfo":{"lastModifiedDateTime":"2025-06-01T00:00:00Z"}}]}`))
 		} else {
-			fmt.Fprintf(w, `{"@odata.nextLink":"%s/nextLink","value":[{"id":"page1","name":"pg1.txt","size":3,"file":{},"fileSystemInfo":{"lastModifiedDateTime":"2025-06-01T00:00:00Z"}}]}`, server.URL)
+			_, _ = fmt.Fprintf(w, `{"@odata.nextLink":"%s/nextLink","value":[{"id":"page1","name":"pg1.txt","size":3,"file":{},"fileSystemInfo":{"lastModifiedDateTime":"2025-06-01T00:00:00Z"}}]}`, server.URL)
 		}
 	}))
 	defer server.Close()
@@ -266,7 +266,7 @@ func Test_PutLarge_expect_chunked_upload(t *testing.T) {
 			assertAuth(t, r)
 			w.Header().Set("Content-Type", "application/json")
 			// Use server URL to construct uploadUrl pointing back to the same server.
-			fmt.Fprintf(w, `{"uploadUrl":"%s/upload"}`, server.URL)
+			_, _ = fmt.Fprintf(w, `{"uploadUrl":"%s/upload"}`, server.URL)
 			return
 		}
 		if r.URL.Path == "/upload" {

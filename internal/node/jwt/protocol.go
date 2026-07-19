@@ -57,7 +57,7 @@ func PushJWT(h host.Host, peerID peer.ID, jwt types.CapabilityJWT) error {
 	if err != nil {
 		return fmt.Errorf("jwt push: open stream to %s: %w", peerID.ShortString(), err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	if _, err := fmt.Fprintln(s, jwt); err != nil {
 		return fmt.Errorf("jwt push: write: %w", err)
@@ -86,7 +86,7 @@ type PeerStoreWriter interface {
 //   - Accept if payload.Exp > existingEntry.JWTExp (fresher JWT)
 //   - Skip if payload.Exp == existingEntry.JWTExp (duplicate, no-op)
 func HandleJWTPush(stream network.Stream, verifier *JWTVerifier, store PeerStoreWriter) (*types.PeerStoreEntry, error) {
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	// Read a single line (JWT string)
 	line, err := bufio.NewReader(stream).ReadString('\n')

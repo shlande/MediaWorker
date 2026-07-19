@@ -63,7 +63,7 @@ func (i *ImageIngester) Process(ctx context.Context, input io.Reader, opts Proce
 	// 3. Decode to get dimensions and format.
 	img, format, err := image.Decode(strings.NewReader(string(raw)))
 	if err != nil {
-		os.RemoveAll(workDir)
+		_ = os.RemoveAll(workDir)
 		return nil, fmt.Errorf("decode image: %w", err)
 	}
 	bounds := img.Bounds()
@@ -72,7 +72,7 @@ func (i *ImageIngester) Process(ctx context.Context, input io.Reader, opts Proce
 	// 4. Original blob.
 	origHash, origSize, err := hashFile(origPath)
 	if err != nil {
-		os.RemoveAll(workDir)
+		_ = os.RemoveAll(workDir)
 		return nil, fmt.Errorf("hash original: %w", err)
 	}
 
@@ -98,13 +98,13 @@ func (i *ImageIngester) Process(ctx context.Context, input io.Reader, opts Proce
 		thumb := resizeNearestNeighbor(img, tw)
 		thumbPath := filepath.Join(workDir, fmt.Sprintf("thumb_%d.jpg", tw))
 		if err := encodeImage(thumb, thumbPath, "jpeg"); err != nil {
-			os.RemoveAll(workDir)
+			_ = os.RemoveAll(workDir)
 			return nil, fmt.Errorf("encode thumbnail %d: %w", tw, err)
 		}
 
 		thumbHash, thumbSize, err := hashFile(thumbPath)
 		if err != nil {
-			os.RemoveAll(workDir)
+			_ = os.RemoveAll(workDir)
 			return nil, fmt.Errorf("hash thumbnail %d: %w", tw, err)
 		}
 

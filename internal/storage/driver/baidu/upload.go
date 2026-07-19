@@ -30,7 +30,7 @@ func (d *BaiduDriver) precreate(ctx context.Context, token, path string, size in
 	if err != nil {
 		return "", fmt.Errorf("do request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var body pcsPrecreateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
@@ -79,7 +79,7 @@ func (d *BaiduDriver) uploadChunks(
 		if err != nil {
 			return fmt.Errorf("chunk %d: do request: %w", i, err)
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 
 		if resp.StatusCode != http.StatusOK {
 			return fmt.Errorf("chunk %d: HTTP %d", i, resp.StatusCode)
@@ -115,7 +115,7 @@ func (d *BaiduDriver) createFile(ctx context.Context, token, path string, size i
 	if err != nil {
 		return nil, fmt.Errorf("do request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var body pcsCreateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
@@ -155,7 +155,7 @@ func (d *BaiduDriver) doMkdir(ctx context.Context, token, path string) (*fileInf
 	if err != nil {
 		return nil, fmt.Errorf("do request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var body pcsCreateResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {

@@ -97,7 +97,7 @@ func NewBootstrapHost(
 	for _, maStr := range cfg.BootstrapPeers {
 		ai, err := peer.AddrInfoFromString(maStr)
 		if err != nil {
-			h.Close()
+			_ = h.Close()
 			return nil, fmt.Errorf("parse bootstrap peer multiaddr %q: %w", maStr, err)
 		}
 		bootAddrs = append(bootAddrs, *ai)

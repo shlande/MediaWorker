@@ -13,7 +13,7 @@ func TestMigrateAll_ExecutesInOrder(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	// Expect 13 migration files in sorted order.
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS content`).
@@ -60,7 +60,7 @@ func TestMigrateAll_WithExistingTables(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS content`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
@@ -106,7 +106,7 @@ func TestMigrateAll_SQLParsesCorrectly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS content`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
@@ -152,7 +152,7 @@ func TestMigrateAll_FailsOnBadSQL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS content`).
 		WillReturnError(sqlmock.ErrCancelled)

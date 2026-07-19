@@ -55,7 +55,7 @@ func newTestNode(t *testing.T, psk types.PSK) *testNode {
 	if err != nil {
 		t.Fatalf("new edge host: %v", err)
 	}
-	t.Cleanup(func() { h.Close() })
+	t.Cleanup(func() { _ = h.Close() })
 
 	scorer := NewPeerScorer()
 	ps, err := NewGossipSub(ctx, h, scorer)

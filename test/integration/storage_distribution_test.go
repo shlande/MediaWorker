@@ -919,7 +919,7 @@ func TestHTTPLocationClient_WiredIntoLocalDataPlane(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchBlobLocal: unexpected error: %v", err)
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 	body, err := io.ReadAll(reader)
 	if err != nil {
 		t.Fatalf("read body: %v", err)

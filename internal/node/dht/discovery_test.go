@@ -48,7 +48,7 @@ func testHost(t *testing.T, psk types.PSK) host.Host {
 	if err != nil {
 		t.Fatalf("create host: %v", err)
 	}
-	t.Cleanup(func() { h.Close() })
+	t.Cleanup(func() { _ = h.Close() })
 	return h
 }
 
@@ -59,7 +59,7 @@ func tempPeerStore(t *testing.T) *peerstore.PeerEntryStore {
 	if err != nil {
 		t.Fatalf("create PeerEntryStore: %v", err)
 	}
-	t.Cleanup(func() { s.Close() })
+	t.Cleanup(func() { _ = s.Close() })
 	return s
 }
 

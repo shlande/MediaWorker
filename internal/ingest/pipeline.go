@@ -66,7 +66,7 @@ func (p *IngestPipeline) Ingest(
 		return "", fmt.Errorf("process: %w", err)
 	}
 	if result.WorkDir != "" {
-		defer os.RemoveAll(result.WorkDir)
+		defer func() { _ = os.RemoveAll(result.WorkDir) }()
 	}
 
 	// Upload every blob redundantly (K = p.redundancy).

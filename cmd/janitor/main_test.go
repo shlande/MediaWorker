@@ -78,7 +78,7 @@ func TestRunCycle_DryRun_NoRemoveCalls(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	const (
 		hash     = "orphan-abc"
@@ -163,7 +163,7 @@ func TestRunCycle_LiveDelete_RemovesAndDeletes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	const (
 		hash     = "orphan-xyz"
@@ -241,7 +241,7 @@ func TestRunCycle_DryRun_RescueStillHappens(t *testing.T) {
 	if err != nil {
 		t.Fatalf("sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	const hash = "rescued-blob"
 

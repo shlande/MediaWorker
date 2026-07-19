@@ -191,7 +191,7 @@ func createNode(t *testing.T, opts clusterOptions, idx int) *clusterNode {
 	if err != nil {
 		t.Fatalf("peer store %d: %v", idx, err)
 	}
-	t.Cleanup(func() { ps.Close() })
+	t.Cleanup(func() { _ = ps.Close() })
 
 	// JWTVerifier with placeholder pub key.
 	cpPub, _, err := ed25519.GenerateKey(rand.Reader)
@@ -208,7 +208,7 @@ func createNode(t *testing.T, opts clusterOptions, idx int) *clusterNode {
 	if err != nil {
 		t.Fatalf("host %d: %v", idx, err)
 	}
-	t.Cleanup(func() { h.Close() })
+	t.Cleanup(func() { _ = h.Close() })
 
 	// Ed25519 raw keys.
 	var edPub ed25519.PublicKey
@@ -253,7 +253,7 @@ func createNode(t *testing.T, opts clusterOptions, idx int) *clusterNode {
 				if err != nil {
 					return nil, err
 				}
-				defer rc.Close()
+				defer func() { _ = rc.Close() }()
 				return io.ReadAll(rc)
 			}
 			return []byte("pinned-content"), nil
@@ -261,7 +261,7 @@ func createNode(t *testing.T, opts clusterOptions, idx int) *clusterNode {
 		if err != nil {
 			t.Fatalf("pin store %d: %v", idx, err)
 		}
-		t.Cleanup(func() { pStore.Close() })
+		t.Cleanup(func() { _ = pStore.Close() })
 		node.pinStore = pStore
 	}
 
@@ -587,7 +587,7 @@ func TestIntegration_JWTVerification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("peerstore A: %v", err)
 	}
-	t.Cleanup(func() { psA.Close() })
+	t.Cleanup(func() { _ = psA.Close() })
 
 	jwtVerifierA := jwt.NewJWTVerifier(cpPub)
 	gaterA := libp2phost.NewEdgeConnectionGater(psA, jwtVerifierA, 1000, 100, nil)
@@ -595,7 +595,7 @@ func TestIntegration_JWTVerification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("host A: %v", err)
 	}
-	t.Cleanup(func() { hA.Close() })
+	t.Cleanup(func() { _ = hA.Close() })
 
 	// Register auth handler on A.
 	hA.SetStreamHandler(libp2phost.AuthProtocol, func(s network.Stream) {
@@ -610,7 +610,7 @@ func TestIntegration_JWTVerification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("peerstore B: %v", err)
 	}
-	t.Cleanup(func() { psB.Close() })
+	t.Cleanup(func() { _ = psB.Close() })
 
 	jwtVerifierB := jwt.NewJWTVerifier(cpPub)
 	gaterB := libp2phost.NewEdgeConnectionGater(psB, jwtVerifierB, 1000, 100, nil)
@@ -618,7 +618,7 @@ func TestIntegration_JWTVerification(t *testing.T) {
 	if err != nil {
 		t.Fatalf("host B: %v", err)
 	}
-	t.Cleanup(func() { hB.Close() })
+	t.Cleanup(func() { _ = hB.Close() })
 
 	// Connect.
 	ctx, cancel := ctxDefault()
@@ -782,7 +782,7 @@ func TestIntegration_CacheHit(t *testing.T) {
 	if !hit {
 		t.Fatal("expected HIT, got MISS")
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 
 	got, err := io.ReadAll(rc)
 	if err != nil {

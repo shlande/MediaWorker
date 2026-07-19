@@ -236,7 +236,7 @@ func (d *OneDriveDriver) Get(ctx context.Context, fileID string) (types.FileInfo
 	if err != nil {
 		return types.FileInfo{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var item graphDriveItem
 	if err := json.NewDecoder(resp.Body).Decode(&item); err != nil {
@@ -257,7 +257,7 @@ func (d *OneDriveDriver) GetLink(ctx context.Context, fileID string) (*types.Dow
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var item graphDriveItem
 	if err := json.NewDecoder(resp.Body).Decode(&item); err != nil {
@@ -295,7 +295,7 @@ func (d *OneDriveDriver) putSmall(ctx context.Context, dirID, name string, reade
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var item graphDriveItem
 	if err := json.NewDecoder(resp.Body).Decode(&item); err != nil {
@@ -321,10 +321,10 @@ func (d *OneDriveDriver) putLarge(ctx context.Context, dirID, name string, reade
 	}
 	var sessionResp graphCreateUploadSessionResponse
 	if err := json.NewDecoder(resp.Body).Decode(&sessionResp); err != nil {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, fmt.Errorf("onedrive: createUploadSession decode: %w", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// Step 2: Upload in chunks.
 	buf := make([]byte, uploadChunkSize)
@@ -381,7 +381,7 @@ func (d *OneDriveDriver) Remove(ctx context.Context, fileID string) error {
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	return nil
 }
 
@@ -400,7 +400,7 @@ func (d *OneDriveDriver) Mkdir(ctx context.Context, parentID string, name string
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var item graphDriveItem
 	if err := json.NewDecoder(resp.Body).Decode(&item); err != nil {
@@ -433,7 +433,7 @@ func (d *OneDriveDriver) HealthCheck(ctx context.Context) types.HealthState {
 			ErrorMsg:  err.Error(),
 		}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode == http.StatusTooManyRequests {
 		return types.HealthState{

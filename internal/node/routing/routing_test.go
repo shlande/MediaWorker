@@ -387,7 +387,7 @@ func genTestHost(t *testing.T, psk types.PSK) host.Host {
 	if err != nil {
 		t.Fatalf("create host: %v", err)
 	}
-	t.Cleanup(func() { h.Close() })
+	t.Cleanup(func() { _ = h.Close() })
 	return h
 }
 

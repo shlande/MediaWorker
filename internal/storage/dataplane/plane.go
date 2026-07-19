@@ -120,13 +120,13 @@ func (dp *LocalDataPlane) FetchBlobLocal(ctx interface{}, blobHash string) (io.R
 
 	// 6. Check for ban/throttle signals.
 	if resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusMethodNotAllowed || resp.StatusCode == http.StatusTooManyRequests {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, &types.BanSignalError{Code: resp.StatusCode, Msg: fmt.Sprintf("dataplane: ban signal fetching %q", blobHash)}
 	}
 
 	// 7. Reject non-200 status codes.
 	if resp.StatusCode != http.StatusOK {
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		return nil, fmt.Errorf("dataplane: unexpected status %d fetching %q", resp.StatusCode, blobHash)
 	}
 

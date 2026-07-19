@@ -94,7 +94,7 @@ func genTestHost(t *testing.T, psk types.PSK) host.Host {
 	if err != nil {
 		t.Fatalf("create host: %v", err)
 	}
-	t.Cleanup(func() { h.Close() })
+	t.Cleanup(func() { _ = h.Close() })
 	return h
 }
 
@@ -198,7 +198,7 @@ func TestFetchFromPeerGet_Streaming(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchFromPeerGet: %v", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	var received []byte
 	chunk := make([]byte, 64)
@@ -251,7 +251,7 @@ func TestFetchFromPeer_Combined(t *testing.T) {
 	if stream == nil {
 		t.Fatal("expected non-nil stream on HIT")
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	received, err := io.ReadAll(stream)
 	if err != nil {
@@ -311,7 +311,7 @@ func TestHandleBlobGet_LargeBlob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FetchFromPeerGet: %v", err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	received := make([]byte, 0, blobSize)
 	buf := make([]byte, 32*1024)
@@ -355,7 +355,7 @@ func TestHandleBlobGet_Missing(t *testing.T) {
 		// Server reset the stream — acceptable.
 		return
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	_, readErr := io.ReadAll(stream)
 	if readErr == nil {

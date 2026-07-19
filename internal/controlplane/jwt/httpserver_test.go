@@ -169,7 +169,7 @@ func waitForServer(t *testing.T, addr string) {
 	for time.Now().Before(deadline) {
 		resp, err := http.Get("http://" + addr + "/v1/node/jwt")
 		if err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return // server is up (even if 405 or 404)
 		}
 		time.Sleep(10 * time.Millisecond)

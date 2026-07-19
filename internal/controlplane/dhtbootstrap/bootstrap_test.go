@@ -82,7 +82,7 @@ func nodeHost(t *testing.T, id *identity.NodeIdentity, psk types.PSK) host.Host 
 	if err != nil {
 		t.Fatalf("create node host: %v", err)
 	}
-	t.Cleanup(func() { h.Close() })
+	t.Cleanup(func() { _ = h.Close() })
 	return h
 }
 
@@ -155,7 +155,7 @@ func TestNewBootstrapHost_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBootstrapHost: %v", err)
 	}
-	defer bh.Close()
+	defer func() { _ = bh.Close() }()
 
 	// Then: the host is created and the underlying host is accessible
 	h := bh.Host()
@@ -181,7 +181,7 @@ func TestBootstrapHost_FindPeers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBootstrapHost: %v", err)
 	}
-	defer bh.Close()
+	defer func() { _ = bh.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -196,7 +196,7 @@ func TestBootstrapHost_FindPeers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create node DHT: %v", err)
 	}
-	defer nodeDHT.Close()
+	defer func() { _ = nodeDHT.Close() }()
 
 	// Connect node → bootstrap and let routing tables stabilize.
 	pi := peer.AddrInfo{ID: bh.Host().ID(), Addrs: bh.Host().Addrs()}
@@ -240,7 +240,7 @@ func TestBootstrapHost_PSKMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBootstrapHost: %v", err)
 	}
-	defer bh.Close()
+	defer func() { _ = bh.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -284,7 +284,7 @@ func TestBootstrapHost_Heartbeat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewBootstrapHost: %v", err)
 	}
-	defer bh.Close()
+	defer func() { _ = bh.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
@@ -299,7 +299,7 @@ func TestBootstrapHost_Heartbeat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create node DHT: %v", err)
 	}
-	defer nodeDHT.Close()
+	defer func() { _ = nodeDHT.Close() }()
 
 	pi := peer.AddrInfo{ID: bh.Host().ID(), Addrs: bh.Host().Addrs()}
 	if err := nodeH.Connect(ctx, pi); err != nil {

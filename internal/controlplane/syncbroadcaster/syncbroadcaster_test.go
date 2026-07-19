@@ -43,7 +43,7 @@ func spawnTwoHosts(t *testing.T) (cpHost host.Host, nodeHost host.Host, nodePeer
 	nodeID := genTestIdentity(t)
 	nodeH, err := libp2phost.NewEdgeHost(nodeID, []string{"/ip4/127.0.0.1/tcp/0"}, nil, nil)
 	if err != nil {
-		cpH.Close()
+		_ = cpH.Close()
 		t.Fatalf("node host: %v", err)
 	}
 
@@ -53,14 +53,14 @@ func spawnTwoHosts(t *testing.T) (cpHost host.Host, nodeHost host.Host, nodePeer
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := cpH.Connect(ctx, peer.AddrInfo{ID: nodeH.ID(), Addrs: nodeH.Addrs()}); err != nil {
-		cpH.Close()
-		nodeH.Close()
+		_ = cpH.Close()
+		_ = nodeH.Close()
 		t.Fatalf("connect: %v", err)
 	}
 
 	cleanup = func() {
-		cpH.Close()
-		nodeH.Close()
+		_ = cpH.Close()
+		_ = nodeH.Close()
 	}
 	return cpH, nodeH, nodeH.ID(), cleanup
 }
@@ -177,7 +177,7 @@ func TestBroadcast_DeliversToConnectedPeers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("node2 host: %v", err)
 	}
-	defer nodeH2.Close()
+	defer func() { _ = nodeH2.Close() }()
 
 	cpHost.Peerstore().AddAddrs(nodeH2.ID(), nodeH2.Addrs(), time.Hour)
 	nodeH2.Peerstore().AddAddrs(cpHost.ID(), cpHost.Addrs(), time.Hour)
@@ -231,7 +231,7 @@ func TestBroadcast_DeliversToConnectedPeers(t *testing.T) {
 // events (not just PIN_PLAN_UPDATE which sbnode.Client filters on).
 func captureHandler(ch chan<- sb.WireMessage) func(network.Stream) {
 	return func(stream network.Stream) {
-		defer stream.Close()
+		defer func() { _ = stream.Close() }()
 		msg, err := sb.ReadWireMessage(stream)
 		if err != nil {
 			return
@@ -568,7 +568,7 @@ func TestSendToNode_SendTimeoutExpired_ReturnsDeadlineExceeded(t *testing.T) {
 	broadcaster := sb.New(cpHost, sb.WithSendTimeout(1*time.Nanosecond))
 
 	_, nodeHost, nodePeer, _ := spawnTwoHosts(t)
-	defer nodeHost.Close()
+	defer func() { _ = nodeHost.Close() }()
 
 	err := broadcaster.SendToNode(nodePeer.String(), "PIN_PLAN_UPDATE", nil)
 	if err == nil {

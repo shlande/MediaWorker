@@ -104,12 +104,12 @@ func NewSyncPublisher(cpMultiaddr string, privKeyPath string, pskHexEnv string) 
 
 	cpMA, err := multiaddr.NewMultiaddr(cpMultiaddr)
 	if err != nil {
-		h.Close()
+		_ = h.Close()
 		return nil, fmt.Errorf("syncpub: parse control-plane multiaddr %q: %w", cpMultiaddr, err)
 	}
 	cpAI, err := peer.AddrInfoFromP2pAddr(cpMA)
 	if err != nil {
-		h.Close()
+		_ = h.Close()
 		return nil, fmt.Errorf("syncpub: extract peer from %q: %w", cpMultiaddr, err)
 	}
 

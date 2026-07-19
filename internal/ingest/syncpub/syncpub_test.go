@@ -44,12 +44,12 @@ func spawnCPHost(t *testing.T, psk []byte) (host.Host, multiaddr.Multiaddr) {
 	}
 
 	if len(h.Addrs()) == 0 {
-		h.Close()
+		_ = h.Close()
 		t.Fatalf("cp host has no listen addrs")
 	}
 	ma, err := multiaddr.NewMultiaddr("/p2p/" + h.ID().String())
 	if err != nil {
-		h.Close()
+		_ = h.Close()
 		t.Fatalf("build cp multiaddr: %v", err)
 	}
 	fullMA := h.Addrs()[0].Encapsulate(ma)
@@ -73,7 +73,7 @@ func runWithPSK(t *testing.T, pskHex string, pskEnvName string) {
 
 	// 1. Spawn CP-side host with SyncBroadcaster.
 	cpHost, cpMA := spawnCPHost(t, psk)
-	defer cpHost.Close()
+	defer func() { _ = cpHost.Close() }()
 
 	broadcaster := cpsyncbroadcaster.New(cpHost)
 	subCh := broadcaster.Subscribe(types.EventContentIngested)
@@ -90,7 +90,7 @@ func runWithPSK(t *testing.T, pskHex string, pskEnvName string) {
 	if err != nil {
 		t.Fatalf("NewSyncPublisher: %v", err)
 	}
-	defer pub.Close()
+	defer func() { _ = pub.Close() }()
 
 	// 3. Seed the publisher's peerstore so Connect succeeds. The publisher
 	//    already pre-seeds via NewSyncPublisher (time.Hour ttl); we just need
@@ -176,7 +176,7 @@ func TestSyncPublisher_PSKMismatch_FailsClosed(t *testing.T) {
 	workerPSK := "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
 
 	cpHost, cpMA := spawnCPHost(t, mustHex(t, cpPSK))
-	defer cpHost.Close()
+	defer func() { _ = cpHost.Close() }()
 
 	// Worker uses a different PSK.
 	t.Setenv("LIBP2P_PSK", workerPSK)
@@ -186,7 +186,7 @@ func TestSyncPublisher_PSKMismatch_FailsClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSyncPublisher: %v", err)
 	}
-	defer pub.Close()
+	defer func() { _ = pub.Close() }()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
@@ -215,7 +215,7 @@ func TestSyncPublisher_PublishFailure_IncrementsCounter(t *testing.T) {
 	// Spawn a CP host, get its multiaddr, then Close it so the worker
 	// dials a dead address.
 	cpHost, cpMA := spawnCPHost(t, nil)
-	cpHost.Close()
+	_ = cpHost.Close()
 
 	before := syncpub.PublishFailures()
 
@@ -224,7 +224,7 @@ func TestSyncPublisher_PublishFailure_IncrementsCounter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewSyncPublisher: %v", err)
 	}
-	defer pub.Close()
+	defer func() { _ = pub.Close() }()
 
 	evt := types.ContentIngestedEvent{
 		ContentID:   "cnt_fail_001",

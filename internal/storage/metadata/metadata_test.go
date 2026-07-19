@@ -46,7 +46,7 @@ func TestGetContentMeta_ReturnsContentMeta(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	client := newPGMetadataClientWithDB(db)
 
 	rows := sqlmock.NewRows([]string{"content_id", "content_type", "type_metadata"}).
@@ -78,7 +78,7 @@ func TestGetContentMeta_NotFoundWrapsErrNoRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	client := newPGMetadataClientWithDB(db)
 
 	mock.ExpectQuery(`SELECT content_id, content_type, type_metadata FROM content WHERE content_id = \$1`).
@@ -104,7 +104,7 @@ func TestGetTopContents_ReturnsSortedByPopularity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	client := newPGMetadataClientWithDB(db)
 
 	rows := sqlmock.NewRows([]string{"content_id", "content_type", "type_metadata", "window_24h"}).
@@ -143,7 +143,7 @@ func TestGetTopContents_QueryErrorReturnsError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	client := newPGMetadataClientWithDB(db)
 
 	mock.ExpectQuery(`SELECT c\.content_id`).
@@ -166,7 +166,7 @@ func TestGetBlobLocations_ReturnsLocations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	client := newPGMetadataClientWithDB(db)
 
 	rows := sqlmock.NewRows([]string{"blob_hash", "backend_id", "file_id"}).
@@ -205,7 +205,7 @@ func TestGetBlobLocations_EmptyWhenNoRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	client := newPGMetadataClientWithDB(db)
 
 	rows := sqlmock.NewRows([]string{"blob_hash", "backend_id", "file_id"})
@@ -232,7 +232,7 @@ func TestGetPopularity24h_ReturnsPopularity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	client := newPGMetadataClientWithDB(db)
 
 	rows := sqlmock.NewRows([]string{"window_24h"}).AddRow(int64(8712))
@@ -254,7 +254,7 @@ func TestGetPopularity24h_NotFoundReturnsZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	client := newPGMetadataClientWithDB(db)
 
 	mock.ExpectQuery(`SELECT window_24h FROM content_popularity WHERE content_id = \$1`).
@@ -275,7 +275,7 @@ func TestGetPopularity24h_DBErrorReturnsZero(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	client := newPGMetadataClientWithDB(db)
 
 	mock.ExpectQuery(`SELECT window_24h FROM content_popularity WHERE content_id = \$1`).
@@ -298,7 +298,7 @@ func TestGetContentBlobs_ReturnsBlobsAndRoles(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	client := newPGMetadataClientWithDB(db)
 
 	businessMeta := []byte(`{"representation_id":"720p","bitrate":1500000}`)
@@ -352,7 +352,7 @@ func TestGetContentBlobs_EmptyWhenNoContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	client := newPGMetadataClientWithDB(db)
 
 	rows := sqlmock.NewRows([]string{"blob_hash", "blob_type", "size_bytes", "role", "sort_order", "business_meta"})
@@ -382,7 +382,7 @@ func TestWriteIngestTransaction_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	client := newPGMetadataClientWithDB(db)
 
 	content := types.ContentMeta{
@@ -463,7 +463,7 @@ func TestWriteIngestTransaction_RollbackOnBlobError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	client := newPGMetadataClientWithDB(db)
 
 	content := types.ContentMeta{ContentID: "abc-123", ContentType: "video", TypeMetadata: nil}
@@ -496,7 +496,7 @@ func TestWriteIngestTransaction_RollbackOnLocationError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	client := newPGMetadataClientWithDB(db)
 
 	content := types.ContentMeta{ContentID: "abc-123", ContentType: "video", TypeMetadata: nil}
@@ -533,7 +533,7 @@ func TestWriteIngestTransaction_RollbackOnContentError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	client := newPGMetadataClientWithDB(db)
 
 	content := types.ContentMeta{ContentID: "abc-123", ContentType: "video", TypeMetadata: nil}
@@ -575,7 +575,7 @@ func TestReportAccountHealth_Upserts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	client := newPGMetadataClientWithDB(db)
 
 	now := time.Now()
@@ -604,7 +604,7 @@ func TestReportAccountHealth_BannedSetsBanUntil(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	client := newPGMetadataClientWithDB(db)
 
 	now := time.Now()
@@ -635,7 +635,7 @@ func TestGetAccountHealths_ReturnsHealthRecords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	client := newPGMetadataClientWithDB(db)
 
 	now := time.Now()
@@ -673,7 +673,7 @@ func TestGetAccountHealths_EmptyWhenNoRows(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 	client := newPGMetadataClientWithDB(db)
 
 	rows := sqlmock.NewRows([]string{"vendor", "account_id", "state", "last_check", "latency_ms", "error_msg", "ban_until"})

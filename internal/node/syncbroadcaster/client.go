@@ -106,7 +106,7 @@ func (c *Client) SendToControlPlane(ctx context.Context, targetCP peer.ID, event
 	if err != nil {
 		return fmt.Errorf("node/syncbroadcaster: open stream to CP %s: %w", targetCP.ShortString(), err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	data, err := json.Marshal(msg)
 	if err != nil {
@@ -130,7 +130,7 @@ func (c *Client) SendToControlPlane(ctx context.Context, targetCP peer.ID, event
 }
 
 func (c *Client) handleStream(stream network.Stream) {
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	br := bufio.NewReader(stream)
 

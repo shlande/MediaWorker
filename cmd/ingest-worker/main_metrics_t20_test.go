@@ -41,7 +41,7 @@ func TestIngestWorker_MetricsEndpoint_Returns200AndKeyNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /metrics: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
@@ -76,7 +76,7 @@ func TestIngestWorker_MetricsEndpoint_ReflectsPublishFailures(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET /metrics: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 
 	if !strings.Contains(string(body), "ingest_publish_failures 7") {
@@ -100,8 +100,8 @@ func TestIngestWorker_HandleIngest_NilMetricsNoPanic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create form file: %v", err)
 	}
-	fmt.Fprint(fw, "test-content")
-	mw2.Close()
+	_, _ = fmt.Fprint(fw, "test-content")
+	_ = mw2.Close()
 
 	req := httptest.NewRequest(http.MethodPost, "/ingest/dash_video",
 		strings.NewReader(bodyBuf.String()))

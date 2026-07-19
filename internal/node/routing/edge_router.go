@@ -129,7 +129,7 @@ func (er *EdgeRouter) proxyToPeer(ctx context.Context, w io.Writer, targetPeer p
 	if err != nil {
 		return fmt.Errorf("open stream to %s: %w", targetPeer.ShortString(), err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	// Send blob hash: varint-prefixed, matching ICP wire format.
 	hashBytes := []byte(blobHash)

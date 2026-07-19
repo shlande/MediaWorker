@@ -19,17 +19,17 @@ func newTempStore(t *testing.T) (*peerstore.PeerEntryStore, func()) {
 	}
 	store, err := peerstore.NewPeerEntryStore(dir)
 	if err != nil {
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 		t.Fatalf("NewPeerEntryStore: %v", err)
 	}
 	if err := store.Restore(); err != nil {
 		_ = store.Close()
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 		t.Fatalf("Restore: %v", err)
 	}
 	cleanup := func() {
 		_ = store.Close()
-		os.RemoveAll(dir)
+		_ = os.RemoveAll(dir)
 	}
 	return store, cleanup
 }

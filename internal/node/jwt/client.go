@@ -77,7 +77,7 @@ func (c *JWTClient) RequestJWT(ctx context.Context) (*types.JWTResponse, error) 
 	if err != nil {
 		return nil, fmt.Errorf("jwt client: post: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("jwt client: unexpected status %d", resp.StatusCode)

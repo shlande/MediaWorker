@@ -60,7 +60,7 @@ func FetchFromPeerHead(ctx context.Context, h host.Host, targetPeer peer.ID, blo
 	if err != nil {
 		return false, fmt.Errorf("open head stream to %s: %w", targetPeer, err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	if err := writeBlobHash(stream, blobHash); err != nil {
 		return false, fmt.Errorf("write blob hash to %s: %w", targetPeer, err)
@@ -95,7 +95,7 @@ func FetchFromPeerGet(ctx context.Context, h host.Host, targetPeer peer.ID, blob
 	}
 
 	if err := writeBlobHash(stream, blobHash); err != nil {
-		stream.Close()
+		_ = stream.Close()
 		return nil, fmt.Errorf("write blob hash to %s: %w", targetPeer, err)
 	}
 
@@ -140,7 +140,7 @@ func FetchFromPeer(ctx context.Context, h host.Host, targetPeer peer.ID, blobHas
 // the BlobStore, and writes a 1-byte response: 0x01 for HIT, 0x00 for MISS.
 // The stream is always closed before returning.
 func HandleBlobHead(stream network.Stream, blobStore BlobStore) error {
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	blobHash, err := readBlobHash(stream)
 	if err != nil {
@@ -167,7 +167,7 @@ func HandleBlobHead(stream network.Stream, blobStore BlobStore) error {
 // the store reader to the stream.
 // The stream is always closed before returning.
 func HandleBlobGet(stream network.Stream, blobStore BlobStore) error {
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	blobHash, err := readBlobHash(stream)
 	if err != nil {
