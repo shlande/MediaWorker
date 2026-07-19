@@ -407,3 +407,12 @@ auditlog failure path audit: Added Result/Reason to AuditEntry, extended Log(pee
 - hot_contents = todo-14 ListContents(sort=popularity, pageSize=8) reuse — one SQL query covers title/type/window_24h/replicas_have; no new metadata query needed beyond AccountHealthRate.
 - nodeOnlineMaxAge (60s) already existed in quota_handler.go (todo 53) — reused, same package; don't redeclare.
 - -race also surfaces foreign in-flight breakage in the shared adminapi package; two transient accounts-agent breakages (missing time import, then RegisterAccountsRoutes signature flip 2-arg→4-arg) self-resolved in 30-120s each. Poll, never drive-by fix. TestVendorRules_Matrix failure at commit time is foreign (vendorrules.go, todo 26/58).
+
+## [2026-07-20T20:45Z] Task: todo-44
+- Pin handler endpoints added in pins_handler.go (120 pure LOC): GET /v1/pins (filter+summary), POST /v1/pins/{hash}/retry (202/404), GET /v1/pin-plans/recent (newest-first, limit).
+- Narrow interfaces: PinListReader (List), PinRetrier (RetryPin), PinPlanLogReader (Recent) — all defined in adminapi package. Production wires *pinstore.PinStore for first two (single value satisfies both via any cast), *planlog.Log for third.
+- type-asserted pinStore: RegisterPinsRoutes takes `pinStore any` and casts to PinListReader/PinRetrier separately — nil-safe for both directions, non-reader/non-retrier types degrade to empty/404.
+- planlog.Log.Recent returns newest-first already (done in todo 41); handler just serializes directly — no mapping layer needed.
+- 32 tests green (-race clean, 1.5s): three filter axes, summary counts, retry 202/404 shapes, recent order+limit, bad token→401 on all 3 endpoints, prefix clash guard, nil-store/nil-log safe, hash with special chars.
+- assertErrorBody already existed in server_test.go (same package) — removed duplicate from pins_handler_test.go.
+- D1 compliant: RegisterPinsRoutes(srv, pinStore, planLog) — no main.go edit; todo 49 wires.

@@ -1,0 +1,39 @@
+Task: todo-44 — GET /v1/pins + POST /v1/pins/{hash}/retry + GET /v1/pin-plans/recent
+Date: 2026-07-20T20:45Z
+Plan: .omo/plans/ui-admin-apis.md:494-500
+
+Files:
+- NEW: internal/node/adminapi/pins_handler.go (120 pure LOC)
+- NEW: internal/node/adminapi/pins_handler_test.go (601 lines)
+
+Dependencies consumed:
+- pinstore.PinFilter / List / RetryPin (todo 40, query.go)
+- planlog.Record / Log.Recent (todo 41, planlog.go)
+- adminapi.Server / Handle / WriteJSON / WriteError / TokenHeader (todo 38, server.go)
+
+Endpoints (all X-Admin-Token):
+(a) GET /v1/pins?ready=&role=&content_id= → PinListReader.List(filter) → pinsResponse{pins, summary}
+(b) POST /v1/pins/{hash}/retry → PinRetrier.RetryPin(hash) → 202 {"status":"retrying"} | 404
+(c) GET /v1/pin-plans/recent?limit= → PinPlanLogReader.Recent(limit) → []planlog.Record
+
+D1 compliance: RegisterPinsRoutes(srv, pinStore, planLog) — no main.go edit.
+
+Test results:
+- go test ./internal/node/adminapi/ -run "TestPins|TestPinPlans" -v: 32/32 PASS
+- go test -race ./internal/node/adminapi/ -run "TestPins|TestPinPlans" -count=1: PASS (1.5s)
+- Full package test: PASS (0.66s)
+
+Test coverage:
+- Filters: no-filter/all, ready=true, ready=false, ready=invalid, role, content_id, combined
+- Summary: total/ready/pulling/failed counts, empty store
+- Response shape: all fields verified on a single entry
+- Retry: 202 happy path, 404 not-found, 404 not-failed-state, nil store→404
+- Recent: empty, all, newest-first order, limit, invalid limit, non-numeric limit, nil log, record shape
+- Token: 401 no-token on all 3 endpoints, 401 wrong-token on all 3
+- Edge: hash with special chars, prefix clash guard, nil entries safe
+
+Must-NOT guards:
+- No progress percentage (three-state: ready/pulling/failed)
+- Retry does not block (202 accepted, fetchPinnedBlob runs in goroutine)
+- No main.go mount (RegisterPinsRoutes per D1)
+- No edits outside pins_handler.go/pins_handler_test.go/.omo/evidence/.omo/notepads
