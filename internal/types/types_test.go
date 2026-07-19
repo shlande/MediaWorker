@@ -390,6 +390,11 @@ func TestCredentialChangePayload_roundtrip(t *testing.T) {
 		Credential: Credential{
 			RefreshToken: "rt-new",
 		},
+		ClientConfig: ClientConfig{
+			ClientID:     "cid",
+			ClientSecret: "cs",
+			RedirectURI:  "https://example.com/cb",
+		},
 	})
 }
 

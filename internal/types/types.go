@@ -329,13 +329,15 @@ type Event struct {
 	Payload []byte `json:"payload"`
 }
 
-// CredentialChangePayload is the CREDENTIAL_UPDATE event payload. Credential is
-// the new credential body; old control planes omit it — nodes then wait for the
-// next ACCOUNT_SNAPSHOT (<=60s) to converge instead of applying it immediately.
+// CredentialChangePayload is the CREDENTIAL_UPDATE event payload. Credential and
+// ClientConfig carry the new auth material; old control planes omit them —
+// nodes then wait for the next ACCOUNT_SNAPSHOT (<=60s) to converge instead of
+// applying them immediately.
 type CredentialChangePayload struct {
-	Vendor     Vendor     `json:"vendor"`
-	AccountID  string     `json:"account_id"`
-	Credential Credential `json:"credential,omitempty"`
+	Vendor       Vendor       `json:"vendor"`
+	AccountID    string       `json:"account_id"`
+	Credential   Credential   `json:"credential,omitempty"`
+	ClientConfig ClientConfig `json:"client_config,omitempty"`
 }
 
 // BanPayload is the BAN/UNBAN event payload.

@@ -52,6 +52,8 @@ func TestMigrateAll_ExecutesInOrder(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS alert_events`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`ALTER TABLE cloud_account ADD COLUMN IF NOT EXISTS client_config`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	if err := MigrateAll(db); err != nil {
 		t.Fatalf("MigrateAll: %v", err)
@@ -106,6 +108,8 @@ func TestMigrateAll_WithExistingTables(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS alert_events`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`ALTER TABLE cloud_account ADD COLUMN IF NOT EXISTS client_config`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	if err := MigrateAll(db); err != nil {
 		t.Fatalf("MigrateAll (idempotent): %v", err)
@@ -159,6 +163,8 @@ func TestMigrateAll_SQLParsesCorrectly(t *testing.T) {
 	mock.ExpectExec(`ALTER TABLE content ADD COLUMN IF NOT EXISTS title`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS alert_events`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`ALTER TABLE cloud_account ADD COLUMN IF NOT EXISTS client_config`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	if err := MigrateAll(db); err != nil {
