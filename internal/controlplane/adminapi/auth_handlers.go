@@ -71,6 +71,7 @@ func loginHandler(users AdminUserStore, secret []byte, audit AuditRecorder) http
 		userID, passwordHash, roles, disabled, err := users.GetUserByUsername(r.Context(), req.Username)
 		if err != nil {
 			if !errors.Is(err, metadata.ErrUserNotFound) {
+				recordAuthAudit(r, audit, req.Username, "login", "fail")
 				WriteError(w, http.StatusInternalServerError, "internal error")
 				return
 			}
@@ -99,6 +100,7 @@ func loginHandler(users AdminUserStore, secret []byte, audit AuditRecorder) http
 			Exp:      exp.Unix(),
 		}, secret)
 		if err != nil {
+			recordAuthAudit(r, audit, req.Username, "login", "fail")
 			WriteError(w, http.StatusInternalServerError, "internal error")
 			return
 		}

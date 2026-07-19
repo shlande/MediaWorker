@@ -117,7 +117,7 @@ func listWhitelistHandler(wlStore WhitelistStoreReader, reg WhitelistIssuanceRea
 //   - Idempotent: duplicate POST overwrites the existing entry (200 for existing,
 //     201 for new). The choice is locked here with a comment for tests.
 //   - addedBy comes from the authenticated user (UserFromCtx), not the body.
-func addWhitelistHandler(wlStore WhitelistStoreReader, ps WhitelistSet, reg WhitelistIssuanceReader) http.Handler {
+func addWhitelistHandler(wlStore WhitelistStoreReader, ps WhitelistSet, reg WhitelistIssuanceReader, audit AuditRecorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body whitelistPostBody
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -125,6 +125,7 @@ func addWhitelistHandler(wlStore WhitelistStoreReader, ps WhitelistSet, reg Whit
 			return
 		}
 		if body.PeerID == "" {
+			recordWriteAudit(r, audit, "whitelist", "add", "", "fail", nil)
 			WriteError(w, http.StatusBadRequest, "missing peer_id")
 			return
 		}
@@ -132,6 +133,7 @@ func addWhitelistHandler(wlStore WhitelistStoreReader, ps WhitelistSet, reg Whit
 		// Validate peer.ID format.
 		_, err := peer.Decode(body.PeerID)
 		if err != nil {
+			recordWriteAudit(r, audit, "whitelist", "add", body.PeerID, "fail", nil)
 			WriteError(w, http.StatusBadRequest, fmt.Sprintf("invalid peer_id: %v", err))
 			return
 		}
@@ -150,6 +152,7 @@ func addWhitelistHandler(wlStore WhitelistStoreReader, ps WhitelistSet, reg Whit
 		// Double-write: persist + in-memory set (MUST stay in sync;
 		// service.go:123 reads PeerIdSet on every JWT request).
 		if err := wlStore.Add(peerID, username); err != nil {
+			recordWriteAudit(r, audit, "whitelist", "add", body.PeerID, "fail", nil)
 			WriteError(w, http.StatusInternalServerError, fmt.Sprintf("add whitelist: %v", err))
 			return
 		}
@@ -162,8 +165,9 @@ func addWhitelistHandler(wlStore WhitelistStoreReader, ps WhitelistSet, reg Whit
 			status = http.StatusOK
 		}
 
+		recordWriteAudit(r, audit, "whitelist", "add", body.PeerID, "ok", nil)
 		WriteJSON(w, status, whitelistPostResponse{
-			PeerID:        string(peerID),
+			PeerID:         string(peerID),
 			EffectiveAfter: effectiveAfterNote,
 		})
 	})
@@ -174,22 +178,25 @@ func addWhitelistHandler(wlStore WhitelistStoreReader, ps WhitelistSet, reg Whit
 //   - Checks existence via ps.Contains before removal (not present → 404).
 //   - Double-removes from both the persistent store and the in-memory PeerIdSet.
 //   - Response carries the effective_after note (M3 contract wording).
-func deleteWhitelistHandler(wlStore WhitelistStoreReader, ps WhitelistSet) http.Handler {
+func deleteWhitelistHandler(wlStore WhitelistStoreReader, ps WhitelistSet, audit AuditRecorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		peerIDStr := r.PathValue("peer_id")
 		peerID := types.PeerId(peerIDStr)
 
 		if !ps.Contains(peerID) {
+			recordWriteAudit(r, audit, "whitelist", "remove", peerIDStr, "fail", nil)
 			WriteError(w, http.StatusNotFound, "not found")
 			return
 		}
 
 		if err := wlStore.Remove(peerID); err != nil {
+			recordWriteAudit(r, audit, "whitelist", "remove", peerIDStr, "fail", nil)
 			WriteError(w, http.StatusInternalServerError, fmt.Sprintf("remove whitelist: %v", err))
 			return
 		}
 		ps.Remove(peerID)
 
+		recordWriteAudit(r, audit, "whitelist", "remove", peerIDStr, "ok", nil)
 		w.WriteHeader(http.StatusNoContent)
 	})
 }
@@ -205,8 +212,9 @@ var errWhitelistPeerNotFound = errors.New("whitelist peer not found")
 // wlStore is the persistent BadgerDB-backed whitelist store (todo 8).
 // ps is the in-memory PeerIdSet (double-written on every add/remove).
 // reg provides JWT issuance records for effective-status computation (todo 12).
-func RegisterWhitelistRoutes(srv *Server, wlStore WhitelistStoreReader, ps WhitelistSet, reg WhitelistIssuanceReader) {
+// audit receives one entry per write attempt (todo 33); nil disables it.
+func RegisterWhitelistRoutes(srv *Server, wlStore WhitelistStoreReader, ps WhitelistSet, reg WhitelistIssuanceReader, audit AuditRecorder) {
 	srv.Handle("GET /v1/admin/whitelist", listWhitelistHandler(wlStore, reg), true)
-	srv.Handle("POST /v1/admin/whitelist", addWhitelistHandler(wlStore, ps, reg), true)
-	srv.Handle("DELETE /v1/admin/whitelist/{peer_id}", deleteWhitelistHandler(wlStore, ps), true)
+	srv.Handle("POST /v1/admin/whitelist", addWhitelistHandler(wlStore, ps, reg, audit), true)
+	srv.Handle("DELETE /v1/admin/whitelist/{peer_id}", deleteWhitelistHandler(wlStore, ps, audit), true)
 }

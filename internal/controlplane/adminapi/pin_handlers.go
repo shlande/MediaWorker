@@ -51,15 +51,16 @@ type manualPinResponse struct {
 
 // RegisterPinRoutes mounts the manual pin/unpin handlers on srv. Called once
 // by the route-consolidation task (todo 54). Per D1, does NOT edit
-// cmd/control-plane/main.go.
-func RegisterPinRoutes(srv *Server, mc PinContentMetaReader, reg *noderegistry.Registry, po PinOrchestrator) {
-	srv.Handle("POST /v1/admin/pin", manualPinHandler(mc, reg, po), true)
-	srv.Handle("POST /v1/admin/unpin", manualUnpinHandler(mc, reg, po), true)
+// cmd/control-plane/main.go. audit receives one entry per pin/unpin attempt
+// (todo 33); nil disables it.
+func RegisterPinRoutes(srv *Server, mc PinContentMetaReader, reg *noderegistry.Registry, po PinOrchestrator, audit AuditRecorder) {
+	srv.Handle("POST /v1/admin/pin", manualPinHandler(mc, reg, po, audit), true)
+	srv.Handle("POST /v1/admin/unpin", manualUnpinHandler(mc, reg, po, audit), true)
 }
 
 // ─── POST /v1/admin/pin ─────────────────────────────────────────────────
 
-func manualPinHandler(mc PinContentMetaReader, reg *noderegistry.Registry, po PinOrchestrator) http.Handler {
+func manualPinHandler(mc PinContentMetaReader, reg *noderegistry.Registry, po PinOrchestrator, audit AuditRecorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req manualPinRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -67,10 +68,12 @@ func manualPinHandler(mc PinContentMetaReader, reg *noderegistry.Registry, po Pi
 			return
 		}
 		if req.ContentID == "" {
+			recordWriteAudit(r, audit, "pin", "pin", "", "fail", nil)
 			WriteError(w, http.StatusBadRequest, "content_id is required")
 			return
 		}
 		if len(req.TargetNodes) == 0 {
+			recordWriteAudit(r, audit, "pin", "pin", req.ContentID, "fail", nil)
 			WriteError(w, http.StatusBadRequest, "target_nodes is required")
 			return
 		}
@@ -78,6 +81,7 @@ func manualPinHandler(mc PinContentMetaReader, reg *noderegistry.Registry, po Pi
 		// 1. Validate content exists.
 		_, err := mc.GetContentMeta(r.Context(), req.ContentID)
 		if err != nil {
+			recordWriteAudit(r, audit, "pin", "pin", req.ContentID, "fail", nil)
 			if errors.Is(err, sql.ErrNoRows) {
 				WriteError(w, http.StatusNotFound, "content not found")
 				return
@@ -89,6 +93,7 @@ func manualPinHandler(mc PinContentMetaReader, reg *noderegistry.Registry, po Pi
 		// 2. Resolve blobs: requested filter or all content blobs.
 		allBlobs, _, err := mc.GetContentBlobs(r.Context(), req.ContentID)
 		if err != nil {
+			recordWriteAudit(r, audit, "pin", "pin", req.ContentID, "fail", nil)
 			WriteError(w, http.StatusInternalServerError, "blob query failed")
 			return
 		}
@@ -107,6 +112,7 @@ func manualPinHandler(mc PinContentMetaReader, reg *noderegistry.Registry, po Pi
 				}
 			}
 			if len(resolvedBlobs) == 0 {
+				recordWriteAudit(r, audit, "pin", "pin", req.ContentID, "fail", nil)
 				WriteError(w, http.StatusUnprocessableEntity, "none of the requested blobs belong to this content")
 				return
 			}
@@ -143,6 +149,7 @@ func manualPinHandler(mc PinContentMetaReader, reg *noderegistry.Registry, po Pi
 
 		// 5. All targets filtered → 422.
 		if len(dispatchTargets) == 0 {
+			recordWriteAudit(r, audit, "pin", "pin", req.ContentID, "fail", nil)
 			resp := manualPinResponse{Skipped: skipped}
 			WriteJSON(w, http.StatusUnprocessableEntity, resp)
 			return
@@ -158,16 +165,22 @@ func manualPinHandler(mc PinContentMetaReader, reg *noderegistry.Registry, po Pi
 		seqs, firstErr := po.SendManualPlan(req.ContentID, dispatchTargets, pinBlobs, nil)
 		resp := manualPinResponse{Seq: seqs, Skipped: skipped}
 		if firstErr != nil && len(seqs) == 0 {
+			recordWriteAudit(r, audit, "pin", "pin", req.ContentID, "fail", nil)
 			WriteError(w, http.StatusInternalServerError, "all target dispatches failed")
 			return
 		}
+		detail := map[string]any{"target_nodes": dispatchTargets}
+		if len(skipped) > 0 {
+			detail["skipped"] = len(skipped)
+		}
+		recordWriteAudit(r, audit, "pin", "pin", req.ContentID, "ok", detail)
 		WriteJSON(w, http.StatusAccepted, resp)
 	})
 }
 
 // ─── POST /v1/admin/unpin ───────────────────────────────────────────────
 
-func manualUnpinHandler(mc PinContentMetaReader, reg *noderegistry.Registry, po PinOrchestrator) http.Handler {
+func manualUnpinHandler(mc PinContentMetaReader, reg *noderegistry.Registry, po PinOrchestrator, audit AuditRecorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req manualPinRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -175,10 +188,12 @@ func manualUnpinHandler(mc PinContentMetaReader, reg *noderegistry.Registry, po 
 			return
 		}
 		if req.ContentID == "" {
+			recordWriteAudit(r, audit, "pin", "unpin", "", "fail", nil)
 			WriteError(w, http.StatusBadRequest, "content_id is required")
 			return
 		}
 		if len(req.TargetNodes) == 0 {
+			recordWriteAudit(r, audit, "pin", "unpin", req.ContentID, "fail", nil)
 			WriteError(w, http.StatusBadRequest, "target_nodes is required")
 			return
 		}
@@ -186,6 +201,7 @@ func manualUnpinHandler(mc PinContentMetaReader, reg *noderegistry.Registry, po 
 		// 1. Validate content exists.
 		_, err := mc.GetContentMeta(r.Context(), req.ContentID)
 		if err != nil {
+			recordWriteAudit(r, audit, "pin", "unpin", req.ContentID, "fail", nil)
 			if errors.Is(err, sql.ErrNoRows) {
 				WriteError(w, http.StatusNotFound, "content not found")
 				return
@@ -199,6 +215,7 @@ func manualUnpinHandler(mc PinContentMetaReader, reg *noderegistry.Registry, po 
 		if len(req.Blobs) == 0 {
 			allBlobs, _, err := mc.GetContentBlobs(r.Context(), req.ContentID)
 			if err != nil {
+				recordWriteAudit(r, audit, "pin", "unpin", req.ContentID, "fail", nil)
 				WriteError(w, http.StatusInternalServerError, "blob query failed")
 				return
 			}
@@ -211,6 +228,7 @@ func manualUnpinHandler(mc PinContentMetaReader, reg *noderegistry.Registry, po 
 		}
 
 		if len(unpinBlobs) == 0 {
+			recordWriteAudit(r, audit, "pin", "unpin", req.ContentID, "ok", nil)
 			WriteJSON(w, http.StatusAccepted, manualPinResponse{})
 			return
 		}
@@ -224,6 +242,7 @@ func manualUnpinHandler(mc PinContentMetaReader, reg *noderegistry.Registry, po 
 			}
 		}
 		if len(skipped) > 0 {
+			recordWriteAudit(r, audit, "pin", "unpin", req.ContentID, "fail", nil)
 			resp := manualPinResponse{Skipped: skipped}
 			WriteJSON(w, http.StatusUnprocessableEntity, resp)
 			return
@@ -232,9 +251,11 @@ func manualUnpinHandler(mc PinContentMetaReader, reg *noderegistry.Registry, po 
 		// 4. Dispatch unpin.
 		seqs, firstErr := po.SendManualPlan(req.ContentID, req.TargetNodes, nil, unpinBlobs)
 		if firstErr != nil && len(seqs) == 0 {
+			recordWriteAudit(r, audit, "pin", "unpin", req.ContentID, "fail", nil)
 			WriteError(w, http.StatusInternalServerError, "all target dispatches failed")
 			return
 		}
+		recordWriteAudit(r, audit, "pin", "unpin", req.ContentID, "ok", map[string]any{"target_nodes": req.TargetNodes})
 		WriteJSON(w, http.StatusAccepted, manualPinResponse{Seq: seqs})
 	})
 }

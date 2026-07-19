@@ -416,3 +416,53 @@ auditlog failure path audit: Added Result/Reason to AuditEntry, extended Log(pee
 - 32 tests green (-race clean, 1.5s): three filter axes, summary counts, retry 202/404 shapes, recent order+limit, bad token→401 on all 3 endpoints, prefix clash guard, nil-store/nil-log safe, hash with special chars.
 - assertErrorBody already existed in server_test.go (same package) — removed duplicate from pins_handler_test.go.
 - D1 compliant: RegisterPinsRoutes(srv, pinStore, planLog) — no main.go edit; todo 49 wires.
+
+## [2026-07-20T20:45Z] Task: todo-30
+- SoftDeleteContent only returns error; pre-check via GetContentMeta detects already-deleted for idempotent 200 with "already_deleted" note vs new-delete 200 with "blobs become orphans" note.
+- GetContentMeta wraps sql.ErrNoRows with %w → errors.Is(err, sql.ErrNoRows) works for 404 detection.
+- RegisterContentsRoutes signature changed from 3-arg to 4-arg (mc{readers}, dlog, deleter) — propagates to all existing call sites in test. Written test file needed full rewrite rather than targeted edits.
+- Go 1.22+ method patterns: "DELETE /v1/admin/contents/{id}" coexists with GET patterns on the same prefix when using PathValue; no prefix clash.
+
+## [2026-07-20T04:30Z] Task: todo-36
+- W0 event-chain gate landed: test/integration/account_events_test.go (snapshot→BAN→force-close→UNBAN on a REAL pool) + accountregistry/registry_ban_interop_test.go (TestBanPayloadInterop: registry.Ban→Broadcast(EventBan)→JSON roundtrip→node dispatcher HandleEvent).
+- MINIMAL SEAM (spec-forced): pool.MarkBanned now returns found bool; dispatcher.handleBan Warns + early-returns on unknown account. Pre-existing code had NO Warn path for unknown BAN (silent no-op + unconditional Info) — the QA failure scenario was unsatisfiable without the seam. Existing statement callers compile unchanged.
+- Snapshot entries must set RateLimitCfg high (QPS/Burst 1000): BuildFromSnapshot wires rate.NewLimiter from it, and SelectForRead calls Limiter.Allow() per selection — driver-default burst would flake repeated selections.
+- HandleEvent is synchronous → slog capture via slog.SetDefault + plain bytes.Buffer is race-free (no mutex-guarded writer needed, unlike todo-11 reporter goroutines).
+- SelectForRead tie-break: equal score (0 concurrent / equal weight) → sort.Slice unstable order; assert membership in the account set, not a specific ID, when both accounts are eligible.
+- CIRCUIT_FORCE_CLOSE does NOT clear health — locked in test (CB closed + still banned until UNBAN).
+- Another foreign transient (peerstore peerentry.go undefined sort) self-resolved in <60s; pattern holds.
+
+## [2026-07-20T03:55Z] Task: todo-45
+- go-libp2p v0.48.0 has NO hole-punching event-bus event (EvtHolePunching is gone) — outcomes only via holepunch.Tracer (host-construction wiring). Spec's degrade path was the PRODUCTION reality: counters恒0 + dcutr_counters_unavailable:true. Always grep the locked module cache before writing event subscriptions.
+- EvtLocalReachabilityChanged emitted as VALUE type by autonat (autonat.go:102,152) — type-assert to value, not pointer. Verified empirically with eventbus.NewBus() roundtrip in tests (Emitter → Subscribe consumer).
+- network.ConnStats embeds Stats — Direction is ConnStats.Stats.Direction (literal: ConnStats{Stats: Stats{Direction: d}}); reads work via embedding (c.Stat().Direction).
+- Fake p2p IDs in multiaddrs must be REAL multihashes — test.RandPeerIDFatal(t) (core/test) for /p2p/ segments; hand-typed "12D3KooWA" fails multihash length check.
+- Same-package test-helper collisions are REAL in this multi-agent repo: status_handler_test.go already had fakeConn/fakeConnSource — prefix new fakes (netFakeConn). capabilityNames (todo 43) already existed in package — reuse, don't redefine.
+- Embedded-interface fake trick: type netFakeConn struct{ network.Conn; ... } + override Stat/RemoteMultiaddr — full method set, panics on uncalled paths, zero boilerplate.
+- hashring PositionPct determinism: smallest self vnode key / 2^32 (map iteration is random but min is stable); (float64, ok) not *float64 — handler renders null when !ok.
+- PeerEntryStore.List vs ActivePeers: List = unfiltered management view sorted by PeerID; PeerStoreEntry.JWT is a SECRET — peerView drops it, raw-payload assertion locks the hygiene.
+- vet copylocks in pins_handler*.go (a14b3bd, foreign) — pre-existing package-level vet noise; don't fix, note in evidence.
+## [2026-07-20] Bugfix: todo-58 global VendorRules mutation
+- ConsistencyGuard test called sort.Strings on rule.RequiredAuth — an alias of the package-level VendorRules map slice. In-place sort reordered onedrive lexically (client_secret before refresh_token), breaking TestVendorRules_Matrix when run with the full package suite.
+- Filtered -run passed, full package failed — the hallmark of test pollution via shared global state mutation.
+- Fix: copy both slices (schemaAuthRequired, rule.RequiredAuth) before sorting. Never sort a package-level slice alias in tests.
+- Lesson: any in-place sort on a map value retrieved from a package-level var will poison OTHER tests in the same binary run.
+
+## [2026-07-20T05:15Z] Task: todo-49
+- Typed-nil guards are LOAD-BEARING, not ceremony: the integration test's first fixture passed raw typed-nil warm into RegisterFlushRoutes and got 202-instead-of-409 — the exact bug main's guard vars prevent. Any future wiring of cache/pinstore/accountpool/linkpool deps MUST convert nil pointers to nil interfaces first.
+- linkP had to be hoisted out of the L4 if-block for BackhaulDeps — declare shared dep vars in the 17b var block from the start.
+- No adapters needed anywhere: todos 42-46's narrow interfaces were designed so live components satisfy them directly (compiler-verified). Libp2pNetworkReporter(h.Network()) is the only adapter call in the whole mount block.
+- Integration test style that works: REAL socket via srv.Serve(freeAddr) — adminapi.Server has no exported mux, so in-package srv.mux tricks don't apply cross-package; the socket test exercises the true middleware chain and costs ~50ms.
+- configs/node-l4.yaml (and node-edge.yaml) end WITHOUT a trailing newline — appending smoke stanzas needs an explicit \n or the last line merges (bit me twice; repo files parse fine, left as-is).
+- Empty reload diff marshals {"applied":null,"not_applied":null} (nil slices) — cosmetic v1 behavior, contract consumers should treat null == [].
+- Smoke recipe (final form): derived yaml (/tmp paths, endpoints→127.0.0.1:1, bootstrap_peers:[], admin_api stanza) + zero-hex PUBKEY/PSK env; ~200s JWT retry to degraded, then the FULL admin surface answers on the configured listen addr.
+
+## [2026-07-20T21:30Z] Task: todo-33
+- admin_audit (018) landed verbatim-spec; AuditEntry gained Detail map[string]any (additive in server.go — the todo-10 interface shape Record(ctx, entry) was unchanged, so the field rides the struct). recordWriteAudit(r, audit, kind, action, target, result, detail) is THE funnel: actor=UserFromCtx username, IP=r.RemoteAddr, nil recorder=no-op.
+- RegisterAuthRoutes was NOT extended: it reads srv.audit at registration (todo 18 design) — todo 54 MUST call SetAuditRecorder BEFORE RegisterAuthRoutes or auth audits silently no-op. All other Register*Routes now take audit as the LAST param (accounts 5-arg, whitelist 5-arg, pin 5-arg, contents 5-arg).
+- Instrumentation rule locked: audit at EVERY terminal AFTER JSON body parses (ok on 2xx, fail otherwise incl. 404/409/422/validation-400s); unparseable JSON -> no audit (nothing attempted); whitelist 401 missing-ctx -> no audit (no actor attributable). Reads never audited.
+- InsertAdminAudit: COALESCE($1, now()) keeps one statement shape for zero/non-zero TS; detail passed as string (lib/pq bytea->jsonb has no cast, todo-51 learning). Scan side: **string handles NULL target/ip directly, []byte handles JSONB.
+- PGAuditRecorder failure contract proven by test: failing inserter -> POST still 201 + Warn "admin audit: insert failed". Typed-nil *PGAuditRecorder receiver safe (method checks p == nil first).
+- Secret-leak lock: TestAudit_DetailNeverContainsCredential marshals every captured Detail and greps sentinel values + "credential"/"client_secret"/"refresh_token"/"cookies" keys; ban reason + ban_until ARE detail (spec-sanctioned), update detail = {auth_changed bool, enabled?, rate_limit?, vendor_profile?} — never the auth map.
+- 018 inserted into all FOUR migrate-mock enumerations between 017(title) and 019(alert_events): pattern `CREATE TABLE IF NOT EXISTS admin_audit`.
+- accounts_handlers.go now 469 pure LOC (SIZE_OK marker extended: todo 33 adds one mechanical Record per terminal, no new logic units; file stays orchestrator-constrained).

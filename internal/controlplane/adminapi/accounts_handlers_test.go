@@ -67,7 +67,7 @@ func healthView(state string, latency int, errMsg string, banUntil *time.Time, l
 func makeServer(mc AdminAccountsReader, w AdminAccountsWriter) *Server {
 	secret := []byte("test-secret-key-for-admin-tokens")
 	srv := NewServer(secret)
-	RegisterAccountsRoutes(srv, mc, w, nil)
+	RegisterAccountsRoutes(srv, mc, w, nil, nil)
 	return srv
 }
 
@@ -739,7 +739,7 @@ func makeWriteServer(t *testing.T) (*fakeAccountRegistry, *fakeBroadcaster, *htt
 	bc := &fakeBroadcaster{}
 	secret := []byte("test-secret-key-for-admin-tokens")
 	srv := NewServer(secret)
-	RegisterAccountsRoutes(srv, reg, reg, bc)
+	RegisterAccountsRoutes(srv, reg, reg, bc, nil)
 	ts := httptest.NewServer(srv.mux)
 	t.Cleanup(ts.Close)
 	return reg, bc, ts, signAdminToken(t, secret)
@@ -1546,7 +1546,7 @@ func TestAccountOps_CircuitNilBroadcasterIs500(t *testing.T) {
 	reg := newFakeAccountRegistry()
 	secret := []byte("test-secret-key-for-admin-tokens")
 	srv := NewServer(secret)
-	RegisterAccountsRoutes(srv, reg, reg, nil)
+	RegisterAccountsRoutes(srv, reg, reg, nil, nil)
 	ts := httptest.NewServer(srv.mux)
 	t.Cleanup(ts.Close)
 	token := signAdminToken(t, secret)

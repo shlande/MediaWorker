@@ -17,6 +17,9 @@ import (
 
 // AuditEntry is one admin-plane audit record. Kind groups related entries
 // (e.g. "auth", "accounts"); Result is "ok"/"fail"-style outcome text.
+// Detail carries structured context into the admin_audit.detail JSONB column
+// (ban reason, rate_limit, changed-field flags). It MUST never contain
+// credential material — instrumentation tests lock the exclusion.
 type AuditEntry struct {
 	TS     time.Time
 	Kind   string
@@ -25,6 +28,7 @@ type AuditEntry struct {
 	Target string
 	IP     string
 	Result string
+	Detail map[string]any
 }
 
 // AuditRecorder consumes audit entries. Implementations must tolerate

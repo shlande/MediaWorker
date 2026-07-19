@@ -148,21 +148,24 @@ func listAccountsHandler(mc AdminAccountsReader) http.Handler {
 // srv. It is designed to be a one-line call in todo 54's route consolidation.
 // mc serves GET (todo 20); registry serves POST/PUT/rotate/ban/unban (todo 26/
 // 27, B2 CRUD); broadcaster serves circuit force open/close (todo 27).
-func RegisterAccountsRoutes(srv *Server, mc AdminAccountsReader, registry AdminAccountsWriter, broadcaster EventBroadcaster) {
+// audit receives one entry per write attempt (todo 33); nil disables it.
+func RegisterAccountsRoutes(srv *Server, mc AdminAccountsReader, registry AdminAccountsWriter, broadcaster EventBroadcaster, audit AuditRecorder) {
 	srv.Handle("GET /v1/admin/accounts", listAccountsHandler(mc), true)
-	srv.Handle("POST /v1/admin/accounts", createAccountHandler(registry), true)
-	srv.Handle("PUT /v1/admin/accounts/{vendor}/{id}", updateAccountHandler(registry), true)
-	srv.Handle("POST /v1/admin/accounts/{vendor}/{id}/rotate", rotateAccountHandler(registry), true)
-	srv.Handle("POST /v1/admin/accounts/{vendor}/{id}/ban", banAccountHandler(registry), true)
-	srv.Handle("POST /v1/admin/accounts/{vendor}/{id}/unban", unbanAccountHandler(registry), true)
-	srv.Handle("POST /v1/admin/accounts/{vendor}/{id}/circuit", circuitAccountHandler(broadcaster), true)
+	srv.Handle("POST /v1/admin/accounts", createAccountHandler(registry, audit), true)
+	srv.Handle("PUT /v1/admin/accounts/{vendor}/{id}", updateAccountHandler(registry, audit), true)
+	srv.Handle("POST /v1/admin/accounts/{vendor}/{id}/rotate", rotateAccountHandler(registry, audit), true)
+	srv.Handle("POST /v1/admin/accounts/{vendor}/{id}/ban", banAccountHandler(registry, audit), true)
+	srv.Handle("POST /v1/admin/accounts/{vendor}/{id}/unban", unbanAccountHandler(registry, audit), true)
+	srv.Handle("POST /v1/admin/accounts/{vendor}/{id}/circuit", circuitAccountHandler(broadcaster, audit), true)
 }
 
 // ─── Write side (todo 26, B2 structured CRUD) ─────────────────────────────
 //
 // allow: SIZE_OK — the B2 create/update surface is one cohesive HTTP unit;
 // the orchestrator constrains todos 26/27 to this file (todo 27 appends
-// rotate/ban/circuit here). Validation/assembly lives in vendorrules.go.
+// rotate/ban/circuit here). Todo 33 adds one mechanical Record call per
+// terminal branch (no new logic units). Validation/assembly lives in
+// vendorrules.go.
 //
 // Secret zero-leak: no response body below ever carries credential material —
 // 201/202 echo only vendor + account_id (+ static warnings/note).
@@ -245,19 +248,22 @@ func isUniqueViolation(err error) bool {
 }
 
 // createAccountHandler serves POST /v1/admin/accounts (B2 创建).
-func createAccountHandler(registry AdminAccountsWriter) http.Handler {
+func createAccountHandler(registry AdminAccountsWriter, audit AuditRecorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req createAccountRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			WriteError(w, http.StatusBadRequest, "invalid request body")
 			return
 		}
+		target := req.Vendor + ":" + req.AccountID
 		info, fieldErrors, warnings := BuildAccountInfo(req)
 		if len(fieldErrors) > 0 {
+			recordWriteAudit(r, audit, "account", "create", target, "fail", nil)
 			writeFieldErrors(w, fieldErrors)
 			return
 		}
 		if err := registry.CreateAccount(r.Context(), info); err != nil {
+			recordWriteAudit(r, audit, "account", "create", target, "fail", nil)
 			if isUniqueViolation(err) {
 				WriteError(w, http.StatusConflict, "account exists")
 				return
@@ -265,6 +271,11 @@ func createAccountHandler(registry AdminAccountsWriter) http.Handler {
 			writeRegistryError(w, "create", err)
 			return
 		}
+		var detail map[string]any
+		if len(warnings) > 0 {
+			detail = map[string]any{"warnings": warnings}
+		}
+		recordWriteAudit(r, audit, "account", "create", target, "ok", detail)
 		WriteJSON(w, http.StatusCreated, createAccountResponse{
 			Vendor: req.Vendor, AccountID: req.AccountID, Warnings: warnings,
 		})
@@ -273,11 +284,15 @@ func createAccountHandler(registry AdminAccountsWriter) http.Handler {
 
 // updateAccountHandler serves PUT /v1/admin/accounts/{vendor}/{id}
 // (B2 更新，含凭据轮换). All body fields are optional; absent = unchanged.
-func updateAccountHandler(registry AdminAccountsWriter) http.Handler {
+// The audit detail carries only non-secret changed fields (enabled /
+// rate_limit / vendor_profile / auth_changed flag) — never auth material.
+func updateAccountHandler(registry AdminAccountsWriter, audit AuditRecorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		vendor := types.Vendor(r.PathValue("vendor"))
 		id := r.PathValue("id")
+		target := string(vendor) + ":" + id
 		if pathErrors := validateAccountPath(vendor, id); len(pathErrors) > 0 {
+			recordWriteAudit(r, audit, "account", "update", target, "fail", nil)
 			writeFieldErrors(w, pathErrors)
 			return
 		}
@@ -288,15 +303,18 @@ func updateAccountHandler(registry AdminAccountsWriter) http.Handler {
 			return
 		}
 		if req.Vendor != nil && *req.Vendor != string(vendor) || req.AccountID != nil && *req.AccountID != id {
+			recordWriteAudit(r, audit, "account", "update", target, "fail", nil)
 			WriteError(w, http.StatusBadRequest, "vendor/account_id in body does not match path")
 			return
 		}
 		if req.Enabled == nil && req.RateLimit == nil && req.VendorProfile == nil && len(req.Auth) == 0 {
+			recordWriteAudit(r, audit, "account", "update", target, "fail", nil)
 			WriteError(w, http.StatusBadRequest, "no fields to update")
 			return
 		}
 		if req.RateLimit != nil {
 			if fe := ValidateRateLimit(*req.RateLimit); len(fe) > 0 {
+				recordWriteAudit(r, audit, "account", "update", target, "fail", nil)
 				writeFieldErrors(w, fe)
 				return
 			}
@@ -306,10 +324,12 @@ func updateAccountHandler(registry AdminAccountsWriter) http.Handler {
 		if len(req.Auth) > 0 {
 			fe, wns, err := ApplyAuthPatch(r.Context(), registry, vendor, id, req.Auth)
 			if err != nil {
+				recordWriteAudit(r, audit, "account", "update", target, "fail", nil)
 				writeRegistryError(w, "update", err)
 				return
 			}
 			if len(fe) > 0 {
+				recordWriteAudit(r, audit, "account", "update", target, "fail", nil)
 				writeFieldErrors(w, fe)
 				return
 			}
@@ -317,12 +337,14 @@ func updateAccountHandler(registry AdminAccountsWriter) http.Handler {
 		}
 		if req.Enabled != nil {
 			if err := registry.SetEnabled(r.Context(), vendor, id, *req.Enabled); err != nil {
+				recordWriteAudit(r, audit, "account", "update", target, "fail", nil)
 				writeRegistryError(w, "update", err)
 				return
 			}
 		}
 		if req.RateLimit != nil {
 			if err := registry.SetRateLimit(r.Context(), vendor, id, *req.RateLimit); err != nil {
+				recordWriteAudit(r, audit, "account", "update", target, "fail", nil)
 				writeRegistryError(w, "update", err)
 				return
 			}
@@ -332,12 +354,24 @@ func updateAccountHandler(registry AdminAccountsWriter) http.Handler {
 			vp := *req.VendorProfile
 			vp.Vendor = vendor
 			if err := registry.SetVendorProfile(r.Context(), vendor, id, vp); err != nil {
+				recordWriteAudit(r, audit, "account", "update", target, "fail", nil)
 				writeRegistryError(w, "update", err)
 				return
 			}
 			note = vendorProfileNote
 		}
 
+		detail := map[string]any{"auth_changed": len(req.Auth) > 0}
+		if req.Enabled != nil {
+			detail["enabled"] = *req.Enabled
+		}
+		if req.RateLimit != nil {
+			detail["rate_limit"] = *req.RateLimit
+		}
+		if req.VendorProfile != nil {
+			detail["vendor_profile"] = *req.VendorProfile
+		}
+		recordWriteAudit(r, audit, "account", "update", target, "ok", detail)
 		WriteJSON(w, http.StatusAccepted, updateAccountResponse{
 			Vendor:      string(vendor),
 			AccountID:   id,
@@ -396,11 +430,13 @@ const defaultBanDuration = 24 * time.Hour
 // the PUT-with-only-auth path (todo 26's ApplyAuthPatch) — on any credential/
 // client_config change ONE CREDENTIAL_UPDATE broadcast fires with the new
 // material, applied immediately by nodes (todo 9 dispatcher).
-func rotateAccountHandler(registry AdminAccountsWriter) http.Handler {
+func rotateAccountHandler(registry AdminAccountsWriter, audit AuditRecorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		vendor := types.Vendor(r.PathValue("vendor"))
 		id := r.PathValue("id")
+		target := string(vendor) + ":" + id
 		if pathErrors := validateAccountPath(vendor, id); len(pathErrors) > 0 {
+			recordWriteAudit(r, audit, "account", "rotate", target, "fail", nil)
 			writeFieldErrors(w, pathErrors)
 			return
 		}
@@ -410,18 +446,26 @@ func rotateAccountHandler(registry AdminAccountsWriter) http.Handler {
 			return
 		}
 		if len(auth) == 0 {
+			recordWriteAudit(r, audit, "account", "rotate", target, "fail", nil)
 			writeFieldErrors(w, map[string]string{"auth": "required"})
 			return
 		}
 		fieldErrors, warnings, err := ApplyAuthPatch(r.Context(), registry, vendor, id, auth)
 		if err != nil {
+			recordWriteAudit(r, audit, "account", "rotate", target, "fail", nil)
 			writeRegistryError(w, "rotate", err)
 			return
 		}
 		if len(fieldErrors) > 0 {
+			recordWriteAudit(r, audit, "account", "rotate", target, "fail", nil)
 			writeFieldErrors(w, fieldErrors)
 			return
 		}
+		var detail map[string]any
+		if len(warnings) > 0 {
+			detail = map[string]any{"warnings": warnings}
+		}
+		recordWriteAudit(r, audit, "account", "rotate", target, "ok", detail)
 		WriteJSON(w, http.StatusAccepted, accountOpResponse{
 			Vendor: string(vendor), AccountID: id, Effective: "propagating", Warnings: warnings,
 		})
@@ -430,11 +474,14 @@ func rotateAccountHandler(registry AdminAccountsWriter) http.Handler {
 
 // banAccountHandler serves POST /v1/admin/accounts/{vendor}/{id}/ban.
 // ban_until defaults to +24h; an empty body is accepted (all defaults).
-func banAccountHandler(registry AdminAccountsWriter) http.Handler {
+// The audit detail carries the ban reason + expiry (spec-sanctioned fields).
+func banAccountHandler(registry AdminAccountsWriter, audit AuditRecorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		vendor := types.Vendor(r.PathValue("vendor"))
 		id := r.PathValue("id")
+		target := string(vendor) + ":" + id
 		if pathErrors := validateAccountPath(vendor, id); len(pathErrors) > 0 {
+			recordWriteAudit(r, audit, "account", "ban", target, "fail", nil)
 			writeFieldErrors(w, pathErrors)
 			return
 		}
@@ -447,15 +494,21 @@ func banAccountHandler(registry AdminAccountsWriter) http.Handler {
 		if req.BanUntil != "" {
 			parsed, err := time.Parse(time.RFC3339, req.BanUntil)
 			if err != nil {
+				recordWriteAudit(r, audit, "account", "ban", target, "fail", nil)
 				writeFieldErrors(w, map[string]string{"ban_until": "must be RFC3339"})
 				return
 			}
 			banUntil = parsed
 		}
 		if err := registry.Ban(r.Context(), vendor, id, req.Reason, banUntil); err != nil {
+			recordWriteAudit(r, audit, "account", "ban", target, "fail", nil)
 			writeRegistryError(w, "ban", err)
 			return
 		}
+		recordWriteAudit(r, audit, "account", "ban", target, "ok", map[string]any{
+			"reason":    req.Reason,
+			"ban_until": banUntil.UTC().Format(time.RFC3339),
+		})
 		WriteJSON(w, http.StatusAccepted, accountOpResponse{
 			Vendor: string(vendor), AccountID: id, Effective: "propagating",
 		})
@@ -463,18 +516,22 @@ func banAccountHandler(registry AdminAccountsWriter) http.Handler {
 }
 
 // unbanAccountHandler serves POST /v1/admin/accounts/{vendor}/{id}/unban.
-func unbanAccountHandler(registry AdminAccountsWriter) http.Handler {
+func unbanAccountHandler(registry AdminAccountsWriter, audit AuditRecorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		vendor := types.Vendor(r.PathValue("vendor"))
 		id := r.PathValue("id")
+		target := string(vendor) + ":" + id
 		if pathErrors := validateAccountPath(vendor, id); len(pathErrors) > 0 {
+			recordWriteAudit(r, audit, "account", "unban", target, "fail", nil)
 			writeFieldErrors(w, pathErrors)
 			return
 		}
 		if err := registry.Unban(r.Context(), vendor, id); err != nil {
+			recordWriteAudit(r, audit, "account", "unban", target, "fail", nil)
 			writeRegistryError(w, "unban", err)
 			return
 		}
+		recordWriteAudit(r, audit, "account", "unban", target, "ok", nil)
 		WriteJSON(w, http.StatusAccepted, accountOpResponse{
 			Vendor: string(vendor), AccountID: id, Effective: "propagating",
 		})
@@ -484,11 +541,13 @@ func unbanAccountHandler(registry AdminAccountsWriter) http.Handler {
 // circuitAccountHandler serves POST /v1/admin/accounts/{vendor}/{id}/circuit.
 // It broadcasts CIRCUIT_FORCE_OPEN/CLOSE directly via the injected
 // broadcaster; a nil broadcaster (not wired) yields 500, never a panic.
-func circuitAccountHandler(broadcaster EventBroadcaster) http.Handler {
+func circuitAccountHandler(broadcaster EventBroadcaster, audit AuditRecorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		vendor := types.Vendor(r.PathValue("vendor"))
 		id := r.PathValue("id")
+		target := string(vendor) + ":" + id
 		if pathErrors := validateAccountPath(vendor, id); len(pathErrors) > 0 {
+			recordWriteAudit(r, audit, "account", "circuit", target, "fail", nil)
 			writeFieldErrors(w, pathErrors)
 			return
 		}
@@ -504,17 +563,21 @@ func circuitAccountHandler(broadcaster EventBroadcaster) http.Handler {
 		case "force_close":
 			eventType = types.EventCircuitForceClose
 		default:
+			recordWriteAudit(r, audit, "account", "circuit", target, "fail", nil)
 			writeFieldErrors(w, map[string]string{"action": "must be one of force_open|force_close"})
 			return
 		}
 		if broadcaster == nil {
+			recordWriteAudit(r, audit, "account", "circuit", target, "fail", nil)
 			WriteError(w, http.StatusInternalServerError, "circuit broadcaster not configured")
 			return
 		}
 		if err := broadcaster.Broadcast(eventType, types.CircuitPayload{Vendor: vendor, AccountID: id}); err != nil {
+			recordWriteAudit(r, audit, "account", "circuit", target, "fail", nil)
 			WriteError(w, http.StatusInternalServerError, fmt.Sprintf("broadcast circuit event: %v", err))
 			return
 		}
+		recordWriteAudit(r, audit, "account", "circuit", target, "ok", map[string]any{"action": req.Action})
 		WriteJSON(w, http.StatusAccepted, accountOpResponse{
 			Vendor: string(vendor), AccountID: id, Effective: "propagating",
 		})

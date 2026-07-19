@@ -72,7 +72,7 @@ func makeContentsServer(mc struct {
 	ContentMetaReader
 }, dlog PinCountReader, deleter ContentDeleter) *Server {
 	srv := NewServer([]byte(contentsTestSecret))
-	RegisterContentsRoutes(srv, mc, dlog, deleter)
+	RegisterContentsRoutes(srv, mc, dlog, deleter, nil)
 	return srv
 }
 

@@ -64,7 +64,7 @@ func (m *mockPinOrchestrator) SendManualPlan(contentID string, targets []string,
 func makePinServer(mc PinContentMetaReader, reg *noderegistry.Registry, po PinOrchestrator) *Server {
 	secret := []byte("test-secret-key-for-admin-tokens")
 	srv := NewServer(secret)
-	RegisterPinRoutes(srv, mc, reg, po)
+	RegisterPinRoutes(srv, mc, reg, po, nil)
 	return srv
 }
 

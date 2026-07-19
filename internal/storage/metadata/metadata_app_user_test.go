@@ -31,6 +31,7 @@ func expectAllMigrations(mock sqlmock.Sqlmock) {
 		`CREATE TABLE IF NOT EXISTS app_user`,
 		`CREATE TABLE IF NOT EXISTS node_status_history`,
 		`ALTER TABLE content ADD COLUMN IF NOT EXISTS title`,
+		`CREATE TABLE IF NOT EXISTS admin_audit`,
 		`CREATE TABLE IF NOT EXISTS alert_events`,
 		`ALTER TABLE cloud_account ADD COLUMN IF NOT EXISTS client_config`,
 	} {

@@ -143,7 +143,7 @@ func newPeerID(t *testing.T) (peer.ID, types.PeerId) {
 func newWhitelistServer(wlStore WhitelistStoreReader, ps WhitelistSet, reg WhitelistIssuanceReader) (*Server, []byte) {
 	secret := []byte("test-secret-key-for-whitelist-tests")
 	srv := NewServer(secret)
-	RegisterWhitelistRoutes(srv, wlStore, ps, reg)
+	RegisterWhitelistRoutes(srv, wlStore, ps, reg, nil)
 	return srv, secret
 }
 

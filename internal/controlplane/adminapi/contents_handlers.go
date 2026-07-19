@@ -62,7 +62,7 @@ func RegisterContentsRoutes(srv *Server, mc struct {
 	ContentsListReader
 	ContentsDetailReader
 	ContentMetaReader
-}, dlog PinCountReader, deleter ContentDeleter) {
+}, dlog PinCountReader, deleter ContentDeleter, audit AuditRecorder) {
 	srv.Handle("GET /v1/admin/contents", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		listContents(w, r, mc, dlog)
 	}), true)
@@ -72,7 +72,7 @@ func RegisterContentsRoutes(srv *Server, mc struct {
 	}), true)
 
 	srv.Handle("DELETE /v1/admin/contents/{id}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		deleteContent(w, r, mc.ContentMetaReader, deleter)
+		deleteContent(w, r, mc.ContentMetaReader, deleter, audit)
 	}), true)
 }
 
@@ -278,15 +278,17 @@ type contentDeleteResponse struct {
 const deleteNoteFirst = "blobs become orphans; janitor sweeps after min_age"
 const deleteNoteAlreadyDeleted = "already_deleted"
 
-func deleteContent(w http.ResponseWriter, r *http.Request, metaReader ContentMetaReader, deleter ContentDeleter) {
+func deleteContent(w http.ResponseWriter, r *http.Request, metaReader ContentMetaReader, deleter ContentDeleter, audit AuditRecorder) {
 	id := r.PathValue("id")
 	if len(id) < contentIDMinLen {
+		recordWriteAudit(r, audit, "content", "delete", id, "fail", nil)
 		WriteError(w, http.StatusNotFound, "content not found")
 		return
 	}
 
 	cm, err := metaReader.GetContentMeta(r.Context(), id)
 	if err != nil {
+		recordWriteAudit(r, audit, "content", "delete", id, "fail", nil)
 		if errors.Is(err, sql.ErrNoRows) {
 			WriteError(w, http.StatusNotFound, "content not found")
 			return
@@ -296,6 +298,7 @@ func deleteContent(w http.ResponseWriter, r *http.Request, metaReader ContentMet
 	}
 
 	if cm.DeletedAt != nil {
+		recordWriteAudit(r, audit, "content", "delete", id, "ok", map[string]any{"note": deleteNoteAlreadyDeleted})
 		WriteJSON(w, http.StatusOK, contentDeleteResponse{
 			ContentID:     id,
 			PendingDelete: true,
@@ -305,10 +308,12 @@ func deleteContent(w http.ResponseWriter, r *http.Request, metaReader ContentMet
 	}
 
 	if err := deleter.SoftDeleteContent(r.Context(), id); err != nil {
+		recordWriteAudit(r, audit, "content", "delete", id, "fail", nil)
 		WriteError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
+	recordWriteAudit(r, audit, "content", "delete", id, "ok", nil)
 	WriteJSON(w, http.StatusOK, contentDeleteResponse{
 		ContentID:     id,
 		PendingDelete: true,

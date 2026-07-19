@@ -1,0 +1,115 @@
+# Evidence — task-33-ui-admin-apis
+# todo 33: migration 018 admin_audit + AuditRecorder 实现 + 写操作统一埋点
+Date: 2026-07-20
+
+## Files created
+- internal/storage/metadata/migrations/018_create_admin_audit.sql
+    Verbatim spec: admin_audit (id BIGSERIAL PK, ts TIMESTAMPTZ DEFAULT now(),
+    kind/actor/action/result TEXT NOT NULL, target/ip TEXT, detail JSONB)
+    + idx_admin_audit_ts (ts DESC) + idx_admin_audit_kind (kind, ts DESC).
+- internal/storage/metadata/metadata_admin_audit.go (114 pure LOC, D3 new-file)
+    AdminAuditRow (pointer fields -> SQL NULL), AdminAuditQuery
+    (kind/from/to/q(target ILIKE %q%)/page), InsertAdminAudit (COALESCE($1,now())
+    for TS default; detail passed as string per lib/pq jsonb rule),
+    ListAdminAudit (COUNT + page query sharing one WHERE fragment; ts DESC,
+    id DESC stable order; LIMIT/OFFSET bind params only).
+- internal/storage/metadata/metadata_admin_audit_test.go — 7 tests.
+- internal/controlplane/adminapi/audit.go (65 pure LOC)
+    PGAuditRecorder{mc AdminAuditInserter} implements todo-10 AuditRecorder.
+    Record maps AuditEntry -> AdminAuditRow (empty target/ip -> NULL, detail
+    json.Marshal). Insert failure -> slog.Warn ONLY, never blocks/panics.
+    Nil *PGAuditRecorder and nil inserter are both safe no-ops.
+    recordWriteAudit funnel: derives actor from UserFromCtx username, IP from
+    r.RemoteAddr, TS time.Now; nil recorder -> no-op.
+- internal/controlplane/adminapi/audit_test.go — 14 tests.
+
+## Files edited
+- internal/controlplane/adminapi/server.go
+    AuditEntry gained Detail map[string]any (additive; interface unchanged).
+    Doc locks the no-credential contract on the field.
+- accounts_handlers.go: RegisterAccountsRoutes +audit (5th param, sanctioned).
+    create/update/rotate/ban/unban/circuit instrumented at EVERY terminal
+    after JSON parse (ok on 2xx, fail otherwise); unparseable JSON body is
+    not audited (nothing attempted). kind=account; target=vendor:account_id.
+    Details: create/rotate {warnings}; update {auth_changed, enabled?,
+    rate_limit?, vendor_profile?} (rate_limit spec-sanctioned; auth material
+    NEVER included); ban {reason, ban_until} (spec-sanctioned); circuit
+    {action}. SIZE_OK marker extended for todo 33 (469 pure LOC, file is
+    orchestrator-constrained; instrumentation is one mechanical line per
+    branch, no new logic units).
+- whitelist_handlers.go: RegisterWhitelistRoutes +audit. add (target=peer_id)
+    + remove instrumented; the 401 missing-ctx path is not audited (no actor
+    attributable). kind=whitelist, actions add|remove.
+- pin_handlers.go: RegisterPinRoutes +audit. pin/unpin instrumented at all
+    terminals (404/422/500 -> fail, 202 -> ok). kind=pin; success detail
+    {target_nodes, skipped?} — node IDs are not secrets.
+- contents_handlers.go: RegisterContentsRoutes +audit. deleteContent
+    instrumented (404/500 -> fail; 200 incl. already_deleted -> ok).
+    kind=content action=delete target=content_id.
+- auth_handlers.go: kind=auth login instrumentation from todo 18 kept
+    (recordAuthAudit reads srv.audit; RegisterAuthRoutes signature UNCHANGED
+    so cmd/control-plane/main.go:214 keeps compiling — D1). Added the two
+    missing fail audits on internal-error paths (GetUserByUsername
+    non-NotFound error, SignUserToken error) so every post-parse terminal is
+    covered.
+- Test call sites updated to pass nil recorder (backward-tolerant):
+    accounts_handlers_test.go x3, whitelist_handlers_test.go, pin_handlers_test.go,
+    contents_handlers_test.go.
+- Migrate-mock enumeration — FOUR sites, 018 inserted between 017(title) and
+    019(alert_events): migrate_test.go x3 inline lists, metadata_app_user_test.go
+    expectAllMigrations, metadata_node_status_test.go expectMigrationPass,
+    metadata_alert_events_test.go expectMigrationPass.
+
+## Acceptance verification (all run 2026-07-20)
+- go build ./... -> OK (whole repo).
+- go test ./internal/storage/metadata/ -run TestAdminAudit -v -> 7/7 PASS
+  (insert, insert-defaults NULL binds, insert error wrap, list all filters,
+  list no filters NULL scan, target ILIKE substring, count error).
+- go test ./internal/controlplane/adminapi/ -run TestAudit -v -> 14/14 PASS:
+  * TestAudit_PostAccountRecordsEntry: POST account -> exactly one entry
+    kind=account action=create actor=admin target=baidu:mw_bak_01 result=ok
+    ip=<RemoteAddr> ts set.
+  * TestAudit_DetailNeverContainsCredential: create+rotate (sentinel
+    client_secret/refresh_token/cookie in request auth) + ban -> every
+    captured detail serialized and grepped: NO sentinel values, NO
+    "credential"/"client_secret"/"refresh_token"/"cookies" keys; ban detail
+    DOES carry {"reason":"abuse detected"} (detail not suppressed, only
+    secrets are).
+  * TestAudit_RecorderErrorKeepsBusinessResponse: recorder backed by failing
+    inserter -> POST account still 201 + Warn "admin audit: insert failed".
+  * TestAudit_LoginFailureAndSuccess: bad password -> 401 + entry kind=auth
+    result=fail actor=admin; good login -> 200 + kind=auth result=ok.
+  * TestAudit_PGRecorder{InsertFailureWarnOnly,NilSafe,DetailMarshalFailure}:
+    Warn-only contract, typed-nil receiver safe, marshal failure degrades to
+    insert-without-detail + Warn.
+  * TestAudit_{UpdateAccountFailureRecorded,WhitelistAddRemove,PinUnpin,
+    ContentDelete,NilRecorderEndpointsWork,PGRecorderInsertMapping,
+    PGRecorderEmptyFieldsBecomeNull}.
+- MigrateAll twice idempotent: TestMigrateAll_RunTwiceIsIdempotent,
+  TestNodeStatus + TestAlertEvents MigrateAllTwice tests all PASS with 018 in
+  the enumeration (IF NOT EXISTS on table + both indexes).
+- go test -race -count=1 ./internal/controlplane/adminapi/ -> ok 10.387s.
+- go test -count=1 ./internal/storage/metadata/ -> ok (full package).
+- go vet both packages -> clean. gofmt: all task-33 files clean
+  (contents/pin/whitelist _test.go + formschema/nodes_detail/nodes_handlers_test/
+  usertoken.go carry PRE-EXISTING foreign drift, left for owning agents per
+  standing policy).
+
+## Design decisions (locked)
+- Instrumentation is explicit in-handler calls (NOT middleware) so result is
+  known after the op. Rule: audit at every terminal AFTER the body parses as
+  JSON; result=ok on 2xx, fail otherwise; unparseable JSON -> no audit.
+- Read operations are NOT instrumented (GET accounts/whitelist/contents/
+  nodes/me have zero Record calls).
+- recordWriteAudit has 7 params by design: it is THE instrumentation funnel,
+  params map 1:1 onto AuditEntry fields; an options struct would be the
+  "throwaway config object" workaround the >3-param smell rule itself counts.
+  30 call sites stay one-liners.
+- RegisterAuthRoutes NOT extended: it already reads srv.audit at registration
+  (todo 18); todo 54 must call SetAuditRecorder BEFORE RegisterAuthRoutes.
+  All other Register*Routes take audit as the LAST param (nil = disabled).
+- main.go untouched (D1); recorder construction + SetAuditRecorder + route
+  mounts consolidate in todo 54. Todo 34 reads via mc.ListAdminAudit.
+
+## Commit
+feat(adminapi): add admin_audit table and write-op auditing
