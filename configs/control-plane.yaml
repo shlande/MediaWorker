@@ -31,7 +31,7 @@ dht_bootstrap:
 
 # SyncBroadcaster 指令广播通道 (GossipSub)
 sync_broadcaster:
-  protocol_id: "/mediaworker/sync/0.1.0"
+  protocol_id: "/edge/control/1.0.0"
   send_timeout: "30s"
 
 # 元数据库 (PostgreSQL)

@@ -10,7 +10,7 @@ data:
       max_upload_bytes: 10737418240
 
     metadata:
-      pg_dsn: "postgres://mediaworker:mediaworker@pg-mediaworker-rw.mediaworker-test.svc.cluster.local:5432/mediaworker?sslmode=disable"
+      pg_dsn: "postgres://mediaworker:REPLACE_VIA_CLUSTER_LOCAL_SECRET@pg-mediaworker-rw.mediaworker-test.svc.cluster.local:5432/mediaworker?sslmode=disable"
 
     storage:
       cloud_accounts:

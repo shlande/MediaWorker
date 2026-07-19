@@ -45,7 +45,7 @@ dht_bootstrap:
   bootstrap_peers:
     - "/dnsaddr/bootstrap-01.example.com/tcp/9001/p2p/QmPeer"
 sync_broadcaster:
-  protocol_id: "/mediaworker/sync/0.1.0"
+  protocol_id: "/edge/control/1.0.0"
   send_timeout: "30s"
 metadata:
   pg_dsn: "postgres://user:pass@localhost:5432/mw?sslmode=disable"
@@ -105,7 +105,7 @@ func TestLoadControlPlaneConfig_Valid(t *testing.T) {
 	}
 
 	// Sync broadcaster
-	if cfg.SyncBroadcaster.ProtocolID != "/mediaworker/sync/0.1.0" {
+	if cfg.SyncBroadcaster.ProtocolID != "/edge/control/1.0.0" {
 		t.Errorf("SyncBroadcaster.ProtocolID = %q", cfg.SyncBroadcaster.ProtocolID)
 	}
 	if cfg.SyncBroadcaster.SendTimeout != "30s" {

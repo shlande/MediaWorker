@@ -35,7 +35,7 @@ data:
       bootstrap_peers: []
 
     sync_broadcaster:
-      protocol_id: "/mediaworker/sync/0.1.0"
+      protocol_id: "/edge/control/1.0.0"
       send_timeout: "30s"
 
     # DSN 指向同 namespace 下的 CNPG Cluster (deploy/postgres.yaml)
