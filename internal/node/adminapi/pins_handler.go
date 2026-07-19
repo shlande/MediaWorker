@@ -99,7 +99,8 @@ func handlePinsList(ps PinListReader) http.HandlerFunc {
 		pins := make([]pinEntry, 0, len(entries))
 		var summary pinSummary
 
-		for _, e := range entries {
+		for i := range entries {
+			e := &entries[i]
 			pins = append(pins, pinEntry{
 				BlobHash:  e.BlobHash,
 				ContentID: e.ContentID,

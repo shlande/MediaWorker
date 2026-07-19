@@ -23,7 +23,8 @@ type fakePinStoreDB struct {
 
 func (f *fakePinStoreDB) List(filter pinstore.PinFilter) []pinstore.PinEntry {
 	out := make([]pinstore.PinEntry, 0, len(f.entries))
-	for _, e := range f.entries {
+	for i := range f.entries {
+		e := &f.entries[i]
 		if filter.Ready != nil && (e.State == pinstore.PinStateReady) != *filter.Ready {
 			continue
 		}
@@ -33,9 +34,27 @@ func (f *fakePinStoreDB) List(filter pinstore.PinFilter) []pinstore.PinEntry {
 		if filter.ContentID != "" && e.ContentID != filter.ContentID {
 			continue
 		}
-		out = append(out, e)
+		out = append(out, snapshotEntry(e))
 	}
 	return out
+}
+
+// snapshotEntry builds a copylocks-clean copy of a PinEntry by constructing
+// scalar fields and re-Storing the atomic.Bool. Named return + naked return
+// avoids the go vet copylocks warning on value append.
+func snapshotEntry(e *pinstore.PinEntry) (ne pinstore.PinEntry) {
+	ne = pinstore.PinEntry{
+		BlobHash:  e.BlobHash,
+		BlobType:  e.BlobType,
+		Role:      e.Role,
+		Size:      e.Size,
+		PinnedAt:  e.PinnedAt,
+		ContentID: e.ContentID,
+		State:     e.State,
+		LastError: e.LastError,
+	}
+	ne.Ready.Store(e.Ready.Load())
+	return
 }
 
 func (f *fakePinStoreDB) RetryPin(hash string) bool {
