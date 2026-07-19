@@ -61,6 +61,10 @@ type PinOrchestrator struct {
 	// cp_pin_plan_dispatched_total.
 	metrics *cpmetrics.Metrics
 
+	// dispatchLog is the in-memory bookkeeping of dispatched PinPlans
+	// (per-node recent log, pin_node_count, pin_stats_1h). Never nil.
+	dispatchLog *DispatchLog
+
 	seq atomic.Uint64
 }
 
@@ -85,6 +89,7 @@ func NewPinOrchestrator(
 		strategies:  make(map[string]PinStrategy),
 		nodeSpaces:  make(map[string]types.NodeSpaceInfo),
 		blobCache:   cache,
+		dispatchLog: NewDispatchLog(),
 	}
 }
 
@@ -99,6 +104,13 @@ func (po *PinOrchestrator) RegisterStrategy(contentType string, strategy PinStra
 // Idempotent.
 func (po *PinOrchestrator) SetMetrics(m *cpmetrics.Metrics) {
 	po.metrics = m
+}
+
+// DispatchLog exposes the orchestrator's dispatch bookkeeping for admin APIs
+// (per-node recent plans, pin_node_count, pin_stats_1h). In-memory only —
+// restart resets it (v1 accepted; UI labels the figures "process-local").
+func (po *PinOrchestrator) DispatchLog() *DispatchLog {
+	return po.dispatchLog
 }
 
 // ─── Event handlers ───
@@ -133,7 +145,7 @@ func (po *PinOrchestrator) OnContentIngested(evt types.ContentIngestedEvent) {
 	nodePlans := strategy.DecideInitialPin(content, evt.Blobs, evt.Roles, nodeSpaces)
 
 	for _, np := range nodePlans {
-		po.sendNodePinPlan(np)
+		_, _ = po.sendNodePinPlan(np, TriggerAuto)
 	}
 }
 
@@ -222,7 +234,7 @@ func (po *PinOrchestrator) rebalance(ctx context.Context) {
 		// Step 3: Call strategy's AdjustPin with resolved data.
 		nodePlans := strategy.AdjustPin(c.ContentMeta, blobs, roles, c.Popularity, nodeSpaces)
 		for _, np := range nodePlans {
-			po.sendNodePinPlan(np)
+			_, _ = po.sendNodePinPlan(np, TriggerAuto)
 		}
 	}
 }
@@ -285,7 +297,15 @@ func (po *PinOrchestrator) getNodeSpaces() []types.NodeSpaceInfo {
 // sendNodePinPlan sends a per-node PinPlan via the broadcaster as a fire-and-forget
 // operation. Delivery is best-effort; nodes with stale pin plans continue to
 // serve content via the normal cache-miss path.
-func (po *PinOrchestrator) sendNodePinPlan(np types.NodePinPlan) {
+//
+// trigger is TriggerAuto for strategy-driven dispatches and TriggerManual for
+// admin-initiated ones (SendManualPlan). On success the dispatch is recorded
+// in the dispatch log. LOCKED DECISION: a failed send is NOT recorded — the
+// log reflects plans that actually left the CP; the failure is Warn-logged
+// and the send stays fire-and-forget (no retry, no resend logic).
+//
+// It returns the plan's seq and the send error; automatic callers ignore both.
+func (po *PinOrchestrator) sendNodePinPlan(np types.NodePinPlan, trigger string) (uint64, error) {
 	plan := types.PinPlan{
 		Seq:        po.seq.Add(1),
 		TargetNode: np.NodeID,
@@ -294,7 +314,48 @@ func (po *PinOrchestrator) sendNodePinPlan(np types.NodePinPlan) {
 			UnpinBlobs: np.UnpinBlobs,
 		}},
 	}
-	_ = po.broadcaster.SendToNode(np.NodeID, "PIN_PLAN_UPDATE", plan)
+	if err := po.broadcaster.SendToNode(np.NodeID, "PIN_PLAN_UPDATE", plan); err != nil {
+		log.Printf("[pinstrategy] WARN: pin plan dispatch failed (fire-and-forget, not recorded): node=%s content=%s seq=%d trigger=%s err=%v",
+			np.NodeID, np.ContentID, plan.Seq, trigger, err)
+		return plan.Seq, err
+	}
+	po.dispatchLog.Add(DispatchRecord{
+		Seq:        plan.Seq,
+		TargetNode: np.NodeID,
+		ContentID:  np.ContentID,
+		Pins:       len(np.PinBlobs),
+		Unpins:     len(np.UnpinBlobs),
+		Trigger:    trigger,
+		SentAt:     time.Now(),
+	})
+	return plan.Seq, nil
+}
+
+// SendManualPlan dispatches an admin-initiated pin/unpin plan to each target
+// node with trigger=TriggerManual (manual pin from the content UI). It shares
+// sendNodePinPlan's fire-and-forget semantics: per-target failures are
+// Warn-logged and skipped (their seqs are omitted from the result), and the
+// first failure is returned as the error so the admin API can surface it.
+func (po *PinOrchestrator) SendManualPlan(contentID string, targets []string, pinBlobs, unpinBlobs []string) ([]uint64, error) {
+	seqs := make([]uint64, 0, len(targets))
+	var firstErr error
+	for _, target := range targets {
+		np := types.NodePinPlan{
+			NodeID:     target,
+			ContentID:  contentID,
+			PinBlobs:   pinBlobs,
+			UnpinBlobs: unpinBlobs,
+		}
+		seq, err := po.sendNodePinPlan(np, TriggerManual)
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		seqs = append(seqs, seq)
+	}
+	return seqs, firstErr
 }
 
 // nextSeq returns the next monotonically increasing sequence number.

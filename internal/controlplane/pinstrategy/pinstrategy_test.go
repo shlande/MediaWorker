@@ -87,6 +87,9 @@ type mockBroadcaster struct {
 	mu      sync.Mutex
 	sent    []sentPlan
 	sendErr error
+	// failOn, when non-nil, makes SendToNode fail for the listed node IDs
+	// (per-target failure injection for SendManualPlan partial-failure tests).
+	failOn map[string]bool
 }
 
 type sentPlan struct {
@@ -97,6 +100,9 @@ type sentPlan struct {
 func (b *mockBroadcaster) SendToNode(nodeID string, eventType string, payload any) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.failOn[nodeID] {
+		return fmt.Errorf("injected send failure for %s", nodeID)
+	}
 	b.sent = append(b.sent, sentPlan{nodeID: nodeID, eventType: eventType})
 	return b.sendErr
 }
@@ -615,7 +621,7 @@ func TestPinOrchestrator_SendNodePinPlan_NoBlobHashInPinUpdate(t *testing.T) {
 		PinBlobs:   []string{"blob-a", "blob-b"},
 		UnpinBlobs: []string{"blob-c"},
 	}
-	po.sendNodePinPlan(np)
+	_, _ = po.sendNodePinPlan(np, TriggerAuto)
 
 	// Then: the PinUpdate in the PinPlan should NOT have a BlobHash field.
 	if bcast.sentCount() != 1 {
