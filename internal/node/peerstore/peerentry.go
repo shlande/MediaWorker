@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -138,6 +139,21 @@ func (s *PeerEntryStore) ActivePeers() []types.PeerStoreEntry {
 		}
 		return true
 	})
+	return result
+}
+
+// List returns ALL entries regardless of Stale/Score, sorted by PeerID for
+// deterministic admin output. ActivePeers is the filtered routing view; List
+// is the unfiltered management view (GET /v1/peers).
+func (s *PeerEntryStore) List() []types.PeerStoreEntry {
+	var result []types.PeerStoreEntry
+	s.index.Range(func(_, val any) bool {
+		if entry, ok := val.(*types.PeerStoreEntry); ok {
+			result = append(result, *entry)
+		}
+		return true
+	})
+	sort.Slice(result, func(i, j int) bool { return result[i].PeerID < result[j].PeerID })
 	return result
 }
 

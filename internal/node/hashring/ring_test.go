@@ -461,3 +461,65 @@ func TestHashRing_DistributionFairness(t *testing.T) {
 		}
 	}
 }
+
+// ─── Admin accessors (Size / PositionPct) ───
+
+// Given a rebuilt ring with self plus one peer, when reading Size, then it
+// counts distinct peers (not virtual nodes).
+func TestHashRing_Size(t *testing.T) {
+	store, cleanup := newTempStore(t)
+	defer cleanup()
+
+	putPeer(t, store, "peer-a", 0.0, false, true)
+	putPeer(t, store, "peer-b", 0.0, false, true)
+
+	ring := NewHashRing("peer-a", store, 150)
+	ring.RebuildHashRing()
+
+	if got := ring.Size(); got != 2 {
+		t.Fatalf("Size = %d, want 2 distinct peers", got)
+	}
+}
+
+// Given self on the ring, when reading PositionPct, then ok=true and the
+// fraction lies in [0, 1); given self absent, then ok=false (null for the API).
+func TestHashRing_PositionPct(t *testing.T) {
+	store, cleanup := newTempStore(t)
+	defer cleanup()
+
+	putPeer(t, store, "peer-a", 0.0, false, true)
+	putPeer(t, store, "peer-b", 0.0, false, true)
+
+	ring := NewHashRing("peer-a", store, 150)
+	ring.RebuildHashRing()
+
+	pct, ok := ring.PositionPct()
+	if !ok {
+		t.Fatal("PositionPct ok=false with self on the ring")
+	}
+	if pct < 0 || pct >= 1 {
+		t.Fatalf("PositionPct = %v, want in [0, 1)", pct)
+	}
+
+	// Determinism: the smallest of self's vnode keys is stable across reads.
+	again, ok2 := ring.PositionPct()
+	if !ok2 || again != pct {
+		t.Fatalf("PositionPct not deterministic: %v vs %v", pct, again)
+	}
+
+	// Self absent (empty ring) -> ok=false.
+	empty := NewHashRing("peer-z", store, 150)
+	if _, ok := empty.PositionPct(); ok {
+		t.Fatal("PositionPct ok=true on an empty ring, want false")
+	}
+
+	// Self filtered out of the ring (no PeerICP) -> ok=false.
+	store2, cleanup2 := newTempStore(t)
+	defer cleanup2()
+	putPeer(t, store2, "peer-b", 0.0, false, true)
+	outsider := NewHashRing("peer-z", store2, 150)
+	outsider.RebuildHashRing()
+	if _, ok := outsider.PositionPct(); ok {
+		t.Fatal("PositionPct ok=true for self not on ring, want false")
+	}
+}

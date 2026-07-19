@@ -393,3 +393,43 @@ func TestPeerEntryStore_StartValueLogGC_ZeroIntervalNoop(t *testing.T) {
 		t.Errorf("expected 0 GC calls for zero interval, got %d", got)
 	}
 }
+
+// ─── TestPeerEntryStore_List ───
+
+// Given entries with mixed Stale/Score, when calling List, then ALL entries
+// come back (ActivePeers would filter) sorted by PeerID.
+func TestPeerEntryStore_List(t *testing.T) {
+	store := openStore(t)
+
+	staleLow := makeTestEntry("peer-c", 0.1)
+	staleLow.Stale = true
+	entries := []types.PeerStoreEntry{
+		makeTestEntry("peer-b", 10.0),
+		staleLow,
+		makeTestEntry("peer-a", -5.0), // below GraylistThreshold
+	}
+	for _, e := range entries {
+		if err := store.Put(e.PeerID, e); err != nil {
+			t.Fatalf("Put %s: %v", e.PeerID, err)
+		}
+	}
+
+	got := store.List()
+	if len(got) != 3 {
+		t.Fatalf("List len = %d, want 3 (stale and low-score included)", len(got))
+	}
+	for i, want := range []types.PeerId{"peer-a", "peer-b", "peer-c"} {
+		if got[i].PeerID != want {
+			t.Fatalf("got[%d].PeerID = %s, want %s (sorted)", i, got[i].PeerID, want)
+		}
+	}
+	if !got[2].Stale {
+		t.Error("stale flag must survive List")
+	}
+
+	// Empty store -> empty (non-nil tolerable) slice.
+	empty := openStore(t)
+	if got := empty.List(); len(got) != 0 {
+		t.Fatalf("empty store List len = %d, want 0", len(got))
+	}
+}

@@ -41,6 +41,7 @@ import (
 	"github.com/shlande/mediaworker/internal/node/icp"
 	nodejwt "github.com/shlande/mediaworker/internal/node/jwt"
 	"github.com/shlande/mediaworker/internal/node/libp2phost"
+	"github.com/shlande/mediaworker/internal/node/netstats"
 	"github.com/shlande/mediaworker/internal/node/peerstore"
 	"github.com/shlande/mediaworker/internal/node/pinstore"
 	nodepinstrategy "github.com/shlande/mediaworker/internal/node/pinstrategy"
@@ -224,6 +225,15 @@ func main() {
 	rootCtx, cancel := signal.NotifyContext(
 		context.Background(), syscall.SIGINT, syscall.SIGTERM,
 	)
+
+	// Netstats tracker fed by the host event bus (todo 45): reachability via
+	// EvtLocalReachabilityChanged; DCUtR counters stay 0 — the locked
+	// go-libp2p v0.48.0 has no hole-punching event (see netstats doc).
+	// todo 49 passes netTracker into NetworkDeps for GET /v1/network.
+	netTracker := netstats.New()
+	if err := netstats.Subscribe(rootCtx, netTracker, h.EventBus()); err != nil {
+		logger.Warn("netstats event-bus subscription failed (reachability stays unknown)", "err", err)
+	}
 
 	// -------------------------------------------------------------------
 	// 10a. Metrics (T20). Constructed once per process; mounted on the HTTP

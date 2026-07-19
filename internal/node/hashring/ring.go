@@ -208,6 +208,40 @@ func (h *HashRing) RebuildCount() int64 {
 	return h.rebuildCount.Load()
 }
 
+// Size returns the number of distinct peers currently on the ring.
+// Exposed for the node admin API (GET /v1/network hash_ring.peers_on_ring).
+func (h *HashRing) Size() int {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	peers := make(map[string]struct{}, len(h.ring.hashMap))
+	for _, p := range h.ring.hashMap {
+		peers[p] = struct{}{}
+	}
+	return len(peers)
+}
+
+// PositionPct returns the position of self's first arc on the ring — the
+// smallest CRC32 key among self's virtual nodes, as a fraction of the 2^32
+// hash space (0 <= pct < 1). ok is false when self is absent (empty ring or
+// self filtered out), which the admin API renders as null.
+func (h *HashRing) PositionPct() (pct float64, ok bool) {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	self := string(h.selfPeer)
+	var best uint32
+	found := false
+	for k, p := range h.ring.hashMap {
+		if p == self && (!found || k < best) {
+			best = k
+			found = true
+		}
+	}
+	if !found {
+		return 0, false
+	}
+	return float64(best) / 4294967296.0, true // 2^32 (CRC32 space)
+}
+
 // OnPeerStoreChange triggers a debounced ring rebuild. If rebuilds are
 // already queued with an active debounce timer, this call extends the
 // debounce window (up to the max-wait cap).

@@ -230,6 +230,16 @@ func (d *EdgeDiscovery) discoverLoop(ctx context.Context) {
 	}
 }
 
+// RoutingTableSize returns the number of peers in the DHT routing table.
+// It is safe to call only after Start has succeeded; before Start it
+// returns 0. Exposed for the node admin API (GET /v1/network dht.table_size).
+func (d *EdgeDiscovery) RoutingTableSize() int {
+	if d.dht == nil {
+		return 0
+	}
+	return d.dht.RoutingTable().Size()
+}
+
 // OnGossipSubPruneWithPX handles PeX (Peer Exchange) notifications from
 // GossipSub prune messages. GossipSub validates peer records via its own
 // signed envelope mechanism; each record from a trusted message is stored

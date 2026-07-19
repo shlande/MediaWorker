@@ -413,3 +413,12 @@ func contains(s, sub string) bool {
 	}
 	return false
 }
+
+// Given an EdgeDiscovery that has not been Started, when RoutingTableSize is
+// called, then it returns 0 instead of panicking on the nil DHT.
+func TestEdgeDiscovery_RoutingTableSize_BeforeStart(t *testing.T) {
+	d := NewEdgeDiscovery(nil, nil, nil, "edge", 0, 0, kaddht.ModeClient)
+	if got := d.RoutingTableSize(); got != 0 {
+		t.Fatalf("RoutingTableSize = %d before Start, want 0", got)
+	}
+}
