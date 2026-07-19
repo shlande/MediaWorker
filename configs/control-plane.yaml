@@ -44,3 +44,13 @@ metadata:
 identity:
   priv_key_path: "/data/controlplane/ed25519-jwt.key"
   libp2p_priv_key_path: "/data/controlplane/ed25519-libp2p.key"
+
+# 管理后台 API (admin UI 后端; 整段缺省 = 不启用)
+# 启用规则: 任一字段被配置或 env ADMIN_TOKEN_SECRET 存在即视为启用;
+# 启用时 listen 缺省 127.0.0.1:8082, token_secret 仍为空 → 启动报错。
+# admin_api:
+#   listen: "127.0.0.1:8082"            # 监听地址 (仅内网/本机, 不对外暴露)
+#   token_secret: ""                    # 用户 token HMAC 密钥; 空则读 env ADMIN_TOKEN_SECRET
+#   prometheus_url: ""                  # 可选; 概览页指标数据源 (空 = 指标端点禁用)
+#   alert_webhook_token: ""             # 可选; 空 = 不挂载告警 webhook 端点
+#   quota_rebalance_interval: "60s"     # 配额重平衡周期

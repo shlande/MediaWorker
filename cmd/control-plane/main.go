@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"github.com/shlande/mediaworker/internal/config"
+	"github.com/shlande/mediaworker/internal/controlplane/accountregistry"
+	"github.com/shlande/mediaworker/internal/controlplane/adminapi"
 	cpdht "github.com/shlande/mediaworker/internal/controlplane/dhtbootstrap"
 	cpjwt "github.com/shlande/mediaworker/internal/controlplane/jwt"
 	"github.com/shlande/mediaworker/internal/controlplane/locationsvc"
@@ -184,6 +186,41 @@ func run(configPath string) error {
 
 	go po.Run(ctx, rebalanceIntv, cfg.PinOrchestrator.TopContentsLimit)
 	slog.Info("PinOrchestrator started", "interval", rebalanceIntv, "top_contents_limit", cfg.PinOrchestrator.TopContentsLimit)
+
+	// 13b. AccountRegistry snapshot sync (todo 18, Metis gap #4): without this
+	//      instantiation ACCOUNT_SNAPSHOT is never broadcast and todo 17's
+	//      node-side account pool never fills. StartSync spawns its own
+	//      goroutine and emits one snapshot immediately. Skipped (Warn) on the
+	//      PG-unavailable degraded path.
+	if mc != nil {
+		registry := accountregistry.NewAccountRegistry(mc.DB(), sb)
+		registry.StartSync(ctx, 60*time.Second)
+		slog.Info("account snapshot sync started", "interval", "60s")
+	} else {
+		slog.Warn("account snapshot sync skipped: PG metadata client unavailable")
+	}
+
+	// 13c. Admin API server (todo 18): auth endpoints + bootstrap admin seed,
+	//      mounted only when admin_api.listen is configured. Auth routes need
+	//      the user table, so mc == nil leaves them unmounted (Warn).
+	//      ADMIN ROUTES: consolidated mounts below (todo 54).
+	if cfg.AdminAPI.Listen != "" {
+		adminSrv := adminapi.NewServer([]byte(cfg.AdminAPI.TokenSecret))
+		if mc != nil {
+			if err := adminapi.SeedAdminIfEmpty(ctx, mc); err != nil {
+				slog.Warn("admin bootstrap seed failed", "err", err)
+			}
+			adminapi.RegisterAuthRoutes(adminSrv, mc)
+		} else {
+			slog.Warn("admin API enabled without PG: auth endpoints not mounted")
+		}
+		go func() {
+			slog.Info("admin API listening", "addr", cfg.AdminAPI.Listen)
+			if err := adminSrv.Serve(ctx, cfg.AdminAPI.Listen); err != nil {
+				slog.Error("admin API serve", "err", err)
+			}
+		}()
+	}
 
 	// 14. Subscribe to reverse channels.
 	// histWriter is nil on the PG-unavailable startup path (section 10);
