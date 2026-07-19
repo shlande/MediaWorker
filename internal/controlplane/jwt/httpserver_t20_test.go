@@ -55,7 +55,7 @@ func TestRegisterMetricsHandler_MountsAndGetMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get /metrics: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
@@ -72,7 +72,7 @@ func TestRegisterMetricsHandler_MountsAndGetMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get /metrics (2): %v", err)
 	}
-	defer resp2.Body.Close()
+	defer func() { _ = resp2.Body.Close() }()
 	body, err := io.ReadAll(resp2.Body)
 	if err != nil {
 		t.Fatalf("read /metrics body: %v", err)
@@ -112,7 +112,7 @@ func TestRegisterMetricsHandler_NoRegistrationMeans404(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get /metrics: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("expected 404 (route not mounted), got %d", resp.StatusCode)
 	}
@@ -134,7 +134,7 @@ func issueJWTRequestT20(t *testing.T, url string, privKey ed25519.PrivateKey) (*
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(respBody))
@@ -152,7 +152,7 @@ func pickFreeAddrT20(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	defer ln.Close()
+	defer func() { _ = ln.Close() }()
 	return ln.Addr().String()
 }
 
@@ -161,7 +161,7 @@ func waitForServerT20(t *testing.T, addr string) {
 	for i := 0; i < 50; i++ {
 		conn, err := net.Dial("tcp", addr)
 		if err == nil {
-			conn.Close()
+			_ = conn.Close()
 			return
 		}
 		time.Sleep(10 * time.Millisecond)

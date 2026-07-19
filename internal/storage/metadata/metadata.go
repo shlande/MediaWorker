@@ -166,7 +166,7 @@ func (c *PGMetadataClient) GetContentBlobs(ctx context.Context, contentID string
 	if err != nil {
 		return nil, nil, fmt.Errorf("metadata: get content blobs %q: %w", contentID, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var (
 		blobs []types.BlobDescriptor
@@ -247,7 +247,7 @@ func (c *PGMetadataClient) GetTopContents(ctx context.Context, limit int) ([]Top
 	if err != nil {
 		return nil, fmt.Errorf("metadata: get top contents: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []TopContent
 	for rows.Next() {
@@ -288,7 +288,7 @@ func (c *PGMetadataClient) GetBlobLocations(ctx context.Context, blobHash string
 	if err != nil {
 		return nil, fmt.Errorf("metadata: get blob locations %q: %w", blobHash, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []types.BlobLocation
 	for rows.Next() {
@@ -404,7 +404,7 @@ func (c *PGMetadataClient) GetAccountHealths(ctx context.Context, vendor types.V
 	if err != nil {
 		return nil, fmt.Errorf("metadata: get account healths %q: %w", vendor, err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []AccountHealth
 	for rows.Next() {

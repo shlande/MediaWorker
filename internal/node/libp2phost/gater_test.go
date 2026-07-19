@@ -436,13 +436,13 @@ func TestAuthProtocol(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create host1: %v", err)
 	}
-	defer h1.Close()
+	defer func() { _ = h1.Close() }()
 
 	h2, err := NewEdgeHost(id2, []string{"/ip4/127.0.0.1/tcp/0"}, psk, gater2)
 	if err != nil {
 		t.Fatalf("create host2: %v", err)
 	}
-	defer h2.Close()
+	defer func() { _ = h2.Close() }()
 
 	// Given: h2 registers the auth protocol handler with completion signal
 	authDone := make(chan struct{})

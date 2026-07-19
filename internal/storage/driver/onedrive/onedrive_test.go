@@ -3,7 +3,6 @@ package onedrive
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -90,7 +89,7 @@ func Test_List_when_page_advances_expect_next_link_followed(t *testing.T) {
 		if strings.Contains(r.URL.String(), "nextLink") {
 			_, _ = w.Write([]byte(`{"value":[{"id":"page2","name":"pg2.txt","size":5,"file":{},"fileSystemInfo":{"lastModifiedDateTime":"2025-06-01T00:00:00Z"}}]}`))
 		} else {
-			_, _ = w.Write([]byte(fmt.Sprintf(`{"@odata.nextLink":"%s/nextLink","value":[{"id":"page1","name":"pg1.txt","size":3,"file":{},"fileSystemInfo":{"lastModifiedDateTime":"2025-06-01T00:00:00Z"}}]}`, server.URL)))
+			fmt.Fprintf(w, `{"@odata.nextLink":"%s/nextLink","value":[{"id":"page1","name":"pg1.txt","size":3,"file":{},"fileSystemInfo":{"lastModifiedDateTime":"2025-06-01T00:00:00Z"}}]}`, server.URL)
 		}
 	}))
 	defer server.Close()
@@ -267,7 +266,7 @@ func Test_PutLarge_expect_chunked_upload(t *testing.T) {
 			assertAuth(t, r)
 			w.Header().Set("Content-Type", "application/json")
 			// Use server URL to construct uploadUrl pointing back to the same server.
-			_, _ = w.Write([]byte(fmt.Sprintf(`{"uploadUrl":"%s/upload"}`, server.URL)))
+			fmt.Fprintf(w, `{"uploadUrl":"%s/upload"}`, server.URL)
 			return
 		}
 		if r.URL.Path == "/upload" {
@@ -550,13 +549,4 @@ func assertAuth(t *testing.T, r *http.Request) {
 	if ah := r.Header.Get("Authorization"); ah != "Bearer test-token" {
 		t.Errorf("expected Bearer auth, got %q", ah)
 	}
-}
-
-// mustMarshal returns JSON string or panics.
-func mustMarshal(v any) string {
-	b, err := json.Marshal(v)
-	if err != nil {
-		panic(err)
-	}
-	return string(b)
 }

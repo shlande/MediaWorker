@@ -391,7 +391,7 @@ func TestJWT_Dedup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create host1: %v", err)
 	}
-	defer host1.Close()
+	defer func() { _ = host1.Close() }()
 
 	_, host2Priv, err := sjwt.GenerateEd25519Key()
 	if err != nil {
@@ -401,7 +401,7 @@ func TestJWT_Dedup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create host2: %v", err)
 	}
-	defer host2.Close()
+	defer func() { _ = host2.Close() }()
 
 	// Connect hosts
 	if err := host2.Connect(context.Background(), peer.AddrInfo{ID: host1.ID(), Addrs: host1.Addrs()}); err != nil {
@@ -528,13 +528,13 @@ func TestJWT_PushProtocol(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create hostA: %v", err)
 	}
-	defer hostA.Close()
+	defer func() { _ = hostA.Close() }()
 
 	hostB, err := createLibp2pHost(nodeBPriv, psp)
 	if err != nil {
 		t.Fatalf("create hostB: %v", err)
 	}
-	defer hostB.Close()
+	defer func() { _ = hostB.Close() }()
 
 	// Connect A → B (necessary for PushJWT, which opens a stream)
 	if err := hostA.Connect(context.Background(), peer.AddrInfo{ID: hostB.ID(), Addrs: hostB.Addrs()}); err != nil {
@@ -843,7 +843,7 @@ func TestJWT_ClientSendsDeclaredCapabilities(t *testing.T) {
 		t.Fatalf("listen: %v", err)
 	}
 	go func() { _ = http.Serve(listener, mux) }()
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	endpoint := "http://" + listener.Addr().String() + "/v1/node/jwt"
 
@@ -997,7 +997,7 @@ func TestJWT_RefreshLoopFiresMultipleTimes(t *testing.T) {
 		t.Fatalf("listen: %v", err)
 	}
 	go func() { _ = http.Serve(listener, mux) }()
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	endpoint := "http://" + listener.Addr().String() + "/v1/node/jwt"
 	client := NewJWTClient(nodePriv, nodePeerID, endpoint, types.NodeCapabilities{Edge: true, PeerICP: true})
@@ -1055,7 +1055,7 @@ func TestJWT_RefreshLoopToleratesServerErrors(t *testing.T) {
 		t.Fatalf("listen: %v", err)
 	}
 	go func() { _ = http.Serve(listener, mux) }()
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	endpoint := "http://" + listener.Addr().String() + "/v1/node/jwt"
 	client := NewJWTClient(nodePriv, nodePeerID, endpoint, types.NodeCapabilities{})

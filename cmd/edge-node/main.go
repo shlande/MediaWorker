@@ -663,7 +663,7 @@ type ed25519PeerstoreAdapter struct {
 func (a ed25519PeerstoreAdapter) Peerstore() interface {
 	PubKey(peer.ID) ed25519.PublicKey
 } {
-	return ed25519PopKeyView{h: a.h}
+	return ed25519PopKeyView(a)
 }
 
 type ed25519PopKeyView struct {

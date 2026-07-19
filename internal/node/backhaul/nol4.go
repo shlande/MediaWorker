@@ -44,7 +44,7 @@ func (bm *BackhaulManager) HandleBlobNoL4(ctx context.Context, w io.Writer, blob
 			return drainAndCache(stream.(io.Reader), stream.(io.Closer), wc, blobHash)
 		}
 		rc := stream.(io.ReadCloser)
-		defer rc.Close()
+		defer func() { _ = rc.Close() }()
 		var buf bytes.Buffer
 		if _, copyErr := io.Copy(&buf, rc); copyErr != nil {
 			return nil, copyErr

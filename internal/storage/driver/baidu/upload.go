@@ -195,10 +195,10 @@ type multipartForm struct {
 func newMultipartForm(buf *bytes.Buffer, fieldname, filename, contentType string, reader io.Reader, size int64) *multipartForm {
 	boundary := "baiduUploadBoundary"
 	buf.WriteString("--" + boundary + "\r\n")
-	buf.WriteString(fmt.Sprintf(
+	fmt.Fprintf(buf,
 		"Content-Disposition: form-data; name=\"%s\"; filename=\"%s\"\r\n",
 		fieldname, filename,
-	))
+	)
 	buf.WriteString("Content-Type: " + contentType + "\r\n\r\n")
 	_, _ = io.Copy(buf, reader)
 	buf.WriteString("\r\n--" + boundary + "--\r\n")

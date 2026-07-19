@@ -392,7 +392,7 @@ func (sb *SyncBroadcaster) SetSnapshotStore(ss *SnapshotStore) {
 // handleStream reads a varint-prefixed JSON WireMessage from an incoming
 // /edge/control/1.0.0 stream and dispatches it to matching subscribers.
 func (sb *SyncBroadcaster) handleStream(stream network.Stream) {
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	msg, err := ReadWireMessage(stream)
 	if err != nil {
@@ -433,7 +433,7 @@ func (sb *SyncBroadcaster) sendWireMessage(ctx context.Context, target peer.ID, 
 	if err != nil {
 		return fmt.Errorf("syncbroadcaster: open stream to %s: %w", target.ShortString(), err)
 	}
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 
 	if err := writeWireMessage(stream, msg); err != nil {
 		return fmt.Errorf("syncbroadcaster: write message to %s: %w", target.ShortString(), err)

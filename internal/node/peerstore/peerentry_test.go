@@ -311,10 +311,7 @@ func TestPeerEntryStore_StartValueLogGC_TickerFires(t *testing.T) {
 	store.StartValueLogGC(ctx, 10*time.Millisecond)
 
 	deadline := time.After(500 * time.Millisecond)
-	for {
-		if store.GCCalls() >= 3 {
-			break
-		}
+	for store.GCCalls() < 3 {
 		select {
 		case <-deadline:
 			t.Fatalf("expected ≥3 GC calls within 500ms, got %d", store.GCCalls())

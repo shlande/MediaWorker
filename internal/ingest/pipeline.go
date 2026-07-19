@@ -172,7 +172,7 @@ func (p *IngestPipeline) uploadBlobToK(
 			if err != nil {
 				return fmt.Errorf("open %s: %w", filePath, err)
 			}
-			defer f.Close()
+			defer func() { _ = f.Close() }()
 
 			loc, err := be.Put(ctx, blob.BlobHash, f, blob.Size)
 			if err != nil {

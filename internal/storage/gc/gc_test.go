@@ -42,7 +42,7 @@ func TestMarkOrphans_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	m.ExpectExec(`UPDATE blob\s+SET deleted_at = now\(\)\s+WHERE deleted_at IS NULL`).
 		WithArgs((24 * time.Hour).String()).
@@ -69,7 +69,7 @@ func TestMarkOrphans_Idempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	m.ExpectExec(`UPDATE blob\s+SET deleted_at = now\(\)`).
 		WithArgs((24 * time.Hour).String()).
@@ -92,7 +92,7 @@ func TestMarkOrphans_DefaultMinAge(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	m.ExpectExec(`UPDATE blob\s+SET deleted_at = now\(\)`).
 		WithArgs(DefaultMinAge.String()).
@@ -128,7 +128,7 @@ func TestSweep_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	const (
 		hash     = "abc123"
@@ -211,7 +211,7 @@ func TestSweep_Rescue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	const hash = "rescued-blob"
 	const file = "file-XYZ"
@@ -266,7 +266,7 @@ func TestSweep_DeleteFail_CircuitBreak(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	const (
 		hash     = "fail-blob"
@@ -327,7 +327,7 @@ func TestSweep_AlreadyBrokenSkipped(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	const (
 		hash1   = "fail-blob-1"
@@ -385,7 +385,7 @@ func TestSweep_NoLocations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create sqlmock: %v", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	const hash = "lonely-blob"
 

@@ -86,21 +86,6 @@ func nodeHost(t *testing.T, id *identity.NodeIdentity, psk types.PSK) host.Host 
 	return h
 }
 
-// connectMutual establishes bi-directional p2p connections and waits for the
-// DHT routing tables to stabilize.
-func connectMutual(t *testing.T, ctx context.Context, a, b host.Host) {
-	t.Helper()
-	piA := peer.AddrInfo{ID: a.ID(), Addrs: a.Addrs()}
-	piB := peer.AddrInfo{ID: b.ID(), Addrs: b.Addrs()}
-	if err := a.Connect(ctx, piB); err != nil {
-		t.Fatalf("connect %s -> %s: %v", a.ID(), b.ID(), err)
-	}
-	if err := b.Connect(ctx, piA); err != nil {
-		t.Fatalf("connect %s -> %s: %v", b.ID(), a.ID(), err)
-	}
-	time.Sleep(time.Second)
-}
-
 // ─── Constructor tests ─────────────────────────────────────────────────────
 
 func TestNewBootstrapHost_NilIdentity(t *testing.T) {

@@ -68,7 +68,7 @@ func TestJWTHTTPServer_validJWTRequest_returns200(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Then: status 200, and the response contains a valid JWT.
 	if resp.StatusCode != http.StatusOK {
@@ -142,7 +142,7 @@ func TestJWTHTTPServer_invalidSignature_returns403(t *testing.T) {
 	if err != nil {
 		t.Fatalf("post: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Then: status 403.
 	if resp.StatusCode != http.StatusForbidden {
@@ -159,7 +159,7 @@ func pickFreeAddr(t *testing.T) string {
 		t.Fatalf("listen: %v", err)
 	}
 	addr := ln.Addr().String()
-	ln.Close()
+	_ = ln.Close()
 	return addr
 }
 
@@ -450,7 +450,7 @@ func TestRegisterLocationHandler_MountsGetRouteOnServe(t *testing.T) {
 	server.RegisterLocationHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hash := r.PathValue("hash")
 		w.WriteHeader(http.StatusOK)
-		fmt.Fprintf(w, "loc:%s", hash)
+		_, _ = fmt.Fprintf(w, "loc:%s", hash) // test fixture: ignore write error
 	}))
 
 	listenAddr := pickFreeAddr(t)
@@ -466,7 +466,7 @@ func TestRegisterLocationHandler_MountsGetRouteOnServe(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(resp.Body)
 
 	if resp.StatusCode != http.StatusOK {
@@ -504,7 +504,7 @@ func TestRegisterLocationHandler_NoRegistrationMeansRouteMissing(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	// Go 1.22+ mux returns 404 for unregistered patterns.
 	if resp.StatusCode != http.StatusNotFound {

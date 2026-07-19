@@ -111,8 +111,8 @@ func (c *HTTPLocationClient) GetBlobLocations(ctx context.Context, blobHash stri
 		_ = resp.Body.Close()
 	}()
 
-	switch {
-	case resp.StatusCode == http.StatusOK:
+	switch resp.StatusCode {
+	case http.StatusOK:
 		var body struct {
 			Locations []types.BlobLocation `json:"locations"`
 		}
@@ -124,7 +124,7 @@ func (c *HTTPLocationClient) GetBlobLocations(ctx context.Context, blobHash stri
 		}
 		return body.Locations, nil
 
-	case resp.StatusCode == http.StatusNotFound:
+	case http.StatusNotFound:
 		return []types.BlobLocation{}, nil
 
 	default:

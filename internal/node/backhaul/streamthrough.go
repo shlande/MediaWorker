@@ -22,7 +22,7 @@ type CacheWriter interface {
 // to cache via a tee + pipe. Returns the full blob bytes. Used inside
 // singleflight.Do so that the closure blocks until the data is cached.
 func drainAndCache(stream io.Reader, closer io.Closer, cache CacheWriter, blobHash string) ([]byte, error) {
-	defer closer.Close()
+	defer func() { _ = closer.Close() }()
 
 	var buf bytes.Buffer
 
@@ -41,10 +41,10 @@ func drainAndCache(stream io.Reader, closer io.Closer, cache CacheWriter, blobHa
 
 	tee := io.TeeReader(stream, pw)
 	if _, copyErr := io.Copy(&buf, tee); copyErr != nil {
-		pw.CloseWithError(copyErr)
+		_ = pw.CloseWithError(copyErr)
 		return nil, copyErr
 	}
-	pw.Close()
+	_ = pw.Close()
 	<-cacheDone
 	if cacheErr != nil {
 		return nil, cacheErr
@@ -57,7 +57,7 @@ func drainAndCache(stream io.Reader, closer io.Closer, cache CacheWriter, blobHa
 // io.Writer (the HTTP response) and the local cache simultaneously
 // using io.TeeReader. This avoids buffering the full blob in memory.
 func streamThrough(w io.Writer, reader io.ReadCloser, cache CacheWriter, blobHash string) error {
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// TeeReader: every byte read from reader is written to both w (client)
 	// and a pipe writer simultaneously. The pipe is consumed by a goroutine

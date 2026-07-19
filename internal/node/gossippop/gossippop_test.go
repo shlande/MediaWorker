@@ -340,7 +340,7 @@ func TestGossipSub_2NodePopularitySync(t *testing.T) {
 
 	// Host B subscribes to the topic for receiving.
 	mpB := NewMergedPopularity()
-	subB, err := nodeB.ps.Subscribe(PopularityTopic)
+	subB, err := nodeB.ps.Subscribe(PopularityTopic) //nolint:staticcheck // legacy pubsub API, still functional
 	if err != nil {
 		t.Fatalf("subscribe B: %v", err)
 	}
@@ -447,7 +447,7 @@ func TestGossipSub_3NodePoisoningDefense(t *testing.T) {
 	// Honest node 2's merged popularity view.
 	mpH2 := NewMergedPopularity()
 
-	subH2, err := nodeH2.ps.Subscribe(PopularityTopic)
+	subH2, err := nodeH2.ps.Subscribe(PopularityTopic) //nolint:staticcheck // legacy pubsub API, still functional
 	if err != nil {
 		t.Fatalf("subscribe H2: %v", err)
 	}
@@ -550,7 +550,7 @@ type stubHostAdapter struct {
 func (s stubHostAdapter) Peerstore() interface {
 	PubKey(peer.ID) ed25519.PublicKey
 } {
-	return stubPubKeyView{pub: s.pub}
+	return stubPubKeyView(s)
 }
 
 type stubPubKeyView struct {

@@ -74,7 +74,7 @@ func (d *DashIngester) Process(ctx context.Context, input io.Reader, opts Proces
 	mpdPath := filepath.Join(outDir, "manifest.mpd")
 	mpdXML, err := os.ReadFile(mpdPath)
 	if err != nil {
-		os.RemoveAll(outDir)
+		_ = os.RemoveAll(outDir) // best-effort cleanup
 		return nil, fmt.Errorf("read mpd: %w", err)
 	}
 

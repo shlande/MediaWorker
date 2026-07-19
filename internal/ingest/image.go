@@ -49,14 +49,14 @@ func (i *ImageIngester) Process(ctx context.Context, input io.Reader, opts Proce
 	// 1. Slurp all input bytes (we need them for both decode and orientation).
 	raw, err := io.ReadAll(input)
 	if err != nil {
-		os.RemoveAll(workDir)
+		_ = os.RemoveAll(workDir) // best-effort cleanup
 		return nil, fmt.Errorf("read input: %w", err)
 	}
 
 	// 2. Save original file.
 	origPath := filepath.Join(workDir, "original")
 	if err := os.WriteFile(origPath, raw, 0644); err != nil {
-		os.RemoveAll(workDir)
+		_ = os.RemoveAll(workDir) // best-effort cleanup
 		return nil, fmt.Errorf("write original: %w", err)
 	}
 

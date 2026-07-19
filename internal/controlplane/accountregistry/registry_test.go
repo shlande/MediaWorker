@@ -37,10 +37,6 @@ func (m *mockBroadcaster) getEvents() []broadcastCall {
 	return result
 }
 
-func (m *mockBroadcaster) reset() {
-	m.events = nil
-}
-
 func TestCreateAccountAndListByVendor(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {

@@ -153,7 +153,7 @@ func (g *EdgeConnectionGater) InterceptUpgraded(conn network.Conn) (bool, contro
 // HandleAuth reads a JWT from the stream, verifies it, checks PeerID binding,
 // and writes the peer into PeerEntryStore with an initial neutral score.
 func HandleAuth(stream network.Stream, gater *EdgeConnectionGater) error {
-	defer stream.Close()
+	defer func() { _ = stream.Close() }()
 	logger := gater.logger.With("peer", stream.Conn().RemotePeer())
 
 	line, err := bufio.NewReader(stream).ReadString('\n')
@@ -212,7 +212,7 @@ func PresentAuth(ctx context.Context, h host.Host, target peer.ID, localJWT type
 	if err != nil {
 		return fmt.Errorf("present auth: open stream to %s: %w", target.ShortString(), err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	if _, err := fmt.Fprintln(s, localJWT); err != nil {
 		return fmt.Errorf("present auth: write JWT: %w", err)

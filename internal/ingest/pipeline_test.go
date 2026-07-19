@@ -49,7 +49,7 @@ type mockBackendUploader struct {
 
 func (m *mockBackendUploader) Put(_ context.Context, blobHash string, reader io.Reader, _ int64) (BackendLocation, error) {
 	// Drain reader to simulate upload behaviour.
-	io.Copy(io.Discard, reader)
+	_, _ = io.Copy(io.Discard, reader)
 	if m.err != nil {
 		return BackendLocation{}, m.err
 	}

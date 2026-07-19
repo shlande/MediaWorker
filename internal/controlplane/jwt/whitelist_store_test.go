@@ -23,14 +23,14 @@ func TestWhitelistStore_persistAcrossRestarts(t *testing.T) {
 	if err := store.Add(peer); err != nil {
 		t.Fatalf("add: %v", err)
 	}
-	store.Close()
+	_ = store.Close()
 
 	// Then: after reopening, Contains is true and ListAll returns it.
 	store2, err := jwt.NewWhitelistStore(dbPath)
 	if err != nil {
 		t.Fatalf("reopen store: %v", err)
 	}
-	defer store2.Close()
+	defer func() { _ = store2.Close() }()
 
 	if !store2.Contains(peer) {
 		t.Fatal("expected peer to persist across restart")
@@ -68,14 +68,14 @@ func TestWhitelistStore_removePersists(t *testing.T) {
 	if err := store.Remove(peerA); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
-	store.Close()
+	_ = store.Close()
 
 	// Then: after reopen, peerA is gone, peerB remains.
 	store2, err := jwt.NewWhitelistStore(dbPath)
 	if err != nil {
 		t.Fatalf("reopen store: %v", err)
 	}
-	defer store2.Close()
+	defer func() { _ = store2.Close() }()
 
 	if store2.Contains(peerA) {
 		t.Fatal("peerA should be removed")
@@ -103,14 +103,14 @@ func TestWhitelistStore_restoreIntoPeerIdSet(t *testing.T) {
 	if err := store.Add(peer2); err != nil {
 		t.Fatalf("add peer2: %v", err)
 	}
-	store.Close()
+	_ = store.Close()
 
 	// When: reopen and Restore into an empty PeerIdSet.
 	store2, err := jwt.NewWhitelistStore(dbPath)
 	if err != nil {
 		t.Fatalf("reopen store: %v", err)
 	}
-	defer store2.Close()
+	defer func() { _ = store2.Close() }()
 
 	ps := jwt.NewPeerIdSet()
 	if err := store2.Restore(ps); err != nil {
@@ -138,7 +138,7 @@ func TestWhitelistStore_containsNotExist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Then: Contains returns false for an unknown peer.
 	if store.Contains(types.PeerId("12D3KooWDoesNotExist")) {
@@ -154,7 +154,7 @@ func TestWhitelistStore_emptyListAll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	all, err := store.ListAll()
 	if err != nil {
@@ -173,7 +173,7 @@ func TestWhitelistStore_NewWhitelistStore_createsDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new store with nested path: %v", err)
 	}
-	defer store.Close()
+	defer func() { _ = store.Close() }()
 
 	// Verify the directory was created.
 	if _, err := os.Stat(dbPath); os.IsNotExist(err) {

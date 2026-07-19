@@ -17,49 +17,6 @@ import (
 	"github.com/shlande/mediaworker/internal/types"
 )
 
-// testHarness creates a BaiduDriver wired to a mock HTTP server.
-type testHarness struct {
-	server    *httptest.Server
-	tokenMgr  *auth.TokenManager
-	driver    *BaiduDriver
-	callCount atomic.Int32
-}
-
-func newTestHarness(t *testing.T, handler http.HandlerFunc) *testHarness {
-	t.Helper()
-
-	srv := httptest.NewServer(handler)
-	t.Cleanup(srv.Close)
-
-	tm := auth.NewTokenManager(nil)
-	// Register a token that never expires so we don't need to mock refresh
-	tm.Register(types.VendorBaidu, "test-account", auth.OAuth2Config{
-		ClientID:     "test-client-id",
-		ClientSecret: "test-client-secret",
-		RefreshToken: "test-refresh-token",
-		TokenURL:     srv.URL + "/oauth/2.0/token",
-	})
-
-	// Pre-seed an access token by directly setting state
-	// We can't do that directly, so instead we mock the token endpoint too.
-	// But simpler: create a new token manager that wraps our own mock-server-based token flow.
-	// Even simpler: use a custom http client that intercepts token requests.
-	// Let's use a different approach: create a mock token server and register it.
-
-	return &testHarness{
-		server:   srv,
-		tokenMgr: tm,
-		driver:   newBaiduDriverWithBaseURL(tm, "test-account", "test-client-id", "test-client-secret", nil, srv.URL),
-	}
-}
-
-func (th *testHarness) Handle(path string, handler func(w http.ResponseWriter, r *http.Request)) {
-	// The httptest server uses a single mux; we need to route.
-	// We'll use a more flexible approach in the tests below.
-	_ = path
-	_ = handler
-}
-
 // newBaiduDriverWithBaseURL creates a BaiduDriver with explicit baseURL (for testing).
 func newBaiduDriverWithBaseURL(
 	tokenMgr *auth.TokenManager,

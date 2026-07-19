@@ -150,7 +150,7 @@ func TestGossipSub_Snapshot_PropagatesAcrossHosts(t *testing.T) {
 	preSeedScore(nodeB.scorer, pidA, 11)
 
 	mpB := NewMergedPopularity()
-	subB, err := nodeB.ps.Subscribe(PopularityTopic)
+	subB, err := nodeB.ps.Subscribe(PopularityTopic) //nolint:staticcheck // legacy pubsub API, still functional
 	if err != nil {
 		t.Fatalf("subscribe B: %v", err)
 	}

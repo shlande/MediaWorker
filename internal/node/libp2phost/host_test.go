@@ -31,14 +31,6 @@ func genTestPSK(t *testing.T) types.PSK {
 	return types.PSK(psk)
 }
 
-// hostAddr returns the first listen address of the host as a full p2p multiaddr
-// string suitable for peer.AddrInfoFromString.
-func hostAddr(t *testing.T, h interface{ ID() peer.ID }) string {
-	t.Helper()
-	// Use ID() + loopback for test connection; tests run on localhost.
-	return "/ip4/127.0.0.1/tcp/0/p2p/" + h.ID().String()
-}
-
 // ─── Identity tests ──────────────────────────────────────────────────────────
 
 func TestLoadOrGenerateIdentity_NewKey(t *testing.T) {
@@ -117,13 +109,13 @@ func TestNewEdgeHost_PSKConnect(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create host1: %v", err)
 	}
-	defer h1.Close()
+	defer func() { _ = h1.Close() }()
 
 	h2, err := NewEdgeHost(id2, []string{"/ip4/127.0.0.1/tcp/0"}, psk, nil)
 	if err != nil {
 		t.Fatalf("create host2: %v", err)
 	}
-	defer h2.Close()
+	defer func() { _ = h2.Close() }()
 
 	// When: host2 connects to host1
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -159,14 +151,14 @@ func TestNewEdgeHost_NoPSKRejected(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create host1: %v", err)
 	}
-	defer h1.Close()
+	defer func() { _ = h1.Close() }()
 
 	// Host2 does NOT use PSK.
 	h2, err := NewEdgeHost(id2, []string{"/ip4/127.0.0.1/tcp/0"}, nil, nil)
 	if err != nil {
 		t.Fatalf("create host2: %v", err)
 	}
-	defer h2.Close()
+	defer func() { _ = h2.Close() }()
 
 	// When: host2 (no PSK) tries to connect to host1 (PSK)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -194,19 +186,19 @@ func TestNewEdgeHost_Stream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create host1: %v", err)
 	}
-	defer h1.Close()
+	defer func() { _ = h1.Close() }()
 
 	h2, err := NewEdgeHost(id2, []string{"/ip4/127.0.0.1/tcp/0"}, psk, nil)
 	if err != nil {
 		t.Fatalf("create host2: %v", err)
 	}
-	defer h2.Close()
+	defer func() { _ = h2.Close() }()
 
 	// Given: host1 registers a stream handler that echoes messages
 	done := make(chan struct{})
 	h1.SetStreamHandler(testProtocol, func(s network.Stream) {
 		defer close(done)
-		defer s.Close()
+		defer func() { _ = s.Close() }()
 		buf := make([]byte, 1024)
 		n, err := s.Read(buf)
 		if err != nil {
@@ -235,7 +227,7 @@ func TestNewEdgeHost_Stream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new stream: %v", err)
 	}
-	defer s.Close()
+	defer func() { _ = s.Close() }()
 
 	// When: host2 writes a message
 	msg := []byte("hello edge")
@@ -298,7 +290,7 @@ func TestNewEdgeHostWithNAT_DefaultPreservesCurrentBehaviour(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewEdgeHostWithNAT with default NATOptions: %v", err)
 	}
-	defer h.Close()
+	defer func() { _ = h.Close() }()
 
 	if h.ID() == "" {
 		t.Fatal("host has empty peer ID")
@@ -317,7 +309,7 @@ func TestNewEdgeHostWithNAT_AllExplicitTrue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewEdgeHostWithNAT all-on: %v", err)
 	}
-	defer h.Close()
+	defer func() { _ = h.Close() }()
 }
 
 // TestNewEdgeHostWithNAT_AllExplicitFalse verifies that an explicit all-false
@@ -332,7 +324,7 @@ func TestNewEdgeHostWithNAT_AllExplicitFalse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewEdgeHostWithNAT all-off: %v", err)
 	}
-	defer h.Close()
+	defer func() { _ = h.Close() }()
 }
 
 // TestNewEdgeHostWithNAT_Mixed verifies that mixed values (some on, some off)
@@ -346,7 +338,7 @@ func TestNewEdgeHostWithNAT_Mixed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewEdgeHostWithNAT mixed: %v", err)
 	}
-	defer h.Close()
+	defer func() { _ = h.Close() }()
 }
 
 // TestResolveNATOptions verifies the *bool → NATOptions conversion:

@@ -85,7 +85,6 @@ type clusterNode struct {
 	hashRing     *hashring.HashRing
 	pinStore     *pinstore.PinStore
 	backhaulMgr  *backhaul.BackhaulManager
-	orchestrator *pinstrategy.PinOrchestrator
 
 	// Ed25519 keys (convenience copies).
 	edPub  ed25519.PublicKey
@@ -491,15 +490,6 @@ func preSeedScore(scorer *gossippop.PeerScorer, pid types.PeerId, n int) {
 	}
 }
 
-func addConnGaterHandler(t *testing.T, node *clusterNode) {
-	t.Helper()
-	node.host.SetStreamHandler(libp2phost.AuthProtocol, func(s network.Stream) {
-		if err := libp2phost.HandleAuth(s, node.gater); err != nil {
-			t.Logf("auth handler for %s: %v", node.host.ID(), err)
-		}
-	})
-}
-
 func ctxDefault() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 60*time.Second)
 }
@@ -714,7 +704,7 @@ func TestIntegration_GossipSubPopularitySync(t *testing.T) {
 	preSeedScore(nodeB.scorer, pidA, 12)
 
 	// Subscribe on B.
-	subB, err := nodeB.gs.Subscribe(gossippop.PopularityTopic)
+	subB, err := nodeB.gs.Subscribe(gossippop.PopularityTopic) //nolint:staticcheck // legacy pubsub API, still functional
 	if err != nil {
 		t.Fatalf("subscribe B: %v", err)
 	}
@@ -1069,7 +1059,7 @@ func TestIntegration_PoisoningDefense(t *testing.T) {
 	}
 
 	mpH2 := gossippop.NewMergedPopularity()
-	subH2, err := honest2.gs.Subscribe(gossippop.PopularityTopic)
+	subH2, err := honest2.gs.Subscribe(gossippop.PopularityTopic) //nolint:staticcheck // legacy pubsub API, still functional
 	if err != nil {
 		t.Fatalf("subscribe H2: %v", err)
 	}

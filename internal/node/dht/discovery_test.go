@@ -366,10 +366,7 @@ func TestDHT_AdvertiseIntervalWired(t *testing.T) {
 	deadline := time.After(2 * time.Second)
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
-	for {
-		if heartbeats.Load() >= 3 {
-			break
-		}
+	for heartbeats.Load() < 3 {
 		select {
 		case <-deadline:
 			t.Errorf("expected ≥3 heartbeat re-advertise log lines at interval=%v, got %d",

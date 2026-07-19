@@ -79,7 +79,7 @@ func (d *BaiduDriver) List(ctx context.Context, dirID string, page int) ([]types
 	if err != nil {
 		return nil, fmt.Errorf("baidu list: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var body pcsListResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
@@ -113,7 +113,7 @@ func (d *BaiduDriver) Get(ctx context.Context, fileID string) (types.FileInfo, e
 	if err != nil {
 		return types.FileInfo{}, fmt.Errorf("baidu get: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var body pcsMetaResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
@@ -145,7 +145,7 @@ func (d *BaiduDriver) GetLink(ctx context.Context, fileID string) (*types.Downlo
 	if err != nil {
 		return nil, fmt.Errorf("baidu getlink: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var body pcsMetaResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
@@ -216,7 +216,7 @@ func (d *BaiduDriver) Remove(ctx context.Context, fileID string) error {
 	if err != nil {
 		return fmt.Errorf("baidu remove: do request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var body pcsDeleteResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
@@ -268,7 +268,7 @@ func (d *BaiduDriver) HealthCheck(ctx context.Context) types.HealthState {
 	if err != nil {
 		return degradedState(start, fmt.Sprintf("request: %v", err))
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	latency := time.Since(start)
 
