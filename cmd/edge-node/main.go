@@ -416,6 +416,7 @@ func main() {
 	var (
 		dataPlane *dataplane.LocalDataPlane
 		pool      *accountpool.AccountPool
+		linkP     *linkpool.LinkPool
 	)
 	if cfg.Access.DataPlane.Enabled {
 		locClient := dataplane.NewHTTPLocationClient(
@@ -427,7 +428,7 @@ func main() {
 		if maxEntries <= 0 {
 			maxEntries = 100
 		}
-		linkP := linkpool.NewLinkPool(maxEntries)
+		linkP = linkpool.NewLinkPool(maxEntries)
 		dataPlane = dataplane.NewLocalDataPlane(pool, linkP, locClient, http.DefaultClient)
 		logger.Info("local data plane stack built",
 			"location_endpoint", cfg.Access.DataPlane.LocationEndpoint,
@@ -686,7 +687,73 @@ func main() {
 		adminSrv.Handle("GET /v1/healthz", func(w http.ResponseWriter, r *http.Request) {
 			nodeadmin.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		})
-		// NODE ADMIN ROUTES: consolidated mounts below (todo 49)
+
+		// NODE ADMIN ROUTES: consolidated mounts (todo 49). Typed-nil guard:
+		// components that are nil on this node (pinStore/warmCache when their
+		// cache tier is disabled, pool/linkP on non-L4) must reach the
+		// handlers as a NIL INTERFACE, not a nil pointer inside a non-nil
+		// interface — the handlers branch on dep != nil.
+		var pinQuerier nodeadmin.PinSpaceQuerier
+		var pinsStore any
+		if pinStore != nil {
+			pinQuerier = pinStore
+			pinsStore = pinStore
+		}
+		var warmReader nodeadmin.WarmCacheReader
+		var warmFlusher nodeadmin.WarmCacheFlusher
+		if warmCache != nil {
+			warmReader = warmCache
+			warmFlusher = warmCache
+		}
+		var poolSnap nodeadmin.AccountSnapshotter
+		var linkReader nodeadmin.LinkpoolReader
+		if pool != nil {
+			poolSnap = pool
+		}
+		if linkP != nil {
+			linkReader = linkP
+		}
+
+		nodeadmin.RegisterStatusRoutes(adminSrv, nodeadmin.StatusDeps{
+			PeerID: string(nodeIdentity.PeerID),
+			Capabilities: types.NodeCapabilities{
+				Edge:          cfg.Node.DeclaredCapabilities.Edge,
+				L4Backhaul:    cfg.Node.DeclaredCapabilities.L4Backhaul,
+				RelayProvider: cfg.Node.DeclaredCapabilities.RelayProvider,
+				PeerICP:       cfg.Node.DeclaredCapabilities.PeerICP,
+			},
+			L4Mode:             cfg.Access.DataPlane.Enabled,
+			Region:             cfg.Node.Region,
+			Version:            BuildVersion,
+			StartedAt:          startedAt,
+			RefreshBefore:      cfg.Node.JWTService.ParsedRefreshBeforeExpiry,
+			ControlPlanePubKey: ed25519.PublicKey(cpPubKey),
+			JWTClient:          jwtClient,
+			Scorer:             scorer,
+			Network:            nodeadmin.Libp2pNetworkReporter(h.Network()),
+			Backhaul:           backhaulMgr,
+		})
+		nodeadmin.RegisterCacheRoutes(adminSrv, pinQuerier, warmReader)
+		nodeadmin.RegisterPinsRoutes(adminSrv, pinsStore, planLog)
+		nodeadmin.RegisterNetworkRoutes(adminSrv, nodeadmin.NetworkDeps{
+			Host:    h,
+			Conns:   h.Network(),
+			DHT:     disc,
+			DHTMode: cfg.Node.Libp2p.DHT.Mode,
+			Ring:    ring,
+			Peers:   ps,
+			Stats:   netTracker,
+		})
+		nodeadmin.RegisterBackhaulRoutes(adminSrv, nodeadmin.BackhaulDeps{
+			L4Enabled:            cfg.Access.DataPlane.Enabled,
+			BackhaulCapacityMbps: cfg.Access.DataPlane.BackhaulCapacityMbps,
+			Stats:                backhaulMgr,
+			Linkpool:             linkReader,
+			Pool:                 poolSnap,
+		})
+		nodeadmin.NewReloader(*configPath, cfg, refreshDurations).RegisterReloadRoutes(adminSrv)
+		nodeadmin.RegisterFlushRoutes(adminSrv, warmFlusher)
+
 		go func() {
 			if err := adminSrv.Serve(rootCtx, cfg.AdminAPI.Listen); err != nil {
 				logger.Error("node admin server error", "err", err)
