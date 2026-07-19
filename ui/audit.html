@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>审计日志 · MediaWorker 控制面</title>
+<link rel="stylesheet" href="assets/app.css" />
+<style>
+  /* 精修模板:状态一句话 / 行分层 / 活体脉冲 — 与节点本地页同一语言 */
+  .status-strip {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface); padding: 10px 14px; margin-bottom: 14px;
+    font-size: 13px;
+  }
+  .status-strip .s-text b { font-weight: 650; font-variant-numeric: tabular-nums; }
+  .status-strip .s-alert { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font: 12px var(--font-mono); color: var(--muted); }
+  tr.row-bad td { background: var(--danger-bg); }
+  tr.row-warn td { background: var(--warn-bg); }
+  tr.row-dim td { opacity: 0.6; }
+  @keyframes fd-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .freshness .dot { animation: fd-pulse 2s ease-in-out infinite; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar"></aside>
+  <main class="main">
+    <div class="topbar">
+      <button class="menu-btn">☰</button>
+      <h1>审计日志</h1>
+      <span class="crumb">/v1/admin/audit</span>
+      <span class="spacer"></span>
+      <span class="freshness"><span class="dot"></span>JWT 签发审计为 JSON-lines 落盘 · 实时</span>
+    </div>
+
+    <!-- 状态一句话:审计结论先行,失败条目单独亮出;时间序不重排 -->
+    <div class="status-strip" data-od-id="status-strip">
+      <span class="pill ok"><span class="d"></span>写入链路正常</span>
+      <span class="s-text">最近 1 小时 <b>12</b> 条:JWT 签发 <b>4</b>、手动干预 <b>4</b>、账号变更 <b>3</b>、白名单 <b>1</b>;唯一失败为节点 f3a9 续签重试,12:04:31 已成功恢复。</span>
+      <span class="s-alert"><span class="pill bad">1 失败</span>jwt.renew 12:03:55 · 已恢复</span>
+    </div>
+
+    <div class="toolbar">
+      <input class="input search" id="q" placeholder="搜索操作者 / 对象 / IP…" />
+      <select class="input" id="f-kind">
+        <option value="">全部类型</option>
+        <option>JWT 签发</option><option>账号变更</option><option>手动干预</option><option>白名单</option>
+      </select>
+      <select class="input" id="f-time">
+        <option>最近 1 小时</option><option>最近 24 小时</option><option>最近 7 天</option>
+      </select>
+      <span class="spacer"></span>
+      <button class="btn sm" id="export">导出 JSON-lines</button>
+    </div>
+
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead>
+          <tr><th>时间</th><th>类型</th><th>操作者</th><th>动作</th><th>对象</th><th>来源 IP</th><th>结果</th></tr>
+        </thead>
+        <tbody id="audit-body"></tbody>
+      </table>
+    </div>
+  </main>
+</div>
+
+<script src="assets/app.js"></script>
+<script>
+  MW.injectSidebar('audit');
+  MW.injectChrome();
+
+  const rows = [
+    ['12:11:02','手动干预','admin@mediaworker.internal','pin 下发(seq 1043)','c_7f3a91 → 12D3KooW…b82e','10.20.1.14','ok'],
+    ['12:04:31','JWT 签发','node:12D3KooW…f3a9','jwt.renew(cap=edge,l4_backhaul)','/v1/node/jwt','172.16.8.21','ok'],
+    ['12:03:55','JWT 签发','node:12D3KooW…f3a9','jwt.renew(cap=edge,l4_backhaul)','/v1/node/jwt','172.16.8.21','fail'],
+    ['11:58:41','账号变更','admin@mediaworker.internal','circuit.force_open','baidu:mw_bak_01','10.20.1.14','ok'],
+    ['11:49:20','手动干预','ops@mediaworker.internal','unpin 下发(seq 1038)','c_81f0c3 → 12D3KooW…77c1','10.20.1.9','ok'],
+    ['11:44:10','白名单','admin@mediaworker.internal','whitelist.add','12D3KooW…c1e7','10.20.1.14','ok'],
+    ['11:31:02','账号变更','ops@mediaworker.internal','credential.rotate','115:mw_store_02','10.20.1.9','ok'],
+    ['11:12:48','JWT 签发','node:12D3KooW…b82e','jwt.renew(cap=edge,l4_backhaul,relay)','/v1/node/jwt','172.16.9.40','ok'],
+    ['10:58:33','手动干预','admin@mediaworker.internal','account.ban(MarkBanned)','quark:mw_qk_01','10.20.1.14','ok'],
+    ['10:57:59','手动干预','admin@mediaworker.internal','account.ban(MarkBanned)','quark:mw_qk_02','10.20.1.14','ok'],
+    ['10:41:17','账号变更','ops@mediaworker.internal','ratelimit.update(qps=5,burst=10)','quark:mw_qk_01','10.20.1.9','ok'],
+    ['10:15:44','JWT 签发','node:12D3KooW…77c1','jwt.renew(cap=edge,peer_icp)','/v1/node/jwt','172.16.11.7','ok'],
+  ];
+
+  const kindPill = k => ({
+    'JWT 签发':'<span class="pill info">JWT 签发</span>',
+    '账号变更':'<span class="pill warn">账号变更</span>',
+    '手动干预':'<span class="pill planned">手动干预</span>',
+    '白名单':'<span class="pill neutral">白名单</span>',
+  })[k];
+
+  function render() {
+    const q = document.getElementById('q').value.trim().toLowerCase();
+    const fk = document.getElementById('f-kind').value;
+    const list = rows.filter(r =>
+      (!q || r.join(' ').toLowerCase().includes(q)) && (!fk || r[1] === fk));
+    document.getElementById('audit-body').innerHTML = list.map(r => `
+      <tr class="${r[6]==='ok'?'':'row-bad'}">
+        <td class="mono" style="font-size:12px">2026-07-19 ${r[0]}</td>
+        <td>${kindPill(r[1])}</td>
+        <td style="font-size:12.5px">${r[2]}</td>
+        <td class="mono" style="font-size:12px">${r[3]}</td>
+        <td><code style="font-size:11.5px">${r[4]}</code></td>
+        <td class="mono" style="font-size:12px;color:var(--muted)">${r[5]}</td>
+        <td>${r[6]==='ok' ? '<span class="pill ok"><span class="d"></span>成功</span>' : '<span class="pill bad"><span class="d"></span>失败</span>'}</td>
+      </tr>`).join('') || '<tr><td colspan="7"><div class="empty">无匹配记录</div></td></tr>';
+  }
+
+  document.getElementById('export').onclick = () => MW.toast('已导出 JSON-lines','按当前筛选条件生成,共 12 条');
+  ['q','f-kind','f-time'].forEach(id => document.getElementById(id).addEventListener('input', render));
+  render();
+</script>
+</body>
+</html>

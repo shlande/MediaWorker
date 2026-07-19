@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>节点概览与缓存 · MediaWorker 节点本地监控</title>
+<link rel="stylesheet" href="assets/app.css" />
+<style>
+  .jwt-count { font: 700 30px/1.1 var(--font-mono); letter-spacing: -0.02em; }
+  .jwt-count small { font: 500 13px var(--font-body); color: var(--muted); letter-spacing: 0; }
+  .part-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 6px; }
+  .part-head .nm { font-weight: 600; font-size: 13px; }
+  .part-head .role { font: 11px var(--font-mono); color: var(--muted); }
+  .part-head .cnt { margin-left: auto; font: 11.5px var(--font-mono); color: var(--muted); }
+  .spark-label { display: flex; justify-content: space-between; font: 11px var(--font-mono); color: var(--muted); margin-top: 6px; }
+  .ring-note { font: 11.5px var(--font-mono); color: var(--muted); margin-top: 8px; }
+
+  /* — CD 精修:状态条 / 锚点卡 / 告警分层 / 轮询活体感(页面级,不动 app.css)— */
+  .status-strip {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface); padding: 10px 14px; margin-bottom: 14px;
+    font-size: 13px;
+  }
+  .status-strip .s-text b { font-weight: 650; font-variant-numeric: tabular-nums; }
+  .status-strip .s-alert { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font: 12px var(--font-mono); color: var(--muted); }
+  .card-anchor { border-color: oklch(72% 0.012 250); }
+  .card-anchor h3 .watch {
+    font: 600 10px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px;
+  }
+  .jwt-meter { margin-top: 12px; }
+  tr.row-active td { background: var(--danger-bg); }
+  tr.row-dim td { opacity: 0.6; }
+  tr.group-row td {
+    padding: 5px 14px; font: 600 10.5px var(--font-mono); letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--muted);
+    background: oklch(98.5% 0.004 250);
+  }
+  @keyframes fd-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .freshness .dot { animation: fd-pulse 2s ease-in-out infinite; }
+  .freshness .tick { font: 11px var(--font-mono); color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar"></aside>
+  <main class="main">
+    <div class="topbar">
+      <button class="menu-btn">☰</button>
+      <h1>节点概览与缓存</h1>
+      <span class="crumb">12D3KooW…b82e · /v1/status + /v1/cache</span>
+      <span class="spacer"></span>
+      <span class="freshness"><span class="dot"></span>直连节点 · 5s 轮询<span class="tick" id="poll-tick">· 下次刷新 5s · 更新于 12:04:31</span></span>
+    </div>
+
+    <!-- 状态一句话:先给结论,再给依据;活动告警单独亮出 -->
+    <div class="status-strip" data-od-id="status-strip">
+      <span class="pill ok"><span class="d"></span>healthy</span>
+      <span class="s-text">节点自治运行正常,评分 <b>31</b>;JWT <b>29 天</b>后过期,续签链路正常;prefix 命中率 <b>71.2%</b> 高于 60% 阈值。</span>
+      <span class="s-alert"><span class="pill bad">1 活动告警</span>PeerScoreGraylist · 对端已断连</span>
+    </div>
+
+    <!-- 身份 / JWT / 关键指标 -->
+    <div class="grid g-3" data-od-id="identity">
+      <div class="card">
+        <h3>节点身份</h3>
+        <dl class="dl">
+          <dt>Peer ID</dt><dd><code>12D3KooW…b82e</code></dd>
+          <dt>能力集</dt><dd><span class="chip">edge</span> <span class="chip">l4_backhaul</span> <span class="chip">relay_provider</span></dd>
+          <dt>运行模式</dt><dd>L4 回源节点</dd>
+          <dt>区域 / 版本</dt><dd>cn-south · v0.9.4</dd>
+          <dt>Uptime</dt><dd class="num">41d 2h 17m</dd>
+          <dt>健康</dt><dd><span class="pill ok"><span class="d"></span>healthy</span></dd>
+        </dl>
+      </div>
+
+      <div class="card card-anchor" data-od-id="jwt">
+        <h3>JWT 生命线 <span class="watch">核心信号</span> <span class="hint">过期无宽限期,立即降级</span></h3>
+        <div class="jwt-count">29<small> 天 </small>06<small> 时后过期</small></div>
+        <div class="meter jwt-meter"><div class="m-top"><span>有效期已用 1 / 30 天</span><span>剩余 97%</span></div><div class="bar"><i style="width:3%"></i></div></div>
+        <dl class="dl" style="margin-top:14px;">
+          <dt>上次续签</dt><dd class="num">12:00:07 · <span class="pill ok">成功</span></dd>
+          <dt>下次续签</dt><dd class="num">12:30:07(26 分钟后)</dd>
+          <dt>续签失败</dt><dd class="num">0 次(近 24h)</dd>
+        </dl>
+      </div>
+
+      <div class="card">
+        <h3>关键指标 <span class="hint">edge_* · 实时</span></h3>
+        <dl class="dl">
+          <dt>节点评分</dt><dd class="num" style="font-weight:650;">31</dd>
+          <dt>prefix 命中率</dt><dd class="num">71.2%</dd>
+          <dt>TTFB P95</dt><dd class="num">142 ms</dd>
+          <dt>连接数</dt><dd class="num">132(入 74 / 出 58)</dd>
+          <dt>relay 中转</dt><dd class="num">4.2 GB / 24h</dd>
+        </dl>
+      </div>
+    </div>
+
+    <!-- 缓存监控 -->
+    <div class="section-h">三级缓存分区
+      <span class="hint">/v1/cache · prefix 驻留 pin,warm/cold 由 LRU 自治逐出</span>
+    </div>
+    <div class="card" data-od-id="cache">
+      <div style="display:flex;flex-direction:column;gap:16px;">
+        <div>
+          <div class="part-head"><span class="nm">prefix(NVMe)</span><span class="role">pin 驻留 · 不参与逐出</span><span class="cnt">1,204 blobs</span></div>
+          <div class="meter"><div class="m-top"><span>312 / 500 GB</span><span>62%</span></div><div class="bar"><i style="width:62%"></i></div></div>
+        </div>
+        <div>
+          <div class="part-head"><span class="nm">warm(SSD)</span><span class="role">热数据 · LRU</span><span class="cnt">3,882 blobs</span></div>
+          <div class="meter"><div class="m-top"><span>640 / 1000 GB</span><span>64%</span></div><div class="bar"><i style="width:64%"></i></div></div>
+        </div>
+        <div>
+          <div class="part-head"><span class="nm">cold(HDD)</span><span class="role">温冷兜底 · LRU</span><span class="cnt">9,430 blobs</span></div>
+          <div class="meter"><div class="m-top"><span>1.1 / 2.0 TB</span><span>55%</span></div><div class="bar"><i style="width:55%"></i></div></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid g-3 mt" data-od-id="metrics">
+      <div class="card">
+        <h3>命中率趋势 <span class="hint">edge_cache_hit_total / request_total · 24h</span></h3>
+        <div style="display:flex;flex-direction:column;gap:14px;">
+          <div>
+            <div class="spark-label"><span>prefix</span><span>71.2%</span></div>
+            <div class="spark" id="sp-prefix"></div>
+          </div>
+          <div>
+            <div class="spark-label"><span>warm</span><span>22.8%</span></div>
+            <div class="spark" id="sp-warm"></div>
+          </div>
+          <div>
+            <div class="spark-label"><span>cold / miss→回源</span><span>6.0%</span></div>
+            <div class="spark" id="sp-cold"></div>
+          </div>
+        </div>
+        <div class="ring-note">纵轴按各序列 24h 峰值归一 · 悬停查看原值</div>
+      </div>
+
+      <div class="card">
+        <h3>TTFB 分布 <span class="hint">edge_ttfb_seconds</span></h3>
+        <dl class="dl">
+          <dt>P50</dt><dd class="num">18 ms</dd>
+          <dt>P90</dt><dd class="num">96 ms</dd>
+          <dt>P95</dt><dd class="num">142 ms</dd>
+          <dt>P99</dt><dd class="num">380 ms</dd>
+        </dl>
+        <div class="ring-note">SLO 目标 P95 ≤ 200 ms · 当前达标</div>
+      </div>
+
+      <div class="card">
+        <h3>逐出活动 <span class="hint">近 1h · warm/cold 自治</span></h3>
+        <div class="tbl-wrap" style="border:0;">
+          <table class="tbl">
+            <thead><tr><th>blob</th><th>分区</th><th>原因</th></tr></thead>
+            <tbody>
+              <tr><td><code>b3f1…8c</code></td><td>warm</td><td style="font-size:12px;color:var(--muted)">LRU</td></tr>
+              <tr><td><code>9a04…e2</code></td><td>cold</td><td style="font-size:12px;color:var(--muted)">LRU</td></tr>
+              <tr><td><code>c77a…41</code></td><td>warm</td><td style="font-size:12px;color:var(--muted)">空间压力</td></tr>
+              <tr><td><code>12be…9d</code></td><td>cold</td><td style="font-size:12px;color:var(--muted)">LRU</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- 指标与告警 -->
+    <div class="section-h">指标与告警</div>
+    <div class="grid g-3">
+      <div class="card">
+        <h3>/metrics 暴露</h3>
+        <dl class="dl">
+          <dt>挂载状态</dt><dd><span class="pill ok"><span class="d"></span>已挂载</span></dd>
+          <dt>Prometheus 抓取</dt><dd class="num">正常 · 8s 前</dd>
+          <dt>暴露序列</dt><dd class="num">214(edge_* / storage_*)</dd>
+        </dl>
+        <div class="ring-note">cmd/edge-node/main.go:535 · 无需额外接线</div>
+      </div>
+
+      <div class="card" style="grid-column: span 2;" data-od-id="alerts">
+        <h3>本地告警事件 <span class="hint">节点自治产生 · 近 24h · 1 活动 / 3 已恢复</span></h3>
+        <div class="tbl-wrap" style="border:0;">
+          <table class="tbl">
+            <thead><tr><th>时间</th><th>告警</th><th>严重度</th><th>详情</th><th>状态</th></tr></thead>
+            <tbody>
+              <tr class="row-active">
+                <td class="mono" style="font-size:12px;">11:52:40</td><td><code>PeerScoreGraylist</code></td>
+                <td><span class="pill warn">warn</span></td>
+                <td style="font-size:12.5px;">对端 12D3KooW…77c1 评分 -24 ≤ -20,已断连并丢弃其热度消息</td>
+                <td><span class="pill bad"><span class="d"></span>活动</span></td>
+              </tr>
+              <tr class="group-row"><td colspan="5">已恢复 · 按时间倒序</td></tr>
+              <tr class="row-dim">
+                <td class="mono" style="font-size:12px;">09:14:02</td><td><code>LowCacheHitRate</code></td>
+                <td><span class="pill warn">warn</span></td>
+                <td style="font-size:12.5px;">prefix 命中率 15 分钟均值 58% &lt; 阈值 60%,已自动恢复</td>
+                <td><span class="pill neutral"><span class="d"></span>已恢复</span></td>
+              </tr>
+              <tr class="row-dim">
+                <td class="mono" style="font-size:12px;">06:31:55</td><td><code>HighBackhaulFailureRate</code></td>
+                <td><span class="pill warn">warn</span></td>
+                <td style="font-size:12.5px;">baidu:mw_bak_01 回源失败率 5 分钟 8.2%,熔断器转 HalfOpen</td>
+                <td><span class="pill neutral"><span class="d"></span>已恢复</span></td>
+              </tr>
+              <tr class="row-dim">
+                <td class="mono" style="font-size:12px;">03:02:11</td><td><code>SchedulerPartition</code></td>
+                <td><span class="pill bad">critical</span></td>
+                <td style="font-size:12.5px;">JWT 续签连续失败 3 次(控制面不可达),第 4 次重试成功</td>
+                <td><span class="pill neutral"><span class="d"></span>已恢复</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- 操作 -->
+    <div class="section-h">本地操作
+      <span class="hint">节点自治运行 — UI 仅暴露只读监控与少数安全操作</span>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn" id="op-reload">重载配置</button>
+      <button class="btn danger" id="op-flush">清空 warm / cold 缓存</button>
+    </div>
+    <p style="font-size:11.5px;color:var(--muted);margin-top:10px;">
+      缓存逐出、Pin 执行、回源选账号均为节点本地决策,不提供"强制"类操作;prefix 分区由 pin 驻留,不可从 UI 清空。
+    </p>
+  </main>
+</div>
+
+<script src="assets/app.js"></script>
+<script>
+  MW.injectSidebar('edge-node');
+  MW.injectChrome();
+
+  // 命中率趋势(24h,12 个 2h 桶)— 各序列按自身峰值归一,原值放 title 悬停
+  function spark(id, vals, hotFrom) {
+    const el = document.getElementById(id);
+    const max = Math.max(...vals);
+    el.innerHTML = vals.map((v, i) => {
+      const h = Math.max(6, Math.round(v / max * 100));
+      return `<i class="${i >= hotFrom ? 'hot' : ''}" style="height:${h}%" title="${v}%"></i>`;
+    }).join('');
+  }
+  spark('sp-prefix', [62, 66, 64, 70, 68, 72, 75, 71, 69, 74, 71, 72], 9);
+  spark('sp-warm',   [18, 20, 24, 22, 26, 21, 19, 23, 25, 22, 24, 23], 9);
+  spark('sp-cold',   [4, 5, 3, 6, 5, 7, 6, 4, 5, 6, 5, 6], 12);
+
+  // 轮询活体感:倒计时 + 更新时刻(只有时钟真实走动,数据本身为快照)
+  (function () {
+    const tick = document.getElementById('poll-tick');
+    let left = 5;
+    const clock = () => new Date().toTimeString().slice(0, 8);
+    setInterval(() => {
+      left -= 1;
+      if (left <= 0) left = 5;
+      tick.textContent = `· 下次刷新 ${left}s · 更新于 ${left === 5 ? clock() : last}`;
+      if (left === 5) last = clock();
+    }, 1000);
+    let last = '12:04:31';
+  })();
+
+  document.getElementById('op-reload').onclick = () =>
+    MW.toast('配置重载已触发', '节点将在数秒内应用新配置(本地即时生效)');
+
+  document.getElementById('op-flush').onclick = () => MW.confirmDanger({
+    title: '清空 warm / cold 缓存',
+    body: '清空后 1,740 GB 缓存内容需重新回源拉取,短时间内回源带宽与 TTFB 将显著上升;prefix(pin 驻留)不受影响。仅在空间压力或数据异常时使用。',
+    phrase: '清空缓存',
+    actionLabel: '确认清空',
+    onConfirm: () => MW.toast('缓存清空已触发', '节点开始异步逐出 warm / cold 分区内容'),
+  });
+</script>
+</body>
+</html>

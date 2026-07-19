@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>网络与回源 · MediaWorker 节点本地监控</title>
+<link rel="stylesheet" href="assets/app.css" />
+<style>
+  .ring { position: relative; height: 10px; border-radius: 999px;
+    background: oklch(94% 0.01 250); border: 1px solid var(--border); margin-top: 18px; }
+  .ring .me { position: absolute; top: -5px; width: 2px; height: 18px; background: var(--fg); }
+  .ring .peer-tick { position: absolute; top: 2px; width: 2px; height: 6px; background: var(--muted); opacity: .6; }
+  .ring-scale { display: flex; justify-content: space-between; font: 10.5px var(--font-mono); color: var(--muted); margin-top: 6px; }
+  .addr { font: 12px var(--font-mono); word-break: break-all; line-height: 1.7; }
+
+  /* — CD 精修:状态条 / 锚点卡 / 行分层 / 轮询活体感(页面级,不动 app.css)— */
+  .status-strip {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface); padding: 10px 14px; margin-bottom: 14px;
+    font-size: 13px;
+  }
+  .status-strip .s-text b { font-weight: 650; font-variant-numeric: tabular-nums; }
+  .status-strip .s-alert { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font: 12px var(--font-mono); color: var(--muted); }
+  .card-anchor { border-color: oklch(72% 0.012 250); }
+  .card-anchor h3 .watch {
+    font: 600 10px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px;
+  }
+  tr.row-active td { background: var(--danger-bg); }
+  tr.row-warn td { background: var(--warn-bg); }
+  tr.row-dim td { opacity: 0.6; }
+  @keyframes fd-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .freshness .dot { animation: fd-pulse 2s ease-in-out infinite; }
+  .freshness .tick { font: 11px var(--font-mono); color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar"></aside>
+  <main class="main">
+    <div class="topbar">
+      <button class="menu-btn">☰</button>
+      <h1>网络与回源</h1>
+      <span class="crumb">12D3KooW…b82e · /v1/network + /v1/backhaul</span>
+      <span class="spacer"></span>
+      <span class="freshness"><span class="dot"></span>libp2p host · 5s 轮询<span class="tick" id="poll-tick">· 下次刷新 5s · 更新于 12:04:31</span></span>
+    </div>
+
+    <!-- 状态一句话:先给结论,再给依据;待关注项单独亮出 -->
+    <div class="status-strip" data-od-id="status-strip">
+      <span class="pill ok"><span class="d"></span>链路健康</span>
+      <span class="s-text">连接 <b>132</b>(入 74 / 出 58),DHT 已接入,AutoNAT <b>Public</b>;回源成功率 <b>99.1%</b>,LinkPool 命中 <b>86.4%</b>。</span>
+      <span class="s-alert"><span class="pill warn">2 待关注</span>灰名单 1 · 账号 degraded 1</span>
+    </div>
+
+    <!-- 网络状态 -->
+    <div class="grid g-3" data-od-id="net-status">
+      <div class="card">
+        <h3>连接与发现</h3>
+        <dl class="dl">
+          <dt>连接数</dt><dd class="num">132(入 74 / 出 58)</dd>
+          <dt>DHT 发现</dt><dd><span class="pill ok"><span class="d"></span>已接入</span> <span class="num" style="font-size:12.5px;">routing table 182</span></dd>
+          <dt>GossipSub 热度</dt><dd><span class="pill ok"><span class="d"></span>已订阅</span></dd>
+          <dt>协议版本</dt><dd class="num">mediaworker/0.9 · libp2p</dd>
+        </dl>
+      </div>
+
+      <div class="card card-anchor" data-od-id="nat">
+        <h3>NAT 与中转 <span class="watch">核心信号</span> <span class="hint">AutoNAT · relay · DCUtR</span></h3>
+        <dl class="dl">
+          <dt>AutoNAT 可达性</dt><dd><span class="pill ok"><span class="d"></span>Public</span></dd>
+          <dt>relay 电路</dt><dd class="num">2 条(备用)</dd>
+          <dt>DCUtR 打孔</dt><dd class="num">成功率 78%(近 1h 41/53)</dd>
+          <dt>relay 中转流量</dt><dd class="num">4.2 GB / 24h</dd>
+        </dl>
+        <div style="font:11px var(--font-mono);color:var(--muted);margin-top:10px;">edge_relay_bytes_total · 中转流量高通常意味着 NAT 配置异常</div>
+      </div>
+
+      <div class="card">
+        <h3>监听地址</h3>
+        <div class="addr">
+          /ip4/203.0.113.24/tcp/4001/p2p/12D3KooW…b82e<br/>
+          /ip4/10.8.0.7/tcp/4001/p2p/12D3KooW…b82e<br/>
+          /p2p-circuit/p2p/12D3KooW…b82e
+        </div>
+      </div>
+    </div>
+
+    <!-- 哈希环位置 -->
+    <div class="section-h">一致性哈希环位置
+      <span class="hint">决定本节点优先缓存哪些 prefix 区间</span>
+    </div>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;">
+        <span style="font-size:13px;font-weight:600;">本节点 <code>0x9f2c…</code> · 环上 62.1%</span>
+        <span style="font-size:12px;color:var(--muted);">负责区间与相邻 3 节点保持副本重叠</span>
+      </div>
+      <div class="ring">
+        <i class="peer-tick" style="left:14%"></i>
+        <i class="peer-tick" style="left:31%"></i>
+        <i class="peer-tick" style="left:47%"></i>
+        <i class="me" style="left:62.1%"></i>
+        <i class="peer-tick" style="left:78%"></i>
+        <i class="peer-tick" style="left:90%"></i>
+      </div>
+      <div class="ring-scale"><span>0x0000</span><span>0x4000</span><span>0x8000</span><span>0xc000</span><span>0xffff</span></div>
+    </div>
+
+    <!-- Peer 列表 -->
+    <div class="section-h">Peer 列表
+      <span class="hint">peerstore(BadgerDB) · 评分 edge_peer_score</span>
+    </div>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>Peer ID</th><th>能力</th><th class="r">评分</th><th>stale</th><th>last_seen</th></tr></thead>
+        <tbody id="peer-body"></tbody>
+      </table>
+    </div>
+
+    <div class="notice mt">
+      <div><b>评分 ≤ -20 即进灰名单:</b>GossipSub 热度消息被丢弃、连接被拒。若本节点疑似被孤立(连接数骤降、热度长期不更新),先查自身评分与 AutoNAT 可达性,再查 relay 中转占比。</div>
+    </div>
+
+    <!-- L4 回源 -->
+    <div class="section-h">L4 回源
+      <span class="hint">能力驱动显隐 · 本节点 l4_backhaul=true</span>
+    </div>
+    <div class="grid g-4">
+      <div class="card stat"><span class="label">回源带宽</span><span class="value">214<small> Mbps</small></span><span class="target">容量 500 Mbps · 43%</span></div>
+      <div class="card stat ok"><span class="label">回源成功率</span><span class="value">99.1%</span><span class="target">storage_access_backhaul · 24h</span></div>
+      <div class="card stat"><span class="label">回源延迟 P95</span><span class="value">1.8<small> s</small></span><span class="target">含云盘 API 往返</span></div>
+      <div class="card stat ok"><span class="label">LinkPool 命中率</span><span class="value">86.4%</span><span class="target">storage_linkpool_* · 链接复用</span></div>
+    </div>
+
+    <div class="card mt">
+      <h3>本地账号池 <span class="hint">节点本地数据面 · 与控制面视图同源但为实时值</span></h3>
+      <div class="tbl-wrap" style="border:0;">
+        <table class="tbl">
+          <thead><tr><th>账号</th><th>健康</th><th>熔断器</th><th>限流占用</th><th class="r">并发</th></tr></thead>
+          <tbody id="acct-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="notice planned mt">
+      <div><b>非 L4 节点不显示本模块。</b>非 L4 节点经同区 L4 回退的流式链路(<code>L4Fetcher</code>)尚未实现,属规划功能,落地前本页不展示任何回退入口;回源调度(选账号、熔断)为节点本地决策,UI 不提供强制开关。</div>
+    </div>
+  </main>
+</div>
+
+<script src="assets/app.js"></script>
+<script>
+  MW.injectSidebar('edge-network');
+  MW.injectChrome();
+
+  const peers = [
+    { id:'12D3KooW…f3a9', caps:['edge','l4_backhaul'], score:12,  stale:false, seen:'4s 前'   },
+    { id:'12D3KooW…a3d8', caps:['edge','l4_backhaul'], score:22,  stale:false, seen:'2s 前'   },
+    { id:'12D3KooW…e6aa', caps:['edge','relay_provider'], score:17, stale:false, seen:'7s 前' },
+    { id:'12D3KooW…9c04', caps:['edge'],               score:8,   stale:false, seen:'11s 前'  },
+    { id:'12D3KooW…d517', caps:['edge','peer_icp'],    score:4,   stale:true,  seen:'3 分钟前' },
+    { id:'12D3KooW…m2c8', caps:['edge'],               score:-6,  stale:false, seen:'19s 前'  },
+    { id:'12D3KooW…77c1', caps:['edge','peer_icp'],    score:-24, stale:true,  seen:'26 分钟前' },
+    { id:'12D3KooW…qx55', caps:['relay_provider'],     score:9,   stale:false, seen:'31s 前'  },
+  ];
+  // 行分层:灰名单(≤ -20)置顶并 danger 底色,stale 降透明度,其余按评分降序
+  const ordered = peers.slice().sort((a, b) => {
+    const ga = a.score <= -20 ? 0 : 1, gb = b.score <= -20 ? 0 : 1;
+    return ga - gb || b.score - a.score;
+  });
+  document.getElementById('peer-body').innerHTML = ordered.map(p => `
+    <tr${p.score <= -20 ? ' class="row-active"' : p.stale ? ' class="row-dim"' : ''}>
+      <td><code>${p.id}</code></td>
+      <td>${p.caps.map(c => `<span class="chip">${c}</span>`).join(' ')}</td>
+      <td class="r num" style="font-weight:${p.score<=-20?'650':'400'};color:${p.score<=-20?'var(--danger)':'inherit'}">${p.score}${p.score<=-20?' · 灰名单':''}</td>
+      <td>${p.stale ? '<span class="pill warn">stale</span>' : '<span style="color:var(--muted);font-size:12px;">—</span>'}</td>
+      <td class="mono" style="font-size:12px;color:var(--muted)">${p.seen}</td>
+    </tr>`).join('');
+
+  const circPill = c => c==='Closed' ? '<span class="pill ok">Closed</span>'
+    : c==='HalfOpen' ? '<span class="pill warn">HalfOpen</span>'
+    : '<span class="pill bad">Open</span>';
+  const accts = [
+    { id:'115:mw_store_01',  st:'healthy',  circ:'Closed',   qps:[18,40], conc:[6,12]  },
+    { id:'115:mw_store_02',  st:'healthy',  circ:'Closed',   qps:[11,40], conc:[4,12]  },
+    { id:'baidu:mw_bak_01',  st:'degraded', circ:'HalfOpen', qps:[3,20],  conc:[1,8]   },
+  ];
+  const stPill = s => s==='healthy' ? '<span class="pill ok"><span class="d"></span>healthy</span>'
+    : '<span class="pill warn"><span class="d"></span>degraded</span>';
+  document.getElementById('acct-body').innerHTML = accts.map(a => `
+    <tr${a.st !== 'healthy' ? ' class="row-warn"' : ''}>
+      <td><code>${a.id}</code></td>
+      <td>${stPill(a.st)}</td>
+      <td>${circPill(a.circ)}</td>
+      <td class="num" style="font-size:12.5px;">${a.qps[0]} / ${a.qps[1]} QPS</td>
+      <td class="r num">${a.conc[0]} / ${a.conc[1]}</td>
+    </tr>`).join('');
+
+  // 轮询活体感:倒计时 + 更新时刻(只有时钟真实走动,数据本身为快照)
+  (function () {
+    const tick = document.getElementById('poll-tick');
+    let left = 5;
+    let last = '12:04:31';
+    const clock = () => new Date().toTimeString().slice(0, 8);
+    setInterval(() => {
+      left -= 1;
+      if (left <= 0) left = 5;
+      tick.textContent = `· 下次刷新 ${left}s · 更新于 ${left === 5 ? clock() : last}`;
+      if (left === 5) last = clock();
+    }, 1000);
+  })();
+</script>
+</body>
+</html>

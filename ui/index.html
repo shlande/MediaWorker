@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>MediaWorker 控制面 · 管理门户</title>
+<link rel="stylesheet" href="assets/app.css" />
+<style>
+  .hero {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    padding: 36px 40px;
+    margin-bottom: 22px;
+  }
+  .hero .kicker {
+    font: 600 11px var(--font-mono);
+    letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--muted); margin-bottom: 12px;
+  }
+  .hero h1 { font-size: 28px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 10px; }
+  .hero p { color: var(--muted); font-size: 14px; max-width: 68ch; }
+  .hero .flow {
+    margin-top: 18px; padding: 12px 16px;
+    background: oklch(98% 0.004 250);
+    border: 1px solid var(--border); border-radius: var(--radius);
+    font: 12px var(--font-mono); color: var(--muted);
+    overflow-x: auto; white-space: nowrap;
+  }
+  .hero .flow b { color: var(--fg); font-weight: 600; }
+  .mod {
+    display: flex; flex-direction: column; gap: 8px;
+    border: 1px solid var(--border); border-radius: 8px;
+    background: var(--surface); padding: 18px 20px;
+    text-decoration: none; color: var(--fg);
+    transition: border-color 0.12s, transform 0.12s;
+  }
+  .mod:hover { border-color: oklch(70% 0.08 145); transform: translateY(-1px); }
+  .mod .m-top { display: flex; align-items: center; gap: 10px; }
+  .mod .m-top svg { width: 17px; height: 17px; stroke-width: 1.7; color: oklch(45% 0.1 145); }
+  .mod .m-top .t { font-weight: 650; font-size: 14.5px; letter-spacing: -0.01em; }
+  .mod .m-top .api { margin-left: auto; font: 10.5px var(--font-mono); color: var(--muted); }
+  .mod p { font-size: 12.5px; color: var(--muted); line-height: 1.6; }
+  .mod .m-stats { display: flex; gap: 14px; margin-top: 4px; font: 11px var(--font-mono); color: var(--muted); }
+  .mod .m-stats b { color: var(--fg); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar"></aside>
+  <main class="main">
+    <div class="hero">
+      <div class="kicker">MediaWorker · Control Plane Portal</div>
+      <h1>私有 P2P 媒体分发网络 — 管理门户</h1>
+      <p>面向平台管理员的统一控制面:节点、云盘账号、Pin 编排、策略配额与审计,一个入口管整张分发网络。所有状态为最终一致语义,管理操作经控制通道下发,传播窗口 6–10 秒。</p>
+      <div class="flow">
+        <b>数据流</b>&nbsp; 用户上传 → ingest-worker 转码/冗余 K=2 → PG 元数据 → CONTENT_INGESTED → PinOrchestrator 计算 PinPlan → 节点 prefix 缓存 → 终端经 edge-node 拉流
+      </div>
+    </div>
+
+    <div class="grid g-3">
+      <a class="mod" href="dashboard.html">
+        <div class="m-top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M3 13h4v8H3zM9 3h4v18H9zM15 8h4v13h-4z"/></svg><span class="t">总览仪表盘</span><span class="api">/overview</span></div>
+        <p>SLO 指标卡(TTFB P95 / 命中率 / 回源成功率 / 账号池健康)、在线节点与能力分布、当前告警、24h 热门内容。</p>
+        <div class="m-stats"><span><b>128</b> 在线节点</span><span><b>4</b> 条告警</span></div>
+      </a>
+      <a class="mod" href="nodes.html">
+        <div class="m-top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M12 2l8 4.5v9L12 20l-8-4.5v-9L12 2zM12 11l8-4.5M12 11v9M12 11L4 6.5"/></svg><span class="t">节点管理</span><span class="api">/nodes</span></div>
+        <p>节点能力、三级缓存空间、评分与灰名单;L4 白名单管理(续签生效);吊销链路规划中(G4)。</p>
+        <div class="m-stats"><span><b>23</b> L4 回源</span><span><b>5</b> 灰名单</span></div>
+      </a>
+      <a class="mod" href="accounts.html">
+        <div class="m-top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M4 17a4 4 0 010-8 5.5 5.5 0 0110.7-1.5A4.5 4.5 0 0119 16.5V17H4z"/></svg><span class="t">云盘账号</span><span class="api">/accounts</span></div>
+        <p>五家厂商账号的健康、熔断三态、限流与凭据轮换(掩码录入);VendorProfile 权重配置。</p>
+        <div class="m-stats"><span><b>13</b> 账号</span><span><b>2</b> banned</span></div>
+      </a>
+      <a class="mod" href="content.html">
+        <div class="m-top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M4 4h16v16H4zM4 9h16M9 9v11"/></svg><span class="t">内容与 Pin 编排</span><span class="api">/contents</span></div>
+        <p>按热度排序的内容库、blob 编排树与副本健康(2/2 · 1/2 待补齐)、手动 pin/unpin 定向下发。</p>
+        <div class="m-stats"><span>DASH 策略</span><span>init 恒 pin</span></div>
+      </a>
+      <a class="mod" href="policy.html">
+        <div class="m-top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M12 3v18M5 7l7-4 7 4M7 21h10M9 12h6"/></svg><span class="t">策略与配额</span><span class="api">/backends</span></div>
+        <p>Backend 用量快照与阈值(已生效);权重为规划值(G5 未接线);配额 baseShare 与借用记录。</p>
+        <div class="m-stats"><span>globalQPS <b>200</b></span><span>用量 <b>61%</b></span></div>
+      </a>
+      <a class="mod" href="audit.html">
+        <div class="m-top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M8 3h8l4 4v14H8zM8 3v18M12 12l2 2 4-4"/></svg><span class="t">审计日志</span><span class="api">/audit</span></div>
+        <p>JWT 签发(JSON-lines)、账号变更、手动干预(pin / 熔断 / 封禁 / 白名单)全量留痕,可筛选导出。</p>
+        <div class="m-stats"><span>四类事件</span><span>JSON-lines</span></div>
+      </a>
+    </div>
+
+    <div class="section-h" style="margin-top:28px;">节点本地监控 · Edge-Node(界面三)
+      <span class="hint">直连节点 status API(/v1/*)· 只读监控为主,操作面刻意收窄</span>
+    </div>
+    <div class="grid g-3">
+      <a class="mod" href="edge-node.html">
+        <div class="m-top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M4 5h16v10H4zM2 19h20M9 15v4M15 15v4"/></svg><span class="t">节点概览与缓存</span><span class="api">/v1/status · /v1/cache</span></div>
+        <p>节点身份与能力、JWT 生命线(续签/过期倒计时)、三级缓存分区用量、命中率与 TTFB、本地告警与 /metrics 暴露。</p>
+        <div class="m-stats"><span>JWT <b>29d</b> 后过期</span><span>命中率 <b>71.2%</b></span></div>
+      </a>
+      <a class="mod" href="edge-pins.html">
+        <div class="m-top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M9 4h6l-1 7 3 3v2H7v-2l3-3-1-7zM12 16v5"/></svg><span class="t">Pin 管理</span><span class="api">/v1/pins</span></div>
+        <p>本节点 pin 清单与 ready 状态(就绪 / 拉取中 / 失败)、失败条目重试、PinPlan 下发历史(seq / 指令 / 应用状态)。</p>
+        <div class="m-stats"><span><b>142</b> pin</span><span><b>1</b> 失败待重试</span></div>
+      </a>
+      <a class="mod" href="edge-network.html">
+        <div class="m-top"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round"><path d="M5 12a3 3 0 106 0 3 3 0 00-6 0zM15 5a3 3 0 106 0 3 3 0 00-6 0zM15 19a3 3 0 106 0 3 3 0 00-6 0zM10.7 10.8l3-2.6M10.7 13.2l3 2.6"/></svg><span class="t">网络与回源</span><span class="api">/v1/network · /v1/backhaul</span></div>
+        <p>NAT / relay / DCUtR 与 DHT 发现、peer 评分与灰名单、哈希环位置;L4 账号池、熔断器、LinkPool 与回源带宽(能力驱动显隐)。</p>
+        <div class="m-stats"><span><b>132</b> peers</span><span>L4 · <b>43%</b> 带宽</span></div>
+      </a>
+    </div>
+
+    <div class="notice mt" style="margin-top:20px;">
+      <div><b>范围说明。</b>「界面二 · 控制面管理」与「界面三 · 节点本地监控」已纳入本门户:控制面数据经 admin API 聚合(最终一致,6–10s 传播),节点本地数据直连当前节点 status API(实时,5s 轮询)。内容上传(界面一)为后续迭代;内容试播依赖「内容访问解析服务」立项(缺口 G1)。</div>
+    </div>
+  </main>
+</div>
+
+<script src="assets/app.js"></script>
+<script>
+  MW.injectSidebar('home');
+  MW.injectChrome();
+</script>
+</body>
+</html>

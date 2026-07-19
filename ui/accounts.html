@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>云盘账号 · MediaWorker 控制面</title>
+<link rel="stylesheet" href="assets/app.css" />
+<style>
+  /* 精修模板:状态一句话 / 锚点卡 / 行分层 / 轮询活体 — 与节点本地页同一语言 */
+  .status-strip {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface); padding: 10px 14px; margin-bottom: 14px;
+    font-size: 13px;
+  }
+  .status-strip .s-text b { font-weight: 650; font-variant-numeric: tabular-nums; }
+  .status-strip .s-alert { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font: 12px var(--font-mono); color: var(--muted); }
+  .card-anchor { border-color: oklch(72% 0.012 250); }
+  .card-anchor .watch {
+    font: 600 10px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; margin-left: 6px;
+  }
+  tr.row-bad td { background: var(--danger-bg); }
+  tr.row-warn td { background: var(--warn-bg); }
+  tr.row-dim td { opacity: 0.6; }
+  @keyframes fd-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .freshness .dot { animation: fd-pulse 2s ease-in-out infinite; }
+  .freshness .tick { font: 11px var(--font-mono); color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar"></aside>
+  <main class="main">
+    <div class="topbar">
+      <button class="menu-btn">☰</button>
+      <h1>云盘账号管理</h1>
+      <span class="crumb">/v1/admin/accounts</span>
+      <span class="spacer"></span>
+      <span class="freshness"><span class="dot"></span>健康检查 · 30s 周期<span class="tick" id="poll-tick">· 下次刷新 30s · 更新于 12:04:31</span></span>
+      <button class="btn primary" id="add-acct">+ 添加账号</button>
+    </div>
+
+    <!-- 状态一句话:健康率结论先行,banned/degraded 单独亮出 -->
+    <div class="status-strip" data-od-id="status-strip">
+      <span class="pill warn"><span class="d"></span>健康率 76.9% · 低于 80% SLO</span>
+      <span class="s-text">13 个注册账号:<b>10</b> healthy / <b>1</b> degraded(baidu 15m 错误率 2.8%,HalfOpen 观察中)/ <b>2</b> banned(quark 风控,ban_until 07-20 / 07-21)。</span>
+      <span class="s-alert"><span class="pill bad">3 需处理</span>2 banned · 副本不可读 · 1 degraded</span>
+    </div>
+
+    <div class="grid g-4" style="margin-bottom:14px;">
+      <div class="card stat"><span class="label">注册账号</span><span class="value num">13</span><span class="target">cloud_account 表</span></div>
+      <div class="card stat ok"><span class="label">healthy</span><span class="value num">10</span><span class="target">account_health.state</span></div>
+      <div class="card stat warn"><span class="label">degraded</span><span class="value num">1</span><span class="target">baidu · 错误率升高</span></div>
+      <div class="card stat bad card-anchor"><span class="label">banned <span class="watch">需处理</span></span><span class="value num">2</span><span class="target">quark · 含 ban_until · 副本不可读</span></div>
+    </div>
+
+    <div class="toolbar">
+      <input class="input search" id="q" placeholder="搜索 account_id / vendor…" />
+      <select class="input" id="f-vendor">
+        <option value="">全部厂商</option><option>115</option><option>baidu</option><option>quark</option><option>onedrive</option><option>aliyundrive</option>
+      </select>
+      <select class="input" id="f-state">
+        <option value="">全部健康态</option><option>healthy</option><option>degraded</option><option>banned</option>
+      </select>
+    </div>
+
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead>
+          <tr>
+            <th>厂商</th><th>Account ID</th><th>启用</th><th>健康状态</th><th>熔断器</th>
+            <th>限流(QPS/Burst/并发)</th><th class="r">存储用量</th><th class="r">操作</th>
+          </tr>
+        </thead>
+        <tbody id="acct-body"></tbody>
+      </table>
+    </div>
+
+    <!-- VendorProfile -->
+    <div class="section-h">VendorProfile 厂商画像
+      <span class="hint">weight / base_latency_ms / bandwidth_mbps · 当前生效值</span>
+      <span class="spacer"></span>
+      <button class="btn sm" id="vp-save">保存修改</button>
+    </div>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>Vendor</th><th class="r">weight</th><th class="r">base_latency_ms</th><th class="r">bandwidth_mbps</th><th>说明</th></tr></thead>
+        <tbody id="vp-body"></tbody>
+      </table>
+    </div>
+
+    <div class="notice mt">
+      <div>健康/熔断状态为<b>最终一致</b>:手动熔断、解禁、凭据轮换经控制通道 <code>CREDENTIAL_UPDATE</code> / 事件广播下发,传播窗口 6–10s。下发后界面显示"待生效",不假装即时。</div>
+    </div>
+  </main>
+</div>
+
+<!-- 编辑抽屉 -->
+<div class="drawer" id="acct-drawer">
+  <div class="d-head">
+    <div>
+      <h2 id="ad-title">编辑账号</h2>
+      <div class="sub mono" id="ad-id"></div>
+    </div>
+    <button class="d-close" onclick="MW.closeAll()">✕</button>
+  </div>
+  <div class="d-body">
+    <div class="card">
+      <h3>基本信息</h3>
+      <div class="form-row">
+        <div class="field"><label>厂商</label>
+          <select class="input" id="ad-vendor"><option>115</option><option>baidu</option><option>quark</option><option>onedrive</option><option>aliyundrive</option></select>
+        </div>
+        <div class="field"><label>Account ID</label><input class="input mono" id="ad-acct" /></div>
+      </div>
+      <div class="field">
+        <label>凭据(JSON)</label>
+        <textarea class="input mono" id="ad-cred" rows="4" placeholder='留空 = 不修改。当前值已掩码:{"cookies":"••••••","refresh_token":"••••••"}'></textarea>
+        <span class="help">凭据为敏感数据,默认只显示掩码;覆盖写入会触发 CREDENTIAL_UPDATE 广播并写审计。</span>
+      </div>
+    </div>
+
+    <div class="card mt">
+      <h3>限流配置</h3>
+      <div class="form-row">
+        <div class="field"><label>QPS</label><input class="input num" id="ad-qps" /></div>
+        <div class="field"><label>Burst</label><input class="input num" id="ad-burst" /></div>
+      </div>
+      <div class="field" style="width:50%;"><label>并发数</label><input class="input num" id="ad-conc" /></div>
+    </div>
+
+    <div class="card mt">
+      <h3>运行状态(只读)</h3>
+      <dl class="dl" id="ad-status"></dl>
+    </div>
+
+    <div class="section-h">操作</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn primary" id="ad-save">保存并下发</button>
+      <button class="btn" id="ad-rotate">轮换凭据</button>
+      <button class="btn" id="ad-circuit">手动熔断</button>
+      <button class="btn danger" id="ad-ban">手动封禁</button>
+    </div>
+    <p style="font-size:11.5px;color:var(--muted);margin-top:10px;">
+      封禁 / 熔断为危险操作,需二次确认并写审计日志;解封与解禁在确认后同样走 6–10s 传播。
+    </p>
+  </div>
+</div>
+
+<script src="assets/app.js"></script>
+<script>
+  MW.injectSidebar('accounts');
+  MW.injectChrome();
+
+  const accts = [
+    { v:'115',         id:'mw_store_01', on:true,  st:'healthy',  circ:'Closed',   qps:[20,40,8],  use:'4.2 TB', err:'—' },
+    { v:'115',         id:'mw_store_02', on:true,  st:'healthy',  circ:'Closed',   qps:[20,40,8],  use:'3.8 TB', err:'—' },
+    { v:'baidu',       id:'mw_bak_01',   on:true,  st:'degraded', circ:'HalfOpen', qps:[10,20,4],  use:'2.1 TB', err:'15m 错误率 2.8%,观察中' },
+    { v:'baidu',       id:'mw_bak_02',   on:true,  st:'healthy',  circ:'Closed',   qps:[10,20,4],  use:'1.9 TB', err:'—' },
+    { v:'quark',       id:'mw_qk_01',    on:false, st:'banned',   circ:'Open',     qps:[5,10,2],   use:'0.9 TB', err:'ban_until 2026-07-21 09:00 · 风控触发' },
+    { v:'quark',       id:'mw_qk_02',    on:false, st:'banned',   circ:'Open',     qps:[5,10,2],   use:'0.7 TB', err:'ban_until 2026-07-20 18:30 · 风控触发' },
+    { v:'onedrive',    id:'mw_od_01',    on:true,  st:'healthy',  circ:'Closed',   qps:[15,30,6],  use:'2.6 TB', err:'—' },
+    { v:'aliyundrive', id:'mw_ali_01',   on:true,  st:'healthy',  circ:'Closed',   qps:[15,30,6],  use:'3.1 TB', err:'—' },
+  ];
+
+  const healthPill = s => s==='healthy' ? '<span class="pill ok"><span class="d"></span>healthy</span>'
+    : s==='degraded' ? '<span class="pill warn"><span class="d"></span>degraded</span>'
+    : '<span class="pill bad"><span class="d"></span>banned</span>';
+  const circPill = c => c==='Closed' ? '<span class="pill ok">Closed</span>'
+    : c==='HalfOpen' ? '<span class="pill warn">HalfOpen</span>'
+    : '<span class="pill bad">Open</span>';
+
+  function render() {
+    const q = document.getElementById('q').value.trim().toLowerCase();
+    const fv = document.getElementById('f-vendor').value;
+    const fs = document.getElementById('f-state').value;
+    const rows = accts.filter(a =>
+      (!q || (a.v + a.id).toLowerCase().includes(q)) && (!fv || a.v === fv) && (!fs || a.st === fs));
+    const rank = { banned: 0, degraded: 1, healthy: 2 };
+    rows.sort((a, b) => rank[a.st] - rank[b.st]);
+    const rowCls = a => a.st === 'banned' ? 'clickable row-bad' : a.st === 'degraded' ? 'clickable row-warn' : 'clickable';
+    document.getElementById('acct-body').innerHTML = rows.map(a => `
+      <tr class="${rowCls(a)}" data-i="${accts.indexOf(a)}">
+        <td><span class="chip">${a.v}</span></td>
+        <td><code>${a.id}</code></td>
+        <td><label class="switch" onclick="event.stopPropagation()"><input type="checkbox" ${a.on?'checked':''} data-toggle="${accts.indexOf(a)}"><span class="track"></span></label></td>
+        <td>${healthPill(a.st)}<div style="font-size:11px;color:var(--muted);margin-top:3px;max-width:220px">${a.err}</div></td>
+        <td>${circPill(a.circ)}</td>
+        <td class="mono" style="font-size:12px">${a.qps.join(' / ')}</td>
+        <td class="r num">${a.use}</td>
+        <td class="r"><button class="btn sm ghost" data-i="${accts.indexOf(a)}">编辑</button></td>
+      </tr>`).join('');
+    document.querySelectorAll('#acct-body tr').forEach(tr =>
+      tr.addEventListener('click', () => openAcct(+tr.dataset.i)));
+    document.querySelectorAll('[data-toggle]').forEach(sw => sw.addEventListener('change', e => {
+      const a = accts[+e.target.dataset.toggle];
+      MW.dispatched(`${a.id} ${e.target.checked ? '启用' : '禁用'}`);
+    }));
+  }
+
+  function openAcct(i) {
+    const a = accts[i];
+    document.getElementById('ad-id').textContent = `${a.v}:${a.id}`;
+    document.getElementById('ad-vendor').value = a.v;
+    document.getElementById('ad-acct').value = a.id;
+    document.getElementById('ad-qps').value = a.qps[0];
+    document.getElementById('ad-burst').value = a.qps[1];
+    document.getElementById('ad-conc').value = a.qps[2];
+    document.getElementById('ad-cred').value = '';
+    document.getElementById('ad-status').innerHTML = `
+      <dt>健康状态</dt><dd>${healthPill(a.st)}</dd>
+      <dt>熔断器</dt><dd>${circPill(a.circ)}</dd>
+      <dt>最近错误</dt><dd style="font-size:12.5px">${a.err}</dd>
+      <dt>存储用量</dt><dd class="num">${a.use}</dd>
+      <dt>延迟(基线/实测)</dt><dd class="num">${({ '115':320, baidu:410, quark:520, onedrive:380, aliyundrive:300 })[a.v]} ms / ${({ '115':342, baidu:588, quark:0, onedrive:361, aliyundrive:298 })[a.v] || '—'} ms</dd>`;
+    document.getElementById('ad-save').onclick = () => { MW.closeAll(); MW.dispatched('账号配置更新'); };
+    document.getElementById('ad-rotate').onclick = () => MW.confirmDanger({
+      title:'轮换凭据', body:`将向全节点广播 CREDENTIAL_UPDATE,旧凭据在快照周期后失效。确认轮换 ${a.v}:${a.id} 的凭据?`,
+      phrase:'轮换凭据', actionLabel:'确认轮换', onConfirm:()=>MW.dispatched('凭据轮换')});
+    document.getElementById('ad-circuit').onclick = () => MW.confirmDanger({
+      title:'手动熔断(ForceOpen)', body:`熔断后该账号立即停止参与回源调度,恢复需手动 ForceClose。确认熔断 ${a.v}:${a.id}?`,
+      phrase:'手动熔断', actionLabel:'确认熔断', onConfirm:()=>MW.dispatched('熔断器 ForceOpen')});
+    document.getElementById('ad-ban').onclick = () => MW.confirmDanger({
+      title:'手动封禁', body:`MarkBanned 会将账号置为 banned 并强制开熔断,影响所有引用该账号副本的内容可读性。确认封禁 ${a.v}:${a.id}?`,
+      phrase:'确认封禁', actionLabel:'确认封禁', onConfirm:()=>MW.dispatched('手动封禁')});
+    MW.openDrawer('acct-drawer');
+  }
+
+  document.getElementById('add-acct').onclick = () => openAcct(0);
+
+  // VendorProfile — 需求文档 §5.1 默认值
+  const vp = [
+    ['115',         3.0, 320, 80,  '默认权重最高,主存储后端'],
+    ['baidu',       2.0, 410, 60,  ''],
+    ['onedrive',    2.0, 380, 70,  ''],
+    ['aliyundrive', 2.5, 300, 90,  ''],
+    ['quark',       1.0, 520, 40,  '权重最低,风控敏感'],
+  ];
+  document.getElementById('vp-body').innerHTML = vp.map(r => `
+    <tr><td><span class="chip">${r[0]}</span></td>
+      <td class="r"><input class="input num" style="width:76px;padding:4px 8px;text-align:right" value="${r[1].toFixed(1)}"></td>
+      <td class="r num">${r[2]}</td><td class="r num">${r[3]}</td>
+      <td style="font-size:12px;color:var(--muted)">${r[4]||'—'}</td></tr>`).join('');
+  document.getElementById('vp-save').onclick = () => MW.dispatched('VendorProfile 更新');
+
+  ['q','f-vendor','f-state'].forEach(id => document.getElementById(id).addEventListener('input', render));
+  render();
+
+  // 轮询活体感:倒计时 + 更新时刻(时钟真实走动,健康态为 30s 检查快照)
+  (function () {
+    const tick = document.getElementById('poll-tick');
+    let left = 30, last = '12:04:31';
+    const clock = () => new Date().toTimeString().slice(0, 8);
+    setInterval(() => {
+      left -= 1;
+      if (left <= 0) { left = 30; last = clock(); }
+      tick.textContent = `· 下次刷新 ${left}s · 更新于 ${last}`;
+    }, 1000);
+  })();
+</script>
+</body>
+</html>

@@ -70,6 +70,8 @@ func (s IngestStorageConfig) ToAccountPoolConfig() accountpool.StorageConfig {
 			AccountID:    a.AccountID,
 			ClientID:     a.ClientID,
 			ClientSecret: a.ClientSecret,
+			RefreshToken: a.RefreshToken,
+			RedirectURI:  a.RedirectURI,
 			Region:       a.Region,
 			Enabled:      a.Enabled,
 		})

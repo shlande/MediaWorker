@@ -1,0 +1,16 @@
+{
+  "kind": "critique-panel",
+  "target": "dashboard.html + nodes.html + content.html + accounts.html + policy.html + audit.html",
+  "score": 4,
+  "axes": {
+    "clarity":   { "score": 4, "notes": "六页均新增 status-strip 一句话结论:dashboard SLO 3/4 达标(账号池破线)、nodes 128/142 在线(4 需关注)、content 副本完整 6/8(G6)、accounts 健康率 76.9%(3 需处理)、policy quark 0.86 越线(G5)、audit 12 条 1 失败已恢复;结论先行,依据数字加粗" },
+    "hierarchy": { "score": 4, "notes": "dashboard 账号池健康率卡与 accounts banned 卡升锚点('需处理' watch 章);nodes/accounts/policy 表按严重度排序(灰名单/banned/越线置顶),content 保持热度序仅着色,audit 保持时间序仅着色——排序语义不破坏各页既有口径" },
+    "typography":{ "score": 4, "notes": "watch 章大写 0.08em 字距、结论数字 font-weight 650 + tabular-nums,沿用 tech-utility 规范" },
+    "motion":    { "score": 4, "notes": "5 页 poll-tick 倒计时按各自数据路径周期(30s 上报 / 300s 聚合 / 60s 快照)真实走动;audit 为实时流只保留脉冲圆点,不伪造倒计时;数据保持快照诚实" },
+    "brand":     { "score": 4, "notes": "样式全部页面级且六页逐字一致,app.css 零改动;行分层用 --danger-bg/--warn-bg 既有令牌,强调色预算未破" }
+  },
+  "weakest": [],
+  "recommendedLane": "converged",
+  "synced": [],
+  "template": "edge-node-monitor.html 同模板收敛(状态条 + 锚点卡 + 行分层 + 轮询活体感),控制面六页与节点本地三页全部统一"
+}

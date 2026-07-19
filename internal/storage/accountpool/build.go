@@ -38,6 +38,8 @@ type CloudAccount struct {
 	AccountID    string
 	ClientID     string
 	ClientSecret string
+	RefreshToken string
+	RedirectURI  string
 	Region       string
 	Enabled      bool
 }
@@ -76,6 +78,13 @@ func BuildFromConfig(cfg StorageConfig, blobLocations BlobLocationClient) *Accou
 			continue
 		}
 		vendor := types.Vendor(acctCfg.Vendor)
+
+		tokenMgr.Register(vendor, acctCfg.AccountID, auth.OAuth2Config{
+			ClientID:     acctCfg.ClientID,
+			ClientSecret: acctCfg.ClientSecret,
+			RefreshToken: acctCfg.RefreshToken,
+			RedirectURI:  acctCfg.RedirectURI,
+		})
 
 		var drv driver.Driver
 		switch vendor {

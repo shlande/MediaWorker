@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>策略与配额 · MediaWorker 控制面</title>
+<link rel="stylesheet" href="assets/app.css" />
+<style>
+  /* 精修模板:状态一句话 / 锚点卡 / 行分层 / 轮询活体 — 与节点本地页同一语言 */
+  .status-strip {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface); padding: 10px 14px; margin-bottom: 14px;
+    font-size: 13px;
+  }
+  .status-strip .s-text b { font-weight: 650; font-variant-numeric: tabular-nums; }
+  .status-strip .s-alert { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font: 12px var(--font-mono); color: var(--muted); }
+  .card-anchor { border-color: oklch(72% 0.012 250); }
+  .card-anchor .watch {
+    font: 600 10px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; margin-left: 6px;
+  }
+  tr.row-bad td { background: var(--danger-bg); }
+  tr.row-warn td { background: var(--warn-bg); }
+  tr.row-dim td { opacity: 0.6; }
+  @keyframes fd-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .freshness .dot { animation: fd-pulse 2s ease-in-out infinite; }
+  .freshness .tick { font: 11px var(--font-mono); color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar"></aside>
+  <main class="main">
+    <div class="topbar">
+      <button class="menu-btn">☰</button>
+      <h1>策略与配额</h1>
+      <span class="crumb">/v1/admin/backends · /v1/admin/policy</span>
+      <span class="spacer"></span>
+      <span class="freshness"><span class="dot"></span>用量快照 · 每 60s<span class="tick" id="poll-tick">· 下次刷新 60s · 更新于 12:04:31</span></span>
+    </div>
+
+    <!-- 状态一句话:风险结论先行,G5 缺口单独亮出 -->
+    <div class="status-strip" data-od-id="status-strip">
+      <span class="pill warn"><span class="d"></span>1 后端越过 danger 线</span>
+      <span class="s-text">quark:mw_qk_01 封号风险 <b>0.86</b> ≥ 0.8 danger、quark:mw_qk_02 <b>0.79</b> 逼近;PolicyController 未接线(G5),自动降权不生效,需到「云盘账号」手动熔断。</span>
+      <span class="s-alert"><span class="pill bad">G5 缺口</span>ReadWeight / UploadWeight / Writable 为规划值</span>
+    </div>
+
+    <div class="notice planned" style="margin-bottom:14px;">
+      <div><b>实现度说明(§10.3):</b>Backend 用量快照与阈值为<span class="tag-live">已生效</span>数据;ReadWeight / UploadWeight / Writable 由 PolicyController 计算,但该控制器在代码中<span class="tag-planned">不存在(缺口 G5)</span>,下方权重值为<b>规划值</b>,手动干预按钮禁用;配额分配器 QuotaAllocator 存在,下发/借用接线度<span class="tag-planned">部分可用</span>。</div>
+    </div>
+
+    <div class="tabs-bar">
+      <div class="tabs">
+        <button class="active" data-tab="t-backends">Backend 用量与权重</button>
+        <button data-tab="t-thresholds">阈值配置</button>
+        <button data-tab="t-quota">配额管理</button>
+      </div>
+
+      <!-- Backends -->
+      <div class="tab-pane active" id="t-backends">
+        <div class="tbl-wrap">
+          <table class="tbl">
+            <thead>
+              <tr><th>Backend ID</th><th>类型</th><th class="r">存储量</th><th class="r">今日读取</th>
+              <th class="r">今日请求</th><th class="r">封号风险</th><th class="r">IOPS</th>
+              <th class="r">ReadWeight <span class="pill planned" style="font-size:9.5px">规划值</span></th>
+              <th class="r">UploadWeight <span class="pill planned" style="font-size:9.5px">规划值</span></th>
+              <th class="c">Writable <span class="pill planned" style="font-size:9.5px">规划值</span></th>
+              <th class="r">干预</th></tr>
+            </thead>
+            <tbody id="be-body"></tbody>
+          </table>
+        </div>
+        <div class="notice warn mt">
+          <div><b>quark:mw_qk_01 封号风险 0.86 已越过 danger 线(0.8)。</b>按策略应自动降权/禁写,但 PolicyController 未接线(G5)——当前仅提示,需手动在「云盘账号」页熔断。</div>
+        </div>
+      </div>
+
+      <!-- 阈值 -->
+      <div class="tab-pane" id="t-thresholds">
+        <div class="card" style="max-width:720px;">
+          <h3>阈值配置 <span class="hint">safe / danger 双线 · 已生效,PolicyController 读取</span></h3>
+          <div class="form-row">
+            <div class="field"><label>每账号日请求数 safe / danger</label>
+              <div style="display:flex;gap:8px;"><input class="input num" value="80000"><input class="input num" value="120000"></div>
+            </div>
+            <div class="field"><label>每账号日流量 safe / danger(GB)</label>
+              <div style="display:flex;gap:8px;"><input class="input num" value="300"><input class="input num" value="500"></div>
+            </div>
+          </div>
+          <div class="form-row">
+            <div class="field"><label>封号风险 safe / danger(0–1)</label>
+              <div style="display:flex;gap:8px;"><input class="input num" value="0.5"><input class="input num" value="0.8"></div>
+            </div>
+            <div class="field"><label>存储占比 safe / danger(%)</label>
+              <div style="display:flex;gap:8px;"><input class="input num" value="70"><input class="input num" value="90"></div>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:6px;">
+            <button class="btn">还原默认</button>
+            <button class="btn primary" id="th-save">保存阈值</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 配额 -->
+      <div class="tab-pane" id="t-quota">
+        <div class="grid g-3">
+          <div class="card stat"><span class="label">globalLimit(QPS)</span><span class="value num">200</span><span class="target">全节点共享池</span></div>
+          <div class="card stat"><span class="label">baseShare / 节点</span><span class="value num">1.25</span><span class="target">globalQPS × 0.8 ÷ 128 节点</span></div>
+          <div class="card stat ok"><span class="label">全局用量</span><span class="value">61<small> %</small></span><span class="target">&lt;80% · 允许借用 +30% / 30s</span></div>
+        </div>
+
+        <div class="section-h">配额分配视图 <span class="hint">baseShare = globalQPS × 0.8 / 节点数</span></div>
+        <div class="tbl-wrap">
+          <table class="tbl">
+            <thead><tr><th>节点</th><th class="r">baseShare(QPS)</th><th class="r">借用中</th><th class="r">当前用量</th><th>利用率</th></tr></thead>
+            <tbody id="quota-body"></tbody>
+          </table>
+        </div>
+
+        <div class="section-h">借用记录 <span class="hint">全局用量 &lt;80% 时 +30%,30s 归还 · <span class="tag-planned">接线度部分可用</span></span></div>
+        <div class="tbl-wrap">
+          <table class="tbl">
+            <thead><tr><th>时间</th><th>节点</th><th class="r">借用量</th><th class="r">持续</th><th>触发原因</th></tr></thead>
+            <tbody>
+              <tr><td class="mono" style="font-size:12px">12:08:41</td><td><code>12D3KooW…b82e</code></td><td class="r num">+0.38 QPS</td><td class="r num">30s</td><td style="font-size:12.5px">热门内容突发(c_7f3a91)</td></tr>
+              <tr><td class="mono" style="font-size:12px">11:52:07</td><td><code>12D3KooW…a3d8</code></td><td class="r num">+0.38 QPS</td><td class="r num">30s</td><td style="font-size:12.5px">回源重试风暴</td></tr>
+              <tr><td class="mono" style="font-size:12px">11:31:55</td><td><code>12D3KooW…e6aa</code></td><td class="r num">+0.38 QPS</td><td class="r num">28s</td><td style="font-size:12.5px">ICP 协作转发</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="assets/app.js"></script>
+<script>
+  MW.injectSidebar('policy');
+  MW.injectChrome();
+  MW.tabs('.tabs-bar');
+
+  const bes = [
+    ['115:mw_store_01','云盘','4.2 TB','312 GB','58,204',0.22,'142',[1.00,0.90,true]],
+    ['115:mw_store_02','云盘','3.8 TB','298 GB','51,882',0.19,'131',[1.00,0.90,true]],
+    ['baidu:mw_bak_01','云盘','2.1 TB','204 GB','38,445',0.61,'96',[0.60,0.40,false]],
+    ['baidu:mw_bak_02','云盘','1.9 TB','177 GB','31,207',0.28,'88',[1.00,0.90,true]],
+    ['quark:mw_qk_01','云盘','0.9 TB','0 GB','0',0.86,'0',[0.00,0.00,false]],
+    ['quark:mw_qk_02','云盘','0.7 TB','0 GB','0',0.79,'0',[0.00,0.00,false]],
+    ['onedrive:mw_od_01','云盘','2.6 TB','241 GB','44,193',0.17,'110',[1.00,0.90,true]],
+    ['aliyundrive:mw_ali_01','云盘','3.1 TB','265 GB','47,508',0.14,'118',[1.00,0.90,true]],
+    ['local:staging-01','本地存储','180 GB','12 GB','2,041',0.00,'64',[0.20,1.00,true]],
+  ];
+  const risk = r => {
+    const pct = Math.round(r*100);
+    const cls = r>=0.8 ? 'b' : r>=0.5 ? 'w' : '';
+    return `<div class="meter" style="min-width:90px"><div class="m-top"><span></span><span style="color:${r>=0.8?'var(--danger)':r>=0.5?'var(--warn)':'var(--muted)'}">${pct}</span></div><div class="bar"><i class="${cls}" style="width:${pct}%"></i></div></div>`;
+  };
+  const beRows = [...bes].sort((a, b) => b[5] - a[5]);
+  document.getElementById('be-body').innerHTML = beRows.map(b => `
+    <tr class="${b[5]>=0.8?'row-bad':b[5]>=0.5?'row-warn':''}">
+      <td><code>${b[0]}</code></td>
+      <td><span class="chip">${b[1]}</span></td>
+      <td class="r num">${b[2]}</td><td class="r num">${b[3]}</td><td class="r num">${b[4]}</td>
+      <td class="r">${risk(b[5])}</td><td class="r num">${b[6]}</td>
+      <td class="r num" style="color:var(--muted)">${b[7][0].toFixed(2)}</td>
+      <td class="r num" style="color:var(--muted)">${b[7][1].toFixed(2)}</td>
+      <td class="c" style="color:var(--muted)">${b[7][2]?'true':'false'}</td>
+      <td class="r"><button class="btn sm" disabled title="G5:PolicyController 未接线,权重下发无生效路径">调整 · 待后端</button></td>
+    </tr>`).join('');
+
+  const qs = [
+    ['12D3KooW…b82e',1.25,'+0.38',1.71,88],
+    ['12D3KooW…f3a9',1.25,'—',0.92,74],
+    ['12D3KooW…a3d8',1.25,'—',0.61,49],
+    ['12D3KooW…e6aa',1.25,'—',1.04,83],
+    ['12D3KooW…9c04',1.25,'—',0.33,26],
+  ];
+  document.getElementById('quota-body').innerHTML = qs.map(q => `
+    <tr><td><code>${q[0]}</code></td><td class="r num">${q[1].toFixed(2)}</td>
+    <td class="r num" style="color:${q[2]==='—'?'var(--muted)':'var(--accent)'}">${q[2]}</td>
+    <td class="r num">${q[3].toFixed(2)}</td>
+    <td><div class="meter"><div class="bar"><i class="${q[4]>85?'w':''}" style="width:${q[4]}%"></i></div></div></td></tr>`).join('');
+
+  document.getElementById('th-save').onclick = () => MW.dispatched('阈值配置更新');
+
+  // 轮询活体感:倒计时 + 更新时刻(时钟真实走动,用量为 60s 快照)
+  (function () {
+    const tick = document.getElementById('poll-tick');
+    let left = 60, last = '12:04:31';
+    const clock = () => new Date().toTimeString().slice(0, 8);
+    setInterval(() => {
+      left -= 1;
+      if (left <= 0) { left = 60; last = clock(); }
+      tick.textContent = `· 下次刷新 ${left}s · 更新于 ${last}`;
+    }, 1000);
+  })();
+</script>
+</body>
+</html>

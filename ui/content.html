@@ -1,0 +1,304 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>内容与 Pin 编排 · MediaWorker 控制面</title>
+<link rel="stylesheet" href="assets/app.css" />
+<style>
+  /* 精修模板:状态一句话 / 锚点卡 / 行分层 / 轮询活体 — 与节点本地页同一语言 */
+  .status-strip {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface); padding: 10px 14px; margin-bottom: 14px;
+    font-size: 13px;
+  }
+  .status-strip .s-text b { font-weight: 650; font-variant-numeric: tabular-nums; }
+  .status-strip .s-alert { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font: 12px var(--font-mono); color: var(--muted); }
+  .card-anchor { border-color: oklch(72% 0.012 250); }
+  .card-anchor .watch {
+    font: 600 10px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; margin-left: 6px;
+  }
+  tr.row-bad td { background: var(--danger-bg); }
+  tr.row-warn td { background: var(--warn-bg); }
+  tr.row-dim td { opacity: 0.6; }
+  @keyframes fd-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .freshness .dot { animation: fd-pulse 2s ease-in-out infinite; }
+  .freshness .tick { font: 11px var(--font-mono); color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar"></aside>
+  <main class="main">
+    <div class="topbar">
+      <button class="menu-btn">☰</button>
+      <h1>内容与 Pin 编排</h1>
+      <span class="crumb">/v1/admin/contents?sort=popularity</span>
+      <span class="spacer"></span>
+      <span class="freshness"><span class="dot"></span>热度窗口 window_24h · 5 分钟聚合<span class="tick" id="poll-tick">· 下次聚合 300s · 更新于 12:04:31</span></span>
+    </div>
+
+    <!-- 状态一句话:副本健康结论先行,待补齐项单独亮出 -->
+    <div class="status-strip" data-od-id="status-strip">
+      <span class="pill warn"><span class="d"></span>副本完整 6/8</span>
+      <span class="s-text"><b>2</b> 个内容 1/2 待补齐(quark 副本因账号 banned 不可读)、<b>1</b> 个已标记待清理;init 段恒 pin、media 段按剩余空间的 DASH 策略生效中。</span>
+      <span class="s-alert"><span class="pill bad">2 待补齐</span>补齐 worker 未建设 · G6</span>
+    </div>
+
+    <div class="notice planned" style="margin-bottom:14px;">
+      <div><b>DASH pin 策略(当前生效):</b>init 段恒 pin;media 段按节点剩余空间 — ＞50GB pin 5 个 / ＞20GB pin 2 个 / ≤20GB 不 pin。手动 pin/unpin 经 PinOrchestrator 定向下发,反馈路径 = 节点下次状态上报(≤30s)。</div>
+    </div>
+
+    <div class="toolbar">
+      <input class="input search" id="q" placeholder="搜索 content_id / 标题…" />
+      <select class="input" id="f-type"><option value="">全部类型</option><option>dash_video</option><option>image</option></select>
+      <select class="input" id="f-rep"><option value="">全部副本态</option><option>2/2</option><option>1/2 待补齐</option></select>
+      <span class="spacer"></span>
+      <span style="font-size:12px;color:var(--muted)">按 24h 热度降序</span>
+    </div>
+
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead>
+          <tr><th>内容</th><th>类型</th><th class="r">总大小</th><th class="r">blob 数</th>
+          <th>副本健康</th><th class="r">24h 热度</th><th class="r">pin 节点</th><th class="r">操作</th></tr>
+        </thead>
+        <tbody id="c-body"></tbody>
+      </table>
+    </div>
+
+    <!-- PinPlan 下发记录 -->
+    <div class="section-h">PinPlan 下发记录 <span class="hint">PinOrchestrator + SyncBroadcaster</span></div>
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>seq</th><th>目标节点</th><th>pin</th><th>unpin</th><th>触发</th><th>时间</th><th>确认</th></tr></thead>
+        <tbody id="pp-body"></tbody>
+      </table>
+    </div>
+  </main>
+</div>
+
+<!-- 内容详情抽屉 -->
+<div class="drawer" id="c-drawer">
+  <div class="d-head">
+    <div>
+      <h2 id="cd-title"></h2>
+      <div class="sub mono" id="cd-id"></div>
+    </div>
+    <button class="d-close" onclick="MW.closeAll()">✕</button>
+  </div>
+  <div class="d-body">
+    <div class="card">
+      <h3>基本信息</h3>
+      <dl class="dl" id="cd-dl"></dl>
+    </div>
+
+    <div class="card mt">
+      <h3>blob 编排树 <span class="hint">content_blob.role + sort_order + business_meta</span></h3>
+      <div class="tree" id="cd-tree"></div>
+    </div>
+
+    <div class="card mt">
+      <h3>副本位置 <span class="hint">blob_location_v2 · 逐后端</span></h3>
+      <div class="tbl-wrap" style="border:0;">
+        <table class="tbl">
+          <thead><tr><th>blob</th><th>backend_id</th><th>file_id</th><th>账号健康</th></tr></thead>
+          <tbody id="cd-locs"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="notice planned mt">
+      <div><b>试播不可用(缺口 G1)。</b>系统缺内容解析层:edge-node 仅有 <code>GET /blob/{hash}</code>,无 content→MPD→blob_hash 解析端点。MPD XML 与码率/段序语义在 PG(<code>type_metadata</code> + <code>business_meta</code>),数据齐、缺"内容访问解析服务"。</div>
+    </div>
+
+    <div class="section-h">操作</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;">
+      <button class="btn primary" id="cd-pin">手动 pin 到节点…</button>
+      <button class="btn" id="cd-unpin">手动 unpin…</button>
+      <button class="btn" disabled title="缺口 G6:副本补齐 worker 未建设">补齐副本 · 待后端</button>
+      <button class="btn danger" id="cd-del">删除内容</button>
+    </div>
+    <p style="font-size:11.5px;color:var(--muted);margin-top:10px;">
+      删除为软删除:标记 <code>blob.deleted_at</code> 后进入 janitor 两阶段 GC(默认 dry-run),内容显示"待清理"而非立即消失。
+    </p>
+  </div>
+</div>
+
+<!-- pin/unpin 弹窗 -->
+<div class="modal" id="pin-modal">
+  <h3 id="pm-title">手动 pin</h3>
+  <p id="pm-sub" style="font-size:12.5px;"></p>
+  <div class="field" style="margin-top:12px;">
+    <label>目标节点(按剩余空间过滤)</label>
+    <select class="input" id="pm-node" multiple size="5"></select>
+    <span class="help">已按 pin 策略标注推荐节点(剩余空间 ＞50GB)</span>
+  </div>
+  <div class="m-acts">
+    <button class="btn" onclick="MW.closeAll()">取消</button>
+    <button class="btn primary" id="pm-ok">生成 PinPlan 并下发</button>
+  </div>
+</div>
+
+<script src="assets/app.js"></script>
+<script>
+  MW.injectSidebar('content');
+  MW.injectChrome();
+
+  const contents = [
+    { id:'c_7f3a91', t:'发布会回放-0718', type:'dash_video', size:'6.4 GB', blobs:46, rep:2, hot:48213, pins:31, del:false,
+      meta:{ 时长:'01:42:18', 码率阶梯:'500k / 1500k / 4000k', 段时长:'4s', 创建:'2026-07-18 20:14' } },
+    { id:'c_2e8b04', t:'产品演示-第四章', type:'dash_video', size:'2.1 GB', blobs:22, rep:2, hot:31875, pins:26, del:false,
+      meta:{ 时长:'00:31:02', 码率阶梯:'500k / 1500k / 4000k', 段时长:'4s', 创建:'2026-07-15 11:40' } },
+    { id:'c_9d1c56', t:'教程-快速上手', type:'dash_video', size:'1.3 GB', blobs:14, rep:2, hot:27340, pins:22, del:false,
+      meta:{ 时长:'00:18:44', 码率阶梯:'500k / 1500k', 段时长:'4s', 创建:'2026-07-11 09:02' } },
+    { id:'c_44aa17', t:'封面图-夏季活动', type:'image', size:'18 MB', blobs:3, rep:2, hot:19652, pins:18, del:false,
+      meta:{ 尺寸:'3840×2160', 缩略图:'200 / 800 px', EXIF:'已剥离', 创建:'2026-07-10 16:22' } },
+    { id:'c_81f0c3', t:'访谈-基础设施团队', type:'dash_video', size:'3.8 GB', blobs:31, rep:1, hot:15208, pins:14, del:false,
+      meta:{ 时长:'00:58:37', 码率阶梯:'500k / 1500k / 4000k', 段时长:'4s', 创建:'2026-07-08 14:51' } },
+    { id:'c_6b5d2f', t:'教程-高级转码', type:'dash_video', size:'1.9 GB', blobs:19, rep:2, hot:11947, pins:12, del:false,
+      meta:{ 时长:'00:27:19', 码率阶梯:'500k / 1500k', 段时长:'4s', 创建:'2026-07-05 10:36' } },
+    { id:'c_03c7e8', t:'缩略图集-文档站', type:'image', size:'41 MB', blobs:9, rep:2, hot:9411, pins:9, del:false,
+      meta:{ 尺寸:'1920×1080', 缩略图:'200 / 800 px', EXIF:'已剥离', 创建:'2026-07-03 13:08' } },
+    { id:'c_5e19d0', t:'直播切片-社区问答', type:'dash_video', size:'940 MB', blobs:11, rep:1, hot:7803, pins:7, del:true,
+      meta:{ 时长:'00:12:53', 码率阶梯:'500k / 1500k', 段时长:'4s', 创建:'2026-06-28 19:44' } },
+  ];
+
+  const repPill = c => c.del ? '<span class="pill neutral"><span class="d"></span>待清理</span>'
+    : c.rep === 2 ? '<span class="pill ok"><span class="d"></span>2/2 副本</span>'
+    : '<span class="pill warn"><span class="d"></span>1/2 待补齐</span>';
+
+  function render() {
+    const q = document.getElementById('q').value.trim().toLowerCase();
+    const ft = document.getElementById('f-type').value;
+    const fr = document.getElementById('f-rep').value;
+    const rows = contents.filter(c => {
+      if (q && !(c.id.includes(q) || c.t.toLowerCase().includes(q))) return false;
+      if (ft && c.type !== ft) return false;
+      if (fr === '2/2' && c.rep !== 2) return false;
+      if (fr === '1/2 待补齐' && c.rep !== 1) return false;
+      return true;
+    });
+    document.getElementById('c-body').innerHTML = rows.map(c => `
+      <tr class="clickable ${c.del?'row-dim':c.rep===1?'row-warn':''}" data-i="${contents.indexOf(c)}">
+        <td><div style="font-weight:550">${c.t}</div><div class="mono" style="font-size:11px;color:var(--muted)">${c.id}</div></td>
+        <td><span class="chip">${c.type}</span></td>
+        <td class="r num">${c.size}</td>
+        <td class="r num">${c.blobs}</td>
+        <td>${repPill(c)}</td>
+        <td class="r num">${c.hot.toLocaleString()}</td>
+        <td class="r num">${c.pins}</td>
+        <td class="r"><button class="btn sm ghost" data-i="${contents.indexOf(c)}">详情</button></td>
+      </tr>`).join('');
+    document.querySelectorAll('#c-body tr').forEach(tr =>
+      tr.addEventListener('click', () => openContent(+tr.dataset.i)));
+  }
+
+  function openContent(i) {
+    const c = contents[i];
+    document.getElementById('cd-title').textContent = c.t;
+    document.getElementById('cd-id').textContent = c.id + ' · ' + c.type;
+    document.getElementById('cd-dl').innerHTML =
+      Object.entries(c.meta).map(([k,v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('') +
+      `<dt>副本健康</dt><dd>${c.rep}/2${c.rep===1 ? ' · 部分副本失败属容忍态(≥1 成功即入库),待补齐 worker 落地后可一键修复' : ''}</dd>
+       <dt>24h 热度</dt><dd class="num">${c.hot.toLocaleString()} 请求</dd>`;
+
+    // blob 编排树(以 dash_video 为例的真实结构)
+    const tree = c.type === 'dash_video' ? [
+      { role:'original',  so:0, meta:'source.mp4 · 1.9 GB',                    hash:'b3:9f2e…a1', child:false },
+      { role:'init',      so:1, meta:'init-segment · 恒 pin',                  hash:'b3:41c7…8d', child:false },
+      { role:'media',     so:2, meta:'representation_id=v500 · 500k · seg 0–465',   hash:'b3:7aa0…3f', child:true },
+      { role:'media',     so:3, meta:'representation_id=v1500 · 1500k · seg 0–465', hash:'b3:c2d1…9b', child:true },
+      { role:'media',     so:4, meta:'representation_id=v4000 · 4000k · seg 0–465', hash:'b3:e8f4…12', child:true },
+      { role:'media',     so:5, meta:'representation_id=a128 · audio · seg 0–465',  hash:'b3:0b6c…77', child:true },
+      { role:'thumbnail', so:6, meta:'poster · 800px',                         hash:'b3:5d91…e0', child:false },
+    ] : [
+      { role:'original',  so:0, meta:'source.jpg · 14 MB',  hash:'b3:2fa8…6c', child:false },
+      { role:'thumbnail', so:1, meta:'200px',               hash:'b3:88e3…0a', child:true },
+      { role:'thumbnail', so:2, meta:'800px',               hash:'b3:b174…4e', child:true },
+    ];
+    document.getElementById('cd-tree').innerHTML = tree.map(b => `
+      <div class="t-row ${b.child?'child':''}">
+        <span class="chip" style="${b.role==='init'?'border-color:var(--accent);color:oklch(38% 0.1 145);':''}">${b.role}</span>
+        <span style="color:var(--muted)">#${b.so}</span>
+        <span>${b.meta}</span>
+        <span class="spacer" style="flex:1"></span>
+        <code>${b.hash}</code>
+      </div>`).join('');
+
+    // 副本位置
+    const locs = [
+      ['b3:41c7…8d','115:mw_store_01','f_88124','healthy'],
+      ['b3:41c7…8d','aliyundrive:mw_ali_01','f_10987','healthy'],
+      ['b3:7aa0…3f','115:mw_store_02','f_77102','healthy'],
+      ['b3:7aa0…3f','quark:mw_qk_01','f_55410','banned'],
+      ['b3:c2d1…9b','baidu:mw_bak_02','f_33015','healthy'],
+      ['b3:c2d1…9b','onedrive:mw_od_01','f_22964','healthy'],
+    ];
+    document.getElementById('cd-locs').innerHTML = locs.map(l => `
+      <tr><td><code>${l[0]}</code></td><td><code>${l[1]}</code></td>
+      <td class="mono" style="font-size:12px;color:var(--muted)">${l[2]}</td>
+      <td>${l[3]==='healthy' ? '<span class="pill ok"><span class="d"></span>healthy</span>' : '<span class="pill bad"><span class="d"></span>banned · 副本不可读</span>'}</td></tr>`).join('');
+
+    document.getElementById('cd-pin').onclick = () => openPinModal(c, 'pin');
+    document.getElementById('cd-unpin').onclick = () => openPinModal(c, 'unpin');
+    document.getElementById('cd-del').onclick = () => MW.confirmDanger({
+      title:'删除内容(软删除)',
+      body:`${c.t}(${c.id})将被标记 deleted_at,进入 janitor 待清理队列。janitor 默认 dry-run,硬删云盘文件需运营显式放开。`,
+      phrase:'删除内容', actionLabel:'确认软删除',
+      onConfirm:()=>{ c.del = true; MW.closeAll(); render(); MW.toast('已标记删除 — 待 janitor 清理','复核通过后硬删云盘文件(当前 dry-run)'); }});
+    MW.openDrawer('c-drawer');
+  }
+
+  function openPinModal(c, mode) {
+    document.getElementById('pm-title').textContent = mode === 'pin' ? '手动 pin 到节点' : '手动 unpin';
+    document.getElementById('pm-sub').textContent = `${c.t}(${c.id})· 生成 PinPlan 定向下发`;
+    const opts = [
+      ['12D3KooW…b82e','剩余 99 GB · 推荐',false],
+      ['12D3KooW…a3d8','剩余 213 GB · 推荐',false],
+      ['12D3KooW…e6aa','剩余 245 GB · 推荐',false],
+      ['12D3KooW…9c04','剩余 204 GB',false],
+      ['12D3KooW…d517','剩余 282 GB · 空间紧张 ≤20GB 策略不 pin',true],
+    ];
+    document.getElementById('pm-node').innerHTML = opts.map(o =>
+      `<option ${o[2]?'disabled':''}>${o[0]} — ${o[1]}</option>`).join('');
+    document.getElementById('pm-ok').onclick = () => {
+      MW.closeAll(); MW.dispatched(`PinPlan(${mode})`);
+    };
+    document.getElementById('pin-modal').classList.add('open');
+    document.getElementById('scrim').classList.add('open');
+  }
+
+  const plans = [
+    [1043,'12D3KooW…b82e','+5','−0','手动 · admin','12:11:02','已确认'],
+    [1042,'12D3KooW…f3a9','+5','−0','自动 · 热度', '12:04:31','已确认'],
+    [1041,'12D3KooW…e6aa','+2','−0','自动 · 热度', '12:01:18','已确认'],
+    [1040,'12D3KooW…a3d8','+0','−8','自动 · 空间', '11:57:44','已确认'],
+    [1039,'12D3KooW…9c04','+2','−0','自动 · 热度', '11:58:02','已确认'],
+    [1038,'12D3KooW…77c1','+0','−12','手动 · ops', '11:49:20','待节点上报'],
+  ];
+  document.getElementById('pp-body').innerHTML = plans.map(p => `
+    <tr class="${p[6]==='已确认'?'':'row-warn'}"><td class="mono">${p[0]}</td><td><code>${p[1]}</code></td>
+    <td class="num" style="color:var(--success)">${p[2]}</td><td class="num" style="color:var(--muted)">${p[3]}</td>
+    <td style="font-size:12.5px">${p[4]}</td><td class="mono" style="font-size:12px">${p[5]}</td>
+    <td>${p[6]==='已确认' ? '<span class="pill ok"><span class="d"></span>已确认</span>' : '<span class="pill warn"><span class="d"></span>待节点上报</span>'}</td></tr>`).join('');
+
+  ['q','f-type','f-rep'].forEach(id => document.getElementById(id).addEventListener('input', render));
+  render();
+
+  // 轮询活体感:倒计时 + 更新时刻(时钟真实走动,热度数据为 5 分钟聚合快照)
+  (function () {
+    const tick = document.getElementById('poll-tick');
+    let left = 300, last = '12:04:31';
+    const clock = () => new Date().toTimeString().slice(0, 8);
+    setInterval(() => {
+      left -= 1;
+      if (left <= 0) { left = 300; last = clock(); }
+      tick.textContent = `· 下次聚合 ${left}s · 更新于 ${last}`;
+    }, 1000);
+  })();
+</script>
+</body>
+</html>

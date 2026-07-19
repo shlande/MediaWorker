@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>总览仪表盘 · MediaWorker 控制面</title>
+<link rel="stylesheet" href="assets/app.css" />
+<style>
+  /* 精修模板:状态一句话 / 锚点卡 / 行分层 / 轮询活体 — 与节点本地页同一语言 */
+  .status-strip {
+    display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    background: var(--surface); padding: 10px 14px; margin-bottom: 14px;
+    font-size: 13px;
+  }
+  .status-strip .s-text b { font-weight: 650; font-variant-numeric: tabular-nums; }
+  .status-strip .s-alert { margin-left: auto; display: inline-flex; align-items: center; gap: 8px; font: 12px var(--font-mono); color: var(--muted); }
+  .card-anchor { border-color: oklch(72% 0.012 250); }
+  .card-anchor .watch {
+    font: 600 10px var(--font-mono); letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; margin-left: 6px;
+  }
+  tr.row-bad td { background: var(--danger-bg); }
+  tr.row-warn td { background: var(--warn-bg); }
+  tr.row-dim td { opacity: 0.6; }
+  @keyframes fd-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+  .freshness .dot { animation: fd-pulse 2s ease-in-out infinite; }
+  .freshness .tick { font: 11px var(--font-mono); color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="shell">
+  <aside class="sidebar"></aside>
+  <main class="main">
+    <div class="topbar">
+      <button class="menu-btn">☰</button>
+      <h1>总览仪表盘</h1>
+      <span class="crumb">/v1/admin/overview</span>
+      <span class="spacer"></span>
+      <span class="freshness"><span class="dot"></span>节点上报聚合 · 30s 窗口<span class="tick" id="poll-tick">· 下次刷新 30s · 更新于 12:04:31</span></span>
+    </div>
+
+    <!-- 状态一句话:先给 SLO 结论,破线项单独亮出 -->
+    <div class="status-strip" data-od-id="status-strip">
+      <span class="pill warn"><span class="d"></span>SLO 3/4 达标</span>
+      <span class="s-text">TTFB P95 <b>2.41s</b>、命中率 <b>84.7%</b>、回源成功率 <b>99.2%</b> 均在阈值内;账号池健康率 <b>76.9%</b> 低于 80% SLO,quark 2 账号 banned 是主因。</span>
+      <span class="s-alert"><span class="pill bad">4 未恢复告警</span>账号池健康率破线 · 8 分钟前</span>
+    </div>
+
+    <!-- SLO 指标卡 -->
+    <div class="grid g-4">
+      <div class="card stat ok">
+        <span class="label">首帧 TTFB P95</span>
+        <span class="value">2.41<small> s</small></span>
+        <span class="target">SLO &lt; 3.0s · edge_ttfb_seconds</span>
+      </div>
+      <div class="card stat ok">
+        <span class="label">热数据缓存命中率</span>
+        <span class="value">84.7<small> %</small></span>
+        <span class="target">SLO &gt; 80% · edge_cache_hit / request</span>
+      </div>
+      <div class="card stat ok">
+        <span class="label">回源成功率</span>
+        <span class="value">99.2<small> %</small></span>
+        <span class="target">SLO &gt; 99% · storage_access_backhaul</span>
+      </div>
+      <div class="card stat warn card-anchor">
+        <span class="label">账号池健康率 <span class="watch">需处理 · SLO 破线</span></span>
+        <span class="value">76.9<small> %</small></span>
+        <span class="target">SLO &gt; 80% · account_health</span>
+      </div>
+    </div>
+
+    <div class="grid g-21 mt">
+      <!-- 左列:节点与容量 -->
+      <div style="display:flex;flex-direction:column;gap:14px;min-width:0;">
+        <div class="card">
+          <h3>在线节点 <span class="hint">NODE_STATUS_REPORT · 128 / 142 在线</span></h3>
+          <div class="kv-strip" style="margin-bottom:14px;">
+            <div class="kv"><span class="k">edge</span><span class="v num">128</span></div>
+            <div class="kv"><span class="k">l4_backhaul</span><span class="v num">23</span></div>
+            <div class="kv"><span class="k">relay_provider</span><span class="v num">9</span></div>
+            <div class="kv"><span class="k">peer_icp</span><span class="v num">61</span></div>
+            <div class="kv"><span class="k">社区节点</span><span class="v num">74</span></div>
+          </div>
+          <div class="hbar"><span>prefix 空间充足</span><div class="hb-track"><i style="width:58%"></i></div><span class="num">74 节点</span></div>
+          <div class="hbar"><span>空间紧张 &lt;20GB</span><div class="hb-track"><i style="width:23%;background:var(--warn)"></i></div><span class="num">29 节点</span></div>
+          <div class="hbar"><span>空间耗尽 &lt;5GB</span><div class="hb-track"><i style="width:12%;background:var(--danger)"></i></div><span class="num">15 节点</span></div>
+          <div class="hbar"><span>评分灰名单 ≤-20</span><div class="hb-track"><i style="width:4%;background:var(--danger)"></i></div><span class="num">5 节点</span></div>
+        </div>
+
+        <div class="card">
+          <h3>缓存命中率 · 近 24h <span class="hint">按 cache_type 聚合,5m 粒度</span></h3>
+          <div class="spark" id="spark-hit"></div>
+          <div class="kv-strip" style="margin-top:10px;">
+            <div class="kv"><span class="k">prefix(NVMe)命中</span><span class="v num">71.2%</span></div>
+            <div class="kv"><span class="k">warm(SSD)命中</span><span class="v num">11.4%</span></div>
+            <div class="kv"><span class="k">cold(HDD)命中</span><span class="v num">2.1%</span></div>
+            <div class="kv"><span class="k">回源 / L4</span><span class="v num">15.3%</span></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>24h 热门内容 Top 8 <span class="hint">content_popularity.window_24h</span></h3>
+          <div class="tbl-wrap" style="border:0;">
+            <table class="tbl">
+              <thead><tr><th>#</th><th>内容</th><th>类型</th><th class="r">24h 请求</th><th class="r">pin 节点数</th><th>副本</th></tr></thead>
+              <tbody id="hot-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- 右列:告警 -->
+      <div style="display:flex;flex-direction:column;gap:14px;min-width:0;">
+        <div class="card">
+          <h3>当前告警 <span class="hint">4 条未恢复</span></h3>
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <div class="notice bad">
+              <div><b>账号池健康率低于 SLO</b><br>quark 厂商 2 个账号进入 banned,健康率 76.9% &lt; 80%。<br><span class="mono" style="font-size:11px;">account_health · 8 分钟前</span></div>
+            </div>
+            <div class="notice warn">
+              <div><b>JWT 续签连续失败</b><br>节点 <code>12D3KooW…f3a9</code> SchedulerPartition 告警,续签失败 3 次,距过期 41 分钟。<br><span class="mono" style="font-size:11px;">12 分钟前</span></div>
+            </div>
+            <div class="notice warn">
+              <div><b>缓存命中率低</b><br>节点 <code>12D3KooW…77c1</code> LowCacheHitRate,1h 窗口命中率 52%。<br><span class="mono" style="font-size:11px;">36 分钟前</span></div>
+            </div>
+            <div class="notice">
+              <div><b>回源失败率升高</b><br>baidu 厂商 HighBackhaulFailureRate,15m 失败率 2.8%,熔断器 HalfOpen 观察中。<br><span class="mono" style="font-size:11px;">1 小时前</span></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>PinPlan 下发 · 近 1h</h3>
+          <div class="kv-strip">
+            <div class="kv"><span class="k">下发批次</span><span class="v num">17</span></div>
+            <div class="kv"><span class="k">pin 指令</span><span class="v num">+248</span></div>
+            <div class="kv"><span class="k">unpin 指令</span><span class="v num">−96</span></div>
+            <div class="kv"><span class="k">手动干预</span><span class="v num">2</span></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>入口带宽 · 回源</h3>
+          <div class="stat">
+            <span class="value" style="font-size:22px;">1.86<small> Gbps / 4.0 Gbps</small></span>
+            <div class="meter" style="margin-top:6px;"><div class="bar"><i style="width:46%"></i></div></div>
+            <span class="target">edge_backhaul_bandwidth / capacity · L4 节点合计</span>
+          </div>
+        </div>
+
+        <div class="notice">
+          <div>指标来自 Prometheus <code>/metrics</code>(已挂载);深度排查可跳转 Grafana。SLO 口径见需求文档 §5.1。</div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="assets/app.js"></script>
+<script>
+  MW.injectSidebar('dashboard');
+  MW.injectChrome();
+
+  // 命中率 sparkline — 固定演示数据(24h,48 点)
+  const hit = [62,58,71,66,79,74,81,77,69,72,83,88,76,70,64,79,85,91,87,73,68,75,82,89,84,77,71,66,73,80,86,90,83,78,72,69,74,81,85,88,92,86,79,74,70,76,83,87];
+  document.getElementById('spark-hit').innerHTML = hit.map((v,i) =>
+    `<i style="height:${v}%" class="${i===hit.length-1?'hot':''}" title="${v}%"></i>`).join('');
+
+  const hot = [
+    ['c_7f3a91','发布会回放-0718','dash_video','48,213','31','2/2'],
+    ['c_2e8b04','产品演示-第四章','dash_video','31,875','26','2/2'],
+    ['c_9d1c56','教程-快速上手','dash_video','27,340','22','2/2'],
+    ['c_44aa17','封面图-夏季活动','image','19,652','18','2/2'],
+    ['c_81f0c3','访谈-基础设施团队','dash_video','15,208','14','1/2'],
+    ['c_6b5d2f','教程-高级转码','dash_video','11,947','12','2/2'],
+    ['c_03c7e8','缩略图集-文档站','image','9,411','9','2/2'],
+    ['c_5e19d0','直播切片-社区问答','dash_video','7,803','7','1/2'],
+  ];
+  document.getElementById('hot-body').innerHTML = hot.map((r,i) => `
+    <tr class="clickable ${r[5]==='2/2'?'':'row-warn'}" onclick="location.href='content.html'">
+      <td class="mono" style="color:var(--muted)">${i+1}</td>
+      <td><div style="font-weight:550">${r[1]}</div><div class="mono" style="font-size:11px;color:var(--muted)">${r[0]}</div></td>
+      <td><span class="chip">${r[2]}</span></td>
+      <td class="r num">${r[3]}</td>
+      <td class="r num">${r[4]}</td>
+      <td>${r[5]==='2/2' ? '<span class="pill ok"><span class="d"></span>2/2 副本</span>' : '<span class="pill warn"><span class="d"></span>1/2 待补齐</span>'}</td>
+    </tr>`).join('');
+
+  // 轮询活体感:倒计时 + 更新时刻(只有时钟真实走动,数据为 30s 上报快照)
+  (function () {
+    const tick = document.getElementById('poll-tick');
+    let left = 30, last = '12:04:31';
+    const clock = () => new Date().toTimeString().slice(0, 8);
+    setInterval(() => {
+      left -= 1;
+      if (left <= 0) { left = 30; last = clock(); }
+      tick.textContent = `· 下次刷新 ${left}s · 更新于 ${last}`;
+    }, 1000);
+  })();
+</script>
+</body>
+</html>
