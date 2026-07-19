@@ -1,6 +1,7 @@
 package pinstrategy
 
 import (
+	"sort"
 	"sync"
 	"time"
 )
@@ -160,4 +161,20 @@ func (l *DispatchLog) Stats1h(now time.Time) (batches, pins, unpins, manual int)
 		}
 	}
 	return batches, pins, unpins, manual
+}
+
+// Snapshot returns all retained DispatchRecords across all nodes, sorted by
+// SentAt descending (newest first). Used by the admin pin-plans query API.
+func (l *DispatchLog) Snapshot() []DispatchRecord {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	var all []DispatchRecord
+	for _, ring := range l.perNode {
+		all = append(all, ring...)
+	}
+	sort.Slice(all, func(i, j int) bool {
+		return all[i].SentAt.After(all[j].SentAt)
+	})
+	return all
 }
