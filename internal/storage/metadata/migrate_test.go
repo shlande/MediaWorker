@@ -36,7 +36,7 @@ func TestMigrateAll_ExecutesInOrder(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS blob_location_v2`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`INSERT INTO blob_location_v2`).
+	mock.ExpectExec(`DO \$\$`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`ALTER TABLE blob_location_v2`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
@@ -82,7 +82,7 @@ func TestMigrateAll_WithExistingTables(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS blob_location_v2`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`INSERT INTO blob_location_v2`).
+	mock.ExpectExec(`DO \$\$`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`ALTER TABLE blob_location_v2`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
@@ -128,7 +128,7 @@ func TestMigrateAll_SQLParsesCorrectly(t *testing.T) {
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS blob_location_v2`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`INSERT INTO blob_location_v2`).
+	mock.ExpectExec(`DO \$\$`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`ALTER TABLE blob_location_v2`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
