@@ -134,6 +134,61 @@ func TestPinUpdate_roundtrip(t *testing.T) {
 	})
 }
 
+func TestPinBlobMeta_roundtrip(t *testing.T) {
+	roundtrip(t, PinBlobMeta{
+		BlobHash: "sha256:abc",
+		BlobType: "mp4_init_segment",
+		Role:     "init",
+		Size:     1048576,
+	})
+}
+
+func TestPinUpdate_extended_roundtrip(t *testing.T) {
+	roundtrip(t, PinUpdate{
+		PinBlobs:  []string{"blob_1", "blob_2"},
+		ContentID: "cont_123",
+		PinBlobMetas: []PinBlobMeta{
+			{BlobHash: "blob_1", BlobType: "mp4_init_segment", Role: "init", Size: 100},
+			{BlobHash: "blob_2", BlobType: "m4s_media_segment", Role: "media", Size: 200},
+		},
+	})
+}
+
+// Given an old-payload PinUpdate JSON (no content_id / pin_blob_metas), When
+// decoded, Then the new fields stay zero and the node falls back to the
+// legacy path (old CP → new node compat).
+func TestPinUpdate_legacyJSON_decodesToZeroExtensions(t *testing.T) {
+	var up PinUpdate
+	if err := json.Unmarshal([]byte(`{"pin_blobs":["blob_1"],"unpin_blobs":["blob_3"]}`), &up); err != nil {
+		t.Fatalf("legacy PinUpdate must decode: %v", err)
+	}
+	if up.ContentID != "" || up.PinBlobMetas != nil {
+		t.Errorf("extensions must be zero for legacy payload, got content_id=%q metas=%v", up.ContentID, up.PinBlobMetas)
+	}
+	if len(up.PinBlobs) != 1 || len(up.UnpinBlobs) != 1 {
+		t.Errorf("legacy fields mangled: %+v", up)
+	}
+}
+
+// Given an extended PinUpdate, When marshalled, Then an old node's decoder
+// still sees pin_blobs/unpin_blobs (new CP → old node compat) and the new
+// keys ride along harmlessly.
+func TestPinUpdate_extendedJSON_keepsLegacyKeys(t *testing.T) {
+	data, err := json.Marshal(PinUpdate{
+		PinBlobs:     []string{"blob_1"},
+		ContentID:    "cont_9",
+		PinBlobMetas: []PinBlobMeta{{BlobHash: "blob_1", BlobType: "mp4_init_segment", Role: "init", Size: 100}},
+	})
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	for _, key := range []string{`"pin_blobs":["blob_1"]`, `"content_id":"cont_9"`, `"pin_blob_metas":[{`} {
+		if !strings.Contains(string(data), key) {
+			t.Errorf("extended PinUpdate JSON missing %s: %s", key, data)
+		}
+	}
+}
+
 func TestPinSpaceInfo_roundtrip(t *testing.T) {
 	roundtrip(t, PinSpaceInfo{
 		AvailableBytes:  10737418240,

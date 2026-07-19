@@ -7,16 +7,30 @@ import (
 )
 
 // HandlePinPlan processes a PinPlan received by a node. For each PinUpdate it
-// calls ApplyPin for every PinBlob (looking up blobType/role/size from the
-// provided blobs+roles metadata) and ApplyUnpin for every UnpinBlob.
+// applies pins and unpins:
+//
+//   - When update.PinBlobMetas is non-empty (new CP), the metas are
+//     authoritative: every pin uses the meta's blobType/role/size.
+//   - Otherwise (old CP payload), the legacy path looks up blobType/role/size
+//     from the provided blobs+roles metadata; a blob not found there gets
+//     conservative defaults (empty string/0).
 //
 // blobs + roles: from ContentIngestedEvent, arriving with the PinPlan or from
-// local cache. If a blob is not found in blobs/roles, conservative defaults
-// (empty string/0) are used.
+// local cache.
+//
+// INTERIM (todo 39): pinstore.ApplyPin still takes (blobHash, blobType, role,
+// size) — update.ContentID is carried on the wire but NOT yet threaded into
+// the store. todo 40 extends ApplyPin/PinEntry with content_id.
 func HandlePinPlan(plan types.PinPlan, ps *pinstore.PinStore, blobs []types.BlobDescriptor, roles []types.BlobRole) {
 	for _, update := range plan.Updates {
-		for _, pinHash := range update.PinBlobs {
-			ps.ApplyPin(pinHash, findBlobType(pinHash, blobs), findRole(pinHash, roles), findBlobSize(pinHash, blobs))
+		if len(update.PinBlobMetas) > 0 {
+			for _, meta := range update.PinBlobMetas {
+				ps.ApplyPin(meta.BlobHash, meta.BlobType, meta.Role, meta.Size)
+			}
+		} else {
+			for _, pinHash := range update.PinBlobs {
+				ps.ApplyPin(pinHash, findBlobType(pinHash, blobs), findRole(pinHash, roles), findBlobSize(pinHash, blobs))
+			}
 		}
 		for _, unpinHash := range update.UnpinBlobs {
 			ps.ApplyUnpin(unpinHash)

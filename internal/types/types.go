@@ -261,9 +261,27 @@ type PinPlan struct {
 // PinUpdate is a single pin/unpin instruction within a PinPlan.
 // PinBlobs and UnpinBlobs are lists of blob_hash strings — no separate
 // BlobHash field needed (pin is blob-level, list elements ARE blob hashes).
+//
+// Compatibility matrix (E6 wire extension):
+//   - new CP → old node: ContentID/PinBlobMetas are unknown fields, ignored by
+//     the old decoder; the node uses PinBlobs + local metadata as before.
+//   - old CP → new node: ContentID empty and PinBlobMetas nil → the node falls
+//     back to the PinBlobs + findBlob* lookup path. Metas stay OPTIONAL.
 type PinUpdate struct {
-	PinBlobs   []string `json:"pin_blobs"`
-	UnpinBlobs []string `json:"unpin_blobs"`
+	PinBlobs     []string      `json:"pin_blobs"`
+	UnpinBlobs   []string      `json:"unpin_blobs"`
+	ContentID    string        `json:"content_id,omitempty"`
+	PinBlobMetas []PinBlobMeta `json:"pin_blob_metas,omitempty"`
+}
+
+// PinBlobMeta carries the per-blob metadata a node needs to apply a pin
+// without consulting its local content cache: content-addressed identity
+// (BlobHash), binary type (BlobType), arrangement role (Role) and size.
+type PinBlobMeta struct {
+	BlobHash string `json:"blob_hash"`
+	BlobType string `json:"blob_type,omitempty"`
+	Role     string `json:"role,omitempty"`
+	Size     int64  `json:"size,omitempty"`
 }
 
 // PinSpaceInfo is the result of a node pin-space query (node → control plane RPC response).

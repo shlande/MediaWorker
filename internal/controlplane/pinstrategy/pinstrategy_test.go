@@ -95,6 +95,7 @@ type mockBroadcaster struct {
 type sentPlan struct {
 	nodeID    string
 	eventType string
+	payload   any
 }
 
 func (b *mockBroadcaster) SendToNode(nodeID string, eventType string, payload any) error {
@@ -103,7 +104,7 @@ func (b *mockBroadcaster) SendToNode(nodeID string, eventType string, payload an
 	if b.failOn[nodeID] {
 		return fmt.Errorf("injected send failure for %s", nodeID)
 	}
-	b.sent = append(b.sent, sentPlan{nodeID: nodeID, eventType: eventType})
+	b.sent = append(b.sent, sentPlan{nodeID: nodeID, eventType: eventType, payload: payload})
 	return b.sendErr
 }
 
@@ -878,5 +879,114 @@ func TestRebalance_TopContentsLimit_ZeroFallsBackToDefault(t *testing.T) {
 
 	if pop.lastTopContentsLimit != DefaultTopContentsLimit {
 		t.Fatalf("expected default limit=%d, got %d", DefaultTopContentsLimit, pop.lastTopContentsLimit)
+	}
+}
+
+// ─── sendNodePinPlan: ContentID + PinBlobMetas fill (todo 39) ───
+
+// Given a warm blob cache, When a plan is dispatched, Then the emitted
+// PinUpdate carries the content_id and complete per-blob metas.
+func TestSendNodePinPlan_CacheHit_EmitsFullMetas(t *testing.T) {
+	bcast := &mockBroadcaster{}
+	po := NewPinOrchestrator(&mockContentMetaClient{}, &mockPopularityClient{}, bcast)
+
+	blobs := []types.BlobDescriptor{
+		{BlobHash: "h_init", BlobType: "mp4_init_segment", Size: 100},
+		{BlobHash: "h_seg1", BlobType: "m4s_media_segment", Size: 200},
+	}
+	roles := []types.BlobRole{
+		{BlobHash: "h_init", Role: "init", SortOrder: 0},
+		{BlobHash: "h_seg1", Role: "media", SortOrder: 1},
+	}
+	po.cacheContentBlobs("cont_1", blobs, roles)
+
+	_, err := po.sendNodePinPlan(types.NodePinPlan{
+		NodeID: "node_a", ContentID: "cont_1", PinBlobs: []string{"h_init", "h_seg1"},
+	}, TriggerAuto)
+	if err != nil {
+		t.Fatalf("sendNodePinPlan: %v", err)
+	}
+
+	sent := bcast.sentEvents()
+	if len(sent) != 1 {
+		t.Fatalf("sent %d plans, want 1", len(sent))
+	}
+	plan, ok := sent[0].payload.(types.PinPlan)
+	if !ok {
+		t.Fatalf("payload type = %T, want types.PinPlan", sent[0].payload)
+	}
+	if len(plan.Updates) != 1 {
+		t.Fatalf("updates = %d, want 1", len(plan.Updates))
+	}
+	up := plan.Updates[0]
+	if up.ContentID != "cont_1" {
+		t.Errorf("ContentID = %q, want cont_1", up.ContentID)
+	}
+	if len(up.PinBlobMetas) != 2 {
+		t.Fatalf("PinBlobMetas = %d, want 2", len(up.PinBlobMetas))
+	}
+	want := map[string]types.PinBlobMeta{
+		"h_init": {BlobHash: "h_init", BlobType: "mp4_init_segment", Role: "init", Size: 100},
+		"h_seg1": {BlobHash: "h_seg1", BlobType: "m4s_media_segment", Role: "media", Size: 200},
+	}
+	for _, m := range up.PinBlobMetas {
+		w, ok := want[m.BlobHash]
+		if !ok {
+			t.Fatalf("unexpected meta for %q", m.BlobHash)
+		}
+		if m != w {
+			t.Errorf("meta[%s] = %+v, want %+v", m.BlobHash, m, w)
+		}
+	}
+}
+
+// Given a cold blob cache, When a plan is dispatched, Then metas are empty
+// (node falls back to its legacy path) but content_id is still present.
+func TestSendNodePinPlan_CacheMiss_EmitsContentIDWithoutMetas(t *testing.T) {
+	bcast := &mockBroadcaster{}
+	po := NewPinOrchestrator(&mockContentMetaClient{}, &mockPopularityClient{}, bcast)
+
+	_, err := po.sendNodePinPlan(types.NodePinPlan{
+		NodeID: "node_a", ContentID: "cont_cold", PinBlobs: []string{"h_x"},
+	}, TriggerAuto)
+	if err != nil {
+		t.Fatalf("sendNodePinPlan: %v", err)
+	}
+
+	sent := bcast.sentEvents()
+	if len(sent) != 1 {
+		t.Fatalf("sent %d plans, want 1", len(sent))
+	}
+	up := sent[0].payload.(types.PinPlan).Updates[0]
+	if up.ContentID != "cont_cold" {
+		t.Errorf("ContentID = %q, want cont_cold", up.ContentID)
+	}
+	if len(up.PinBlobMetas) != 0 {
+		t.Errorf("PinBlobMetas = %v, want empty on cache miss", up.PinBlobMetas)
+	}
+}
+
+// Given a cache entry that lacks one of the pin blobs, When a plan is
+// dispatched, Then metas are empty (all-or-nothing: a partial list would make
+// the node skip the missing blob).
+func TestSendNodePinPlan_PartialCacheEntry_FallsBackToNoMetas(t *testing.T) {
+	bcast := &mockBroadcaster{}
+	po := NewPinOrchestrator(&mockContentMetaClient{}, &mockPopularityClient{}, bcast)
+
+	po.cacheContentBlobs("cont_2",
+		[]types.BlobDescriptor{{BlobHash: "h_a", BlobType: "mp4_init_segment", Size: 100}},
+		[]types.BlobRole{{BlobHash: "h_a", Role: "init"}},
+	)
+
+	_, err := po.sendNodePinPlan(types.NodePinPlan{
+		NodeID: "node_a", ContentID: "cont_2", PinBlobs: []string{"h_a", "h_missing"},
+	}, TriggerAuto)
+	if err != nil {
+		t.Fatalf("sendNodePinPlan: %v", err)
+	}
+
+	up := bcast.sentEvents()[0].payload.(types.PinPlan).Updates[0]
+	if len(up.PinBlobMetas) != 0 {
+		t.Errorf("PinBlobMetas = %v, want empty (all-or-nothing on partial cache)", up.PinBlobMetas)
 	}
 }

@@ -310,8 +310,10 @@ func (po *PinOrchestrator) sendNodePinPlan(np types.NodePinPlan, trigger string)
 		Seq:        po.seq.Add(1),
 		TargetNode: np.NodeID,
 		Updates: []types.PinUpdate{{
-			PinBlobs:   np.PinBlobs,
-			UnpinBlobs: np.UnpinBlobs,
+			ContentID:    np.ContentID,
+			PinBlobs:     np.PinBlobs,
+			UnpinBlobs:   np.UnpinBlobs,
+			PinBlobMetas: po.pinBlobMetas(np.ContentID, np.PinBlobs),
 		}},
 	}
 	if err := po.broadcaster.SendToNode(np.NodeID, "PIN_PLAN_UPDATE", plan); err != nil {
@@ -329,6 +331,51 @@ func (po *PinOrchestrator) sendNodePinPlan(np types.NodePinPlan, trigger string)
 		SentAt:     time.Now(),
 	})
 	return plan.Seq, nil
+}
+
+// pinBlobMetas builds the PinBlobMetas for a PinUpdate from the content_blob
+// LRU cache only (bcMu-protected read, same 30 min TTL as getContentBlobs).
+// The send path must not block on PG, so a cache miss — or any pin blob absent
+// from the cached entry — yields nil (Debug-logged) and the update ships
+// without metas. All-or-nothing: the node selects the metas path whenever
+// metas is non-empty, so a partial list would silently skip the missing blobs.
+func (po *PinOrchestrator) pinBlobMetas(contentID string, pinBlobs []string) []types.PinBlobMeta {
+	if len(pinBlobs) == 0 {
+		return nil
+	}
+
+	po.bcMu.RLock()
+	entry, ok := po.blobCache.Get(contentID)
+	po.bcMu.RUnlock()
+	if !ok || time.Since(entry.CachedAt) >= 30*time.Minute {
+		log.Printf("[pinstrategy] DEBUG: pin blob metas skipped (blob cache miss): content=%s", contentID)
+		return nil
+	}
+
+	sizes := make(map[string]types.BlobDescriptor, len(entry.Blobs))
+	for _, b := range entry.Blobs {
+		sizes[b.BlobHash] = b
+	}
+	roles := make(map[string]string, len(entry.Roles))
+	for _, r := range entry.Roles {
+		roles[r.BlobHash] = r.Role
+	}
+
+	metas := make([]types.PinBlobMeta, 0, len(pinBlobs))
+	for _, hash := range pinBlobs {
+		b, ok := sizes[hash]
+		if !ok {
+			log.Printf("[pinstrategy] DEBUG: pin blob metas skipped (blob %s not in cache entry): content=%s", hash, contentID)
+			return nil
+		}
+		metas = append(metas, types.PinBlobMeta{
+			BlobHash: hash,
+			BlobType: b.BlobType,
+			Role:     roles[hash],
+			Size:     b.Size,
+		})
+	}
+	return metas
 }
 
 // SendManualPlan dispatches an admin-initiated pin/unpin plan to each target
