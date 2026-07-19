@@ -270,6 +270,11 @@ func New(h host.Host, opts ...Option) *SyncBroadcaster {
 		opt(sb)
 	}
 	h.SetStreamHandler(sb.protocolID, sb.handleStream)
+	slog.Info("SyncBroadcaster: stream handler registered",
+		"protocol_id", string(sb.protocolID),
+		"self_peer", h.ID().ShortString(),
+		"listen_addrs", h.Addrs(),
+	)
 	return sb
 }
 

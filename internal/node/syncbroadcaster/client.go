@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
@@ -126,6 +127,12 @@ func (c *Client) SendToControlPlane(ctx context.Context, targetCP peer.ID, event
 		_ = cw.CloseWrite()
 	}
 
+	slog.Info("SendToControlPlane: stream opened and written",
+		"target_cp", targetCP.ShortString(),
+		"protocol_id", string(c.protocolID),
+		"event_type", eventType,
+		"bytes_written", len(data),
+	)
 	return nil
 }
 
