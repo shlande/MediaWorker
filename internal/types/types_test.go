@@ -428,3 +428,60 @@ func TestVendor_roundtrip(t *testing.T) {
 		t.Fatalf("Vendor roundtrip: want %q, got %q", Vendor115, got)
 	}
 }
+
+func TestClientConfig_roundtrip(t *testing.T) {
+	roundtrip(t, ClientConfig{
+		ClientID:     "cid",
+		ClientSecret: "csecret",
+		RedirectURI:  "https://example.com/cb",
+		Region:       "cn",
+	})
+}
+
+// Given an empty ClientConfig, When marshalled, Then omitempty drops every
+// field and the output is exactly {}.
+func TestClientConfig_empty_marshals_as_empty_object(t *testing.T) {
+	data, err := json.Marshal(ClientConfig{})
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if string(data) != "{}" {
+		t.Fatalf("empty ClientConfig marshalled as %s, want {}", data)
+	}
+}
+
+// Given a fully populated AccountSnapshotEntry, When marshalled, Then the JSON
+// uses the accountregistry wire names (client_config included) and round-trips.
+func TestAccountSnapshotEntry_wire_contract(t *testing.T) {
+	entry := AccountSnapshotEntry{
+		Vendor:    VendorOneDrive,
+		AccountID: "od_acct_01",
+		Credential: Credential{
+			Cookies:      map[string]string{"sess": "abc"},
+			RefreshToken: "rt-od",
+		},
+		ClientConfig: ClientConfig{
+			ClientID:     "cid-od",
+			ClientSecret: "cs-od",
+			RedirectURI:  "https://login.example/od",
+			Region:       "cn",
+		},
+		RateLimitCfg:  RateLimitConfig{QPS: 5, Burst: 10, ConcurrentLimit: 12},
+		VendorProfile: VendorProfile{Vendor: VendorOneDrive, Weight: 3.5, BaseLatencyMs: 120, BandwidthMbps: 80},
+		Enabled:       true,
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal to map: %v", err)
+	}
+	for _, key := range []string{"vendor", "account_id", "credential", "client_config", "rate_limit_config", "vendor_profile", "enabled"} {
+		if _, ok := decoded[key]; !ok {
+			t.Errorf("snapshot JSON missing wire key %q: %s", key, data)
+		}
+	}
+	roundtrip(t, entry)
+}

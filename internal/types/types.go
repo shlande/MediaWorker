@@ -101,12 +101,40 @@ const (
 	VendorAliyundrive Vendor = "aliyundrive"
 )
 
-// Credential holds authentication information for a cloud drive account.
+// Credential holds secret authentication material for a cloud drive account.
+// Cookies/RefreshToken are the primary carriers (cookie-based vendors use
+// Cookies; OAuth2 vendors use RefreshToken).
 type Credential struct {
 	Cookies      map[string]string `json:"cookies"`
-	AccessToken  string            `json:"access_token"`
+	AccessToken  string            `json:"access_token"` // deprecated: TokenManager 内存管理，不落库
 	RefreshToken string            `json:"refresh_token"`
-	TokenExpire  time.Time         `json:"token_expire"`
+	TokenExpire  time.Time         `json:"token_expire"` // deprecated: TokenManager 内存管理，不落库
+}
+
+// ClientConfig holds the static OAuth2 client material for a cloud drive
+// account. It is maintained by an admin (not by the vendor flow) and delivered
+// to nodes via account snapshots. Separated from Credential (dynamic secret
+// material) per docs/account-backend-adjustments.md B1.
+type ClientConfig struct {
+	ClientID     string `json:"client_id,omitempty"`
+	ClientSecret string `json:"client_secret,omitempty"`
+	RedirectURI  string `json:"redirect_uri,omitempty"`
+	Region       string `json:"region,omitempty"` // onedrive: global|cn|us|de
+}
+
+// AccountSnapshotEntry mirrors the control plane's accountregistry.AccountInfo
+// wire shape for node-side decoding of ACCOUNT_SNAPSHOT events. Nodes must NOT
+// import controlplane packages, so the contract lives here. JSON tags must stay
+// in lockstep with AccountInfo (vendor/account_id/credential/client_config/
+// rate_limit_config/vendor_profile/enabled).
+type AccountSnapshotEntry struct {
+	Vendor        Vendor          `json:"vendor"`
+	AccountID     string          `json:"account_id"`
+	Credential    Credential      `json:"credential"`
+	ClientConfig  ClientConfig    `json:"client_config"`
+	RateLimitCfg  RateLimitConfig `json:"rate_limit_config"`
+	VendorProfile VendorProfile   `json:"vendor_profile"`
+	Enabled       bool            `json:"enabled"`
 }
 
 // DownloadLink represents a temporary download URL for a cloud drive file.
