@@ -320,6 +320,160 @@ func TestLoadOrGenerateControlPlaneKey_InvalidFile(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// Admin API config (todo 10)
+// ---------------------------------------------------------------------------
+
+const controlPlaneYAMLWithAdminAPI = `
+jwt_http:
+  listen: ":8443"
+dht_bootstrap:
+  namespace: "edge"
+metadata:
+  pg_dsn: "postgres://localhost/mw"
+identity:
+  priv_key_path: "/key"
+  libp2p_priv_key_path: "/key2"
+admin_api:
+  token_secret: "cfg-secret"
+`
+
+// Given an admin_api stanza with only token_secret, when the config loads,
+// then listen and quota_rebalance_interval fall back to their defaults.
+func TestLoadControlPlaneConfig_AdminAPIDefaults(t *testing.T) {
+	t.Setenv("ADMIN_TOKEN_SECRET", "")
+	path := writeTempControlPlaneYAML(t, controlPlaneYAMLWithAdminAPI)
+
+	cfg, err := LoadControlPlaneConfig(path)
+	if err != nil {
+		t.Fatalf("LoadControlPlaneConfig failed: %v", err)
+	}
+	if cfg.AdminAPI.Listen != "127.0.0.1:8082" {
+		t.Errorf("AdminAPI.Listen = %q, want %q", cfg.AdminAPI.Listen, "127.0.0.1:8082")
+	}
+	if cfg.AdminAPI.TokenSecret != "cfg-secret" {
+		t.Errorf("AdminAPI.TokenSecret = %q, want config value", cfg.AdminAPI.TokenSecret)
+	}
+	if cfg.AdminAPI.QuotaRebalanceInterval != "60s" {
+		t.Errorf("AdminAPI.QuotaRebalanceInterval = %q, want %q", cfg.AdminAPI.QuotaRebalanceInterval, "60s")
+	}
+}
+
+// Given admin_api.listen set but no token_secret in YAML, when the env var
+// ADMIN_TOKEN_SECRET is set, then the secret resolves from the environment.
+func TestLoadControlPlaneConfig_AdminAPIEnvSecretFallback(t *testing.T) {
+	t.Setenv("ADMIN_TOKEN_SECRET", "env-secret")
+	const yaml = `
+jwt_http:
+  listen: ":8443"
+dht_bootstrap:
+  namespace: "edge"
+metadata:
+  pg_dsn: "postgres://localhost/mw"
+identity:
+  priv_key_path: "/key"
+  libp2p_priv_key_path: "/key2"
+admin_api:
+  listen: ":9090"
+  quota_rebalance_interval: "30s"
+`
+	path := writeTempControlPlaneYAML(t, yaml)
+
+	cfg, err := LoadControlPlaneConfig(path)
+	if err != nil {
+		t.Fatalf("LoadControlPlaneConfig failed: %v", err)
+	}
+	if cfg.AdminAPI.TokenSecret != "env-secret" {
+		t.Errorf("AdminAPI.TokenSecret = %q, want env value", cfg.AdminAPI.TokenSecret)
+	}
+	if cfg.AdminAPI.Listen != ":9090" {
+		t.Errorf("AdminAPI.Listen = %q, want explicit :9090", cfg.AdminAPI.Listen)
+	}
+	if cfg.AdminAPI.QuotaRebalanceInterval != "30s" {
+		t.Errorf("AdminAPI.QuotaRebalanceInterval = %q, want explicit 30s", cfg.AdminAPI.QuotaRebalanceInterval)
+	}
+}
+
+// Given admin_api enabled (listen set) with no secret in YAML or env, when
+// the config loads, then validation fails naming admin_api.token_secret.
+func TestLoadControlPlaneConfig_AdminAPIMissingSecret(t *testing.T) {
+	t.Setenv("ADMIN_TOKEN_SECRET", "")
+	const yaml = `
+jwt_http:
+  listen: ":8443"
+dht_bootstrap:
+  namespace: "edge"
+metadata:
+  pg_dsn: "postgres://localhost/mw"
+identity:
+  priv_key_path: "/key"
+  libp2p_priv_key_path: "/key2"
+admin_api:
+  listen: "127.0.0.1:8082"
+`
+	path := writeTempControlPlaneYAML(t, yaml)
+
+	_, err := LoadControlPlaneConfig(path)
+	if err == nil {
+		t.Fatal("expected error for missing admin_api.token_secret, got nil")
+	}
+	if !strings.Contains(err.Error(), "admin_api.token_secret") {
+		t.Errorf("error %q does not name admin_api.token_secret", err)
+	}
+}
+
+// Given no admin_api stanza at all (and no env secret), when the config
+// loads, then the admin server stays disabled (Listen empty) with defaults
+// applied elsewhere — existing configs keep working.
+func TestLoadControlPlaneConfig_AdminAPIAbsentDisabled(t *testing.T) {
+	t.Setenv("ADMIN_TOKEN_SECRET", "")
+	path := writeTempControlPlaneYAML(t, validControlPlaneYAML)
+
+	cfg, err := LoadControlPlaneConfig(path)
+	if err != nil {
+		t.Fatalf("LoadControlPlaneConfig failed: %v", err)
+	}
+	if cfg.AdminAPI.Listen != "" {
+		t.Errorf("AdminAPI.Listen = %q, want empty (disabled)", cfg.AdminAPI.Listen)
+	}
+	if cfg.AdminAPI.QuotaRebalanceInterval != "60s" {
+		t.Errorf("AdminAPI.QuotaRebalanceInterval = %q, want default 60s", cfg.AdminAPI.QuotaRebalanceInterval)
+	}
+}
+
+// Given explicit optional admin_api fields, when the config loads, then they
+// round-trip unchanged.
+func TestLoadControlPlaneConfig_AdminAPIOptionalFields(t *testing.T) {
+	t.Setenv("ADMIN_TOKEN_SECRET", "")
+	const yaml = `
+jwt_http:
+  listen: ":8443"
+dht_bootstrap:
+  namespace: "edge"
+metadata:
+  pg_dsn: "postgres://localhost/mw"
+identity:
+  priv_key_path: "/key"
+  libp2p_priv_key_path: "/key2"
+admin_api:
+  token_secret: "cfg-secret"
+  prometheus_url: "http://prom:9090"
+  alert_webhook_token: "hook-token"
+`
+	path := writeTempControlPlaneYAML(t, yaml)
+
+	cfg, err := LoadControlPlaneConfig(path)
+	if err != nil {
+		t.Fatalf("LoadControlPlaneConfig failed: %v", err)
+	}
+	if cfg.AdminAPI.PrometheusURL != "http://prom:9090" {
+		t.Errorf("AdminAPI.PrometheusURL = %q", cfg.AdminAPI.PrometheusURL)
+	}
+	if cfg.AdminAPI.AlertWebhookToken != "hook-token" {
+		t.Errorf("AdminAPI.AlertWebhookToken = %q", cfg.AdminAPI.AlertWebhookToken)
+	}
+}
+
+// ---------------------------------------------------------------------------
 // T17: deprecated-key Warn scanner (control plane)
 // ---------------------------------------------------------------------------
 

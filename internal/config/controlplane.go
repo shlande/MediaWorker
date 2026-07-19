@@ -23,6 +23,7 @@ type ControlPlaneConfig struct {
 	SyncBroadcaster SyncBroadcasterConfig      `yaml:"sync_broadcaster"`
 	Metadata        MetadataConfig             `yaml:"metadata"`
 	Identity        ControlPlaneIdentityConfig `yaml:"identity"`
+	AdminAPI        AdminAPIConfig             `yaml:"admin_api"`
 }
 
 // ---------------------------------------------------------------------------
@@ -81,6 +82,58 @@ func applyJWTPolicyDefaults(p *JWTPolicyConfig) {
 	if !p.DefaultCapabilities.Edge && !p.DefaultCapabilities.PeerICP && !p.DefaultCapabilities.RelayProvider {
 		p.DefaultCapabilities.Edge = true
 		p.DefaultCapabilities.PeerICP = true
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Admin API server (control-plane management plane)
+// ---------------------------------------------------------------------------
+
+// AdminAPIConfig controls the control-plane admin HTTP server
+// (internal/controlplane/adminapi). The server is opt-in: a fully-empty
+// admin_api stanza (and no ADMIN_TOKEN_SECRET in the environment) leaves
+// Listen empty, which consumers treat as "admin server disabled".
+type AdminAPIConfig struct {
+	Listen                 string `yaml:"listen"`                   // default "127.0.0.1:8082"; empty = admin server disabled
+	TokenSecret            string `yaml:"token_secret"`             // empty -> env ADMIN_TOKEN_SECRET; still empty -> startup error when enabled
+	PrometheusURL          string `yaml:"prometheus_url"`           // optional
+	AlertWebhookToken      string `yaml:"alert_webhook_token"`      // optional; empty = webhook endpoint not mounted
+	QuotaRebalanceInterval string `yaml:"quota_rebalance_interval"` // default "60s"
+}
+
+const (
+	defaultAdminAPIListen                 = "127.0.0.1:8082"
+	defaultAdminAPIQuotaRebalanceInterval = "60s"
+
+	// adminAPITokenSecretEnv is the environment fallback for
+	// admin_api.token_secret. The secret is never logged.
+	adminAPITokenSecretEnv = "ADMIN_TOKEN_SECRET"
+)
+
+// applyAdminAPIDefaults normalises zero/empty fields of a to sensible defaults
+// in-place, in the style of applyJWTPolicyDefaults. A nil receiver is treated
+// as an empty config.
+//
+// Enablement rule: the stanza is opt-in. Any explicitly-configured field (or
+// an env-provided token secret) activates the admin server, and an empty
+// Listen then falls back to the default address. A completely empty stanza
+// keeps Listen empty so existing configs without admin_api stay disabled.
+func applyAdminAPIDefaults(a *AdminAPIConfig) {
+	if a == nil {
+		return
+	}
+	if a.TokenSecret == "" {
+		a.TokenSecret = os.Getenv(adminAPITokenSecretEnv)
+	}
+	configured := a.TokenSecret != "" ||
+		a.PrometheusURL != "" ||
+		a.AlertWebhookToken != "" ||
+		a.QuotaRebalanceInterval != ""
+	if a.Listen == "" && configured {
+		a.Listen = defaultAdminAPIListen
+	}
+	if a.QuotaRebalanceInterval == "" {
+		a.QuotaRebalanceInterval = defaultAdminAPIQuotaRebalanceInterval
 	}
 }
 
@@ -198,10 +251,14 @@ func LoadControlPlaneConfig(path string) (*ControlPlaneConfig, error) {
 	scanDeprecatedConfigKeys(data, deprecatedControlPlaneKeys)
 
 	applyJWTPolicyDefaults(&cfg.JWTPolicy)
+	applyAdminAPIDefaults(&cfg.AdminAPI)
 
 	// Required-field validation.
 	if cfg.JWT.Listen == "" {
 		return nil, fmt.Errorf("config: jwt_http.listen is required")
+	}
+	if cfg.AdminAPI.Listen != "" && cfg.AdminAPI.TokenSecret == "" {
+		return nil, fmt.Errorf("config: admin_api.token_secret is required when admin_api.listen is set (or set env ADMIN_TOKEN_SECRET)")
 	}
 	if cfg.DHTBootstrap.Namespace == "" {
 		return nil, fmt.Errorf("config: dht_bootstrap.namespace is required")
