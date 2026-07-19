@@ -198,6 +198,7 @@ func run(configPath string) error {
 				slog.Warn("failed to decode CONTENT_INGESTED", "err", err)
 				continue
 			}
+			metrics.RecordCPContentIngestedReceived()
 			po.OnContentIngested(evtData)
 		}
 	}()
