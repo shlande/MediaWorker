@@ -239,6 +239,42 @@ func TestLoadConfig_EdgeNode(t *testing.T) {
 	}
 }
 
+// Given node.region in YAML, When LoadConfig runs, Then Node.Region is populated.
+func TestLoadConfig_NodeRegion(t *testing.T) {
+	yamlDoc := `
+node:
+  region: "cn"
+  identity:
+    priv_key_path: "/data/identity/ed25519.key"
+  libp2p:
+    listen:
+      - "/ip4/0.0.0.0/tcp/9001"
+    dht:
+      namespace: "edge"
+  jwt_service:
+    endpoint: "https://control-plane.example.com/v1/node/jwt"
+`
+	cfg, err := LoadConfig(writeTempYAML(t, yamlDoc))
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.Node.Region != "cn" {
+		t.Errorf("Node.Region = %q, want %q", cfg.Node.Region, "cn")
+	}
+}
+
+// Given YAML without node.region, When LoadConfig runs, Then Node.Region stays
+// empty (empty = unknown).
+func TestLoadConfig_NodeRegionAbsent_DefaultsEmpty(t *testing.T) {
+	cfg, err := LoadConfig(writeTempYAML(t, l4ConfigYAML))
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.Node.Region != "" {
+		t.Errorf("Node.Region = %q, want empty for absent key", cfg.Node.Region)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Extended config: vendor_profiles, rate_limits, health_check, cloud_accounts
 // ---------------------------------------------------------------------------

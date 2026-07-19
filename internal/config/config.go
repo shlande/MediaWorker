@@ -36,6 +36,7 @@ type NodeConfig struct {
 	DeclaredCapabilities CapabilitiesConfig `yaml:"declared_capabilities"`
 	Libp2p               Libp2pConfig       `yaml:"libp2p"`
 	JWTService           JWTServiceConfig   `yaml:"jwt_service"`
+	Region               string             `yaml:"region,omitempty"` // deployment region; empty = unknown
 }
 
 // IdentityConfig holds the path to the node's Ed25519 private key.

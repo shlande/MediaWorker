@@ -3,6 +3,7 @@ package types
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -141,6 +142,59 @@ func TestNodeStatusReport_roundtrip(t *testing.T) {
 		Healthy:    true,
 		LastUpdate: 1700000100,
 	})
+}
+
+// Given a NodeStatusReport with all extended fields set, When marshalled,
+// Then the new wire keys appear and the report round-trips exactly.
+func TestNodeStatusReport_extendedFields(t *testing.T) {
+	cold := PartitionStatus{TotalBytes: 900, UsedBytes: 100, BlobCount: 7}
+	rep := NodeStatusReport{
+		NodeID:       "node_l4_02",
+		PeerID:       PeerId("12D3KooWExt"),
+		Capabilities: NodeCapabilities{Edge: true, L4Backhaul: true},
+		PrefixSpace:  PartitionStatus{TotalBytes: 1, UsedBytes: 2, BlobCount: 3},
+		WarmSpace:    PartitionStatus{TotalBytes: 4, UsedBytes: 5, BlobCount: 6},
+		Healthy:      true,
+		LastUpdate:   1700000200,
+
+		Region:            "cn",
+		Version:           "v0.4.0",
+		StartedAt:         1700000000,
+		ConnCount:         12,
+		ColdSpace:         &cold,
+		JWTRefreshFail24h: 2,
+	}
+	data, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	for _, key := range []string{
+		`"region":"cn"`, `"version":"v0.4.0"`, `"started_at":1700000000`,
+		`"conn_count":12`, `"cold_space":`, `"jwt_refresh_fail_24h":2`,
+	} {
+		if !strings.Contains(string(data), key) {
+			t.Errorf("extended report JSON missing %s: %s", key, data)
+		}
+	}
+	roundtrip(t, rep)
+}
+
+// Given a legacy report JSON without the extended fields, When unmarshalled,
+// Then decoding succeeds and every new field stays at its zero value (CP
+// compatibility with old node reports).
+func TestNodeStatusReport_legacyJSON_decodesToZeroValues(t *testing.T) {
+	legacy := `{"node_id":"n1","peer_id":"12D3KooWLegacy","capabilities":{"edge":true,"l4_backhaul":false,"relay_provider":false,"peer_icp":false},"prefix_space":{"total_bytes":1,"used_bytes":2,"blob_count":3},"warm_space":{"total_bytes":4,"used_bytes":5,"blob_count":6},"healthy":true,"last_update":1700000100}`
+	var rep NodeStatusReport
+	if err := json.Unmarshal([]byte(legacy), &rep); err != nil {
+		t.Fatalf("legacy report must decode: %v", err)
+	}
+	if rep.Region != "" || rep.Version != "" || rep.StartedAt != 0 ||
+		rep.ConnCount != 0 || rep.ColdSpace != nil || rep.JWTRefreshFail24h != 0 {
+		t.Errorf("extended fields must be zero values, got %+v", rep)
+	}
+	if rep.NodeID != "n1" || !rep.Healthy || rep.LastUpdate != 1700000100 || rep.PrefixSpace.BlobCount != 3 {
+		t.Errorf("legacy fields mangled: %+v", rep)
+	}
 }
 
 func TestPartitionStatus_roundtrip(t *testing.T) {

@@ -761,7 +761,7 @@ func TestPeerIdSet_Basic(t *testing.T) {
 func TestAuditLog_Log(t *testing.T) {
 	var buf bytes.Buffer
 	al := cpjwt.NewAuditLog(&buf)
-	al.Log("QmTest", "192.168.1.1", true, 50_000_000, time.Now().Unix()+3600)
+	al.Log("QmTest", "192.168.1.1", true, 50_000_000, time.Now().Unix()+3600, "ok", "")
 
 	line := buf.String()
 	if line == "" {
@@ -782,7 +782,7 @@ func TestAuditLog_Log(t *testing.T) {
 
 func TestAuditLog_NilWriter(t *testing.T) {
 	al := cpjwt.NewAuditLog(nil)
-	al.Log("QmTest", "10.0.0.1", false, 50_000_000, time.Now().Unix()+3600)
+	al.Log("QmTest", "10.0.0.1", false, 50_000_000, time.Now().Unix()+3600, "ok", "")
 }
 
 // ---------------------------------------------------------------------------

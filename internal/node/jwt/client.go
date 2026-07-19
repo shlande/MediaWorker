@@ -31,9 +31,17 @@ type JWTClient struct {
 	currentJWT types.CapabilityJWT
 	degraded   bool
 
+	// Refresh tracking for NodeStatusReport.jwt_refresh_fail_24h (E1).
+	lastRefreshAt         time.Time
+	lastRefreshOK         bool
+	refreshFailTimestamps []time.Time // trailing 24h window, pruned lazily
+
 	// retryBackoff controls the base delay for retries. Tests can set this to a
 	// small value to speed up retry exhaustion.
 	retryBackoff time.Duration
+
+	// now is the clock; tests override it to exercise the 24h sliding window.
+	now func() time.Time
 }
 
 // NewJWTClient creates a JWTClient. privKey is the node's Ed25519 private key.
@@ -46,13 +54,17 @@ func NewJWTClient(privKey ed25519.PrivateKey, peerID types.PeerId, endpoint stri
 		endpoint:     endpoint,
 		httpClient:   &http.Client{Timeout: 10 * time.Second},
 		capabilities: capabilities,
+		now:          time.Now,
 	}
 }
 
 // RequestJWT sends a signed JWTRequest (with declared capabilities) to the
 // control plane and returns the response. On success the returned JWT is
-// cached and accessible via CurrentJWT.
-func (c *JWTClient) RequestJWT(ctx context.Context) (*types.JWTResponse, error) {
+// cached and accessible via CurrentJWT. Every attempt (success or failure) is
+// recorded for RefreshStats; RequestJWTWithRetry therefore tracks per-attempt.
+func (c *JWTClient) RequestJWT(ctx context.Context) (out *types.JWTResponse, err error) {
+	defer func() { c.recordRefresh(err == nil) }()
+
 	// Copy capabilities through a pointer so the request's omitempty works:
 	// a non-nil pointer (even all-false) signals "I am declaring capabilities".
 	declared := c.capabilities
@@ -149,6 +161,43 @@ func (c *JWTClient) IsDegraded() bool {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.degraded
+}
+
+// RefreshStats reports the last refresh attempt time, whether it succeeded,
+// and the number of refresh failures inside the trailing 24h window.
+// Window pruning is lazy (on append and on read).
+func (c *JWTClient) RefreshStats() (lastAt time.Time, lastOK bool, failCount24h int) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.pruneRefreshFailsLocked(c.now())
+	return c.lastRefreshAt, c.lastRefreshOK, len(c.refreshFailTimestamps)
+}
+
+// recordRefresh stores the outcome of one refresh attempt.
+func (c *JWTClient) recordRefresh(ok bool) {
+	now := c.now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.lastRefreshAt = now
+	c.lastRefreshOK = ok
+	if !ok {
+		c.refreshFailTimestamps = append(c.refreshFailTimestamps, now)
+		c.pruneRefreshFailsLocked(now)
+	}
+}
+
+// pruneRefreshFailsLocked drops failure timestamps outside the trailing 24h
+// window ending at now. Caller must hold c.mu.
+func (c *JWTClient) pruneRefreshFailsLocked(now time.Time) {
+	cutoff := now.Add(-24 * time.Hour)
+	keep := 0
+	for _, ts := range c.refreshFailTimestamps {
+		if ts.After(cutoff) {
+			c.refreshFailTimestamps[keep] = ts
+			keep++
+		}
+	}
+	c.refreshFailTimestamps = c.refreshFailTimestamps[:keep]
 }
 
 // enterDegradedMode logs the error and sets the degraded flag. Recovery from

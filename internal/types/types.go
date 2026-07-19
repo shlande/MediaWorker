@@ -270,6 +270,8 @@ type PinSpaceInfo struct {
 }
 
 // NodeStatusReport is a node's periodic status report (node → control plane).
+// The extended fields are all omitempty: reports from old nodes lacking them
+// (and old CPs receiving extended reports) remain wire-compatible.
 type NodeStatusReport struct {
 	NodeID       string           `json:"node_id"`
 	PeerID       PeerId           `json:"peer_id"`
@@ -278,6 +280,13 @@ type NodeStatusReport struct {
 	WarmSpace    PartitionStatus  `json:"warm_space"`
 	Healthy      bool             `json:"healthy"`
 	LastUpdate   int64            `json:"last_update"`
+
+	Region            string           `json:"region,omitempty"`               // from node.region config; empty = unknown
+	Version           string           `json:"version,omitempty"`              // node binary version
+	StartedAt         int64            `json:"started_at,omitempty"`           // unix seconds; uptime = now - StartedAt
+	ConnCount         int              `json:"conn_count,omitempty"`           // libp2p connection count
+	ColdSpace         *PartitionStatus `json:"cold_space,omitempty"`           // nil until cold cache is wired (cmd/edge-node/main.go:325-327)
+	JWTRefreshFail24h int              `json:"jwt_refresh_fail_24h,omitempty"` // JWT refresh failures in trailing 24h (JWTClient.RefreshStats)
 }
 
 // PartitionStatus is the status of a single storage partition.
