@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -392,6 +393,7 @@ func (sb *SyncBroadcaster) SetSnapshotStore(ss *SnapshotStore) {
 // handleStream reads a varint-prefixed JSON WireMessage from an incoming
 // /edge/control/1.0.0 stream and dispatches it to matching subscribers.
 func (sb *SyncBroadcaster) handleStream(stream network.Stream) {
+	slog.Info("SyncBroadcaster: inbound stream received", "from", stream.Conn().RemotePeer().ShortString())
 	defer func() { _ = stream.Close() }()
 
 	msg, err := ReadWireMessage(stream)
