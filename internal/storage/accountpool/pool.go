@@ -314,16 +314,20 @@ func (ap *AccountPool) UpdateHealth(key string, h types.HealthState) {
 }
 
 // MarkBanned sets the account's health state to banned and forces the circuit
-// breaker open. If the account does not exist the call is a no-op.
-func (ap *AccountPool) MarkBanned(key string) {
+// breaker open. If the account does not exist the call is a no-op. It reports
+// whether the account was found so event consumers can Warn on unknown keys.
+func (ap *AccountPool) MarkBanned(key string) bool {
 	ap.mu.Lock()
 	defer ap.mu.Unlock()
-	if a, ok := ap.accounts[key]; ok {
-		a.Health.Store(types.HealthState{State: "banned"})
-		if a.CB != nil {
-			a.CB.ForceOpen()
-		}
+	a, ok := ap.accounts[key]
+	if !ok {
+		return false
 	}
+	a.Health.Store(types.HealthState{State: "banned"})
+	if a.CB != nil {
+		a.CB.ForceOpen()
+	}
+	return true
 }
 
 // ForceCloseCircuit force-closes the circuit breaker for the account identified

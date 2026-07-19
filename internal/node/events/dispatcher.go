@@ -97,7 +97,10 @@ func (d *Dispatcher) handleBan(payload []byte) {
 		d.logger.Debug("events: no account pool (non-L4), skipping BAN", "vendor", p.Vendor, "account_id", p.AccountID)
 		return
 	}
-	d.pool.MarkBanned(string(p.Vendor) + ":" + p.AccountID)
+	if !d.pool.MarkBanned(string(p.Vendor) + ":" + p.AccountID) {
+		d.logger.Warn("events: BAN targets unknown account, no-op", "vendor", p.Vendor, "account_id", p.AccountID)
+		return
+	}
 	d.logger.Info("events: account banned", "vendor", p.Vendor, "account_id", p.AccountID, "reason", p.Reason)
 }
 
