@@ -496,6 +496,49 @@ access_layer:
 	}
 }
 
+func TestDataPlaneBackhaulCapacityMbps_ParsedWhenSet(t *testing.T) {
+	// Given: data_plane stanza with backhaul_capacity_mbps
+	path := writeTempYAML(t, minimalValidNodeYAML+`
+access_layer:
+  data_plane:
+    enabled: true
+    location_endpoint: "https://control-plane.example.com"
+    backhaul_capacity_mbps: 500
+`)
+
+	// When: the config is loaded
+	cfg, err := LoadConfig(path)
+
+	// Then: the capacity round-trips into DataPlaneConfig
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.Access.DataPlane.BackhaulCapacityMbps != 500 {
+		t.Fatalf("BackhaulCapacityMbps = %d, want 500", cfg.Access.DataPlane.BackhaulCapacityMbps)
+	}
+}
+
+func TestDataPlaneBackhaulCapacityMbps_DefaultZero(t *testing.T) {
+	// Given: a data_plane stanza WITHOUT backhaul_capacity_mbps
+	path := writeTempYAML(t, minimalValidNodeYAML+`
+access_layer:
+  data_plane:
+    enabled: true
+    location_endpoint: "https://control-plane.example.com"
+`)
+
+	// When: the config is loaded
+	cfg, err := LoadConfig(path)
+
+	// Then: capacity defaults to 0 (= capacity gauge not reported)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.Access.DataPlane.BackhaulCapacityMbps != 0 {
+		t.Fatalf("BackhaulCapacityMbps = %d, want 0 (absent = do not report)", cfg.Access.DataPlane.BackhaulCapacityMbps)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // admin_api (node-local admin server) validation + defaults
 // ---------------------------------------------------------------------------

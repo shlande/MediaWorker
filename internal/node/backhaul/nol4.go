@@ -9,6 +9,9 @@ import (
 )
 
 func (bm *BackhaulManager) HandleBlobNoL4(ctx context.Context, w io.Writer, blobHash string) error {
+	// Tracking scope (todo 25): NOT instrumented. On a non-L4 node the real
+	// backhaul happens on the REMOTE L4 node serving FetchFromL4Node — it is
+	// counted there. Counting here too would double-count bytes cluster-wide.
 	if data, ok := bm.cache.Get(blobHash); ok {
 		bm.recordCacheRequest(true)
 		_, err := w.Write(data)

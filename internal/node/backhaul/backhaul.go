@@ -2,9 +2,36 @@ package backhaul
 
 import (
 	"context"
+	"sort"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/shlande/mediaworker/internal/node/monitor"
 	"golang.org/x/sync/singleflight"
+)
+
+// observation is one local-backhaul (data-plane) fetch attempt record.
+// Only the L4 local-backhaul path (l4.go) produces observations; sibling
+// ICP fetches and cache hits are NOT backhaul and are excluded by design.
+// Todo 42 extends tracking with ttfb observations in a separate slice —
+// keep this struct focused on the attempt outcome.
+type observation struct {
+	ts        time.Time
+	success   bool
+	latencyMs int64
+	bytes     int64
+}
+
+const (
+	// backhaulObservationCapacity bounds the observation ring. Stats24h
+	// filters by timestamp, so the ring is purely a memory bound — at 10k
+	// entries the p95 sort touches at most ~10k int64s per call.
+	backhaulObservationCapacity = 10_000
+
+	backhaulStatsWindow = 24 * time.Hour
+
+	backhaulUtilizationWindow = time.Minute
 )
 
 type BackhaulManager struct {
@@ -21,6 +48,17 @@ type BackhaulManager struct {
 	// (cache_type="warm") and edge_peer_request_total + edge_peer_hit_total
 	// (sibling ICP).
 	metrics *monitor.Metrics
+
+	// obsMu guards wins. wins is a bounded ring of the most recent
+	// backhaul observations; when it exceeds backhaulObservationCapacity
+	// the oldest half is evicted in one amortized copy (append stays O(1)
+	// amortized, backing array bounded at ~capacity).
+	obsMu sync.Mutex
+	wins  []observation
+
+	// bytesTotal mirrors edge_backhaul_bytes_total; atomic so Stats24h
+	// reads it without obsMu.
+	bytesTotal atomic.Int64
 }
 
 type ICPFetcher interface {
@@ -81,6 +119,91 @@ func (bm *BackhaulManager) recordICPRequest(hit bool) {
 	}
 }
 
+// recordObservation appends one backhaul attempt to the ring, accumulates
+// the byte total, and backfills the edge_backhaul_bytes_total counter and
+// edge_backhaul_bandwidth_bytes gauge (on-stats-change update, no ticker).
+// Nil-metrics safe.
+func (bm *BackhaulManager) recordObservation(o observation) {
+	bm.bytesTotal.Add(o.bytes)
+
+	bm.obsMu.Lock()
+	bm.wins = append(bm.wins, o)
+	if len(bm.wins) > backhaulObservationCapacity {
+		drop := len(bm.wins) - backhaulObservationCapacity/2
+		copy(bm.wins, bm.wins[drop:])
+		bm.wins = bm.wins[:len(bm.wins)-drop]
+	}
+	util := bm.utilizationLocked(o.ts)
+	bm.obsMu.Unlock()
+
+	if bm.metrics == nil {
+		return
+	}
+	if o.bytes > 0 {
+		bm.metrics.RecordBackhaulBytes(o.bytes)
+	}
+	bm.metrics.SetBackhaulBandwidth(int64(util))
+}
+
+// Stats24h returns the success rate and p95 latency over the trailing 24h
+// window ending at now, plus the cumulative backhaul byte total. p95 is the
+// nearest-rank of the sorted window latencies — the sample is bounded by
+// backhaulObservationCapacity (10k), so the sort stays cheap. Zero
+// observations in the window yield successRate 0 (not NaN).
+func (bm *BackhaulManager) Stats24h(now time.Time) (successRate float64, p95Ms int64, totalBytes int64) {
+	cutoff := now.Add(-backhaulStatsWindow)
+
+	bm.obsMu.Lock()
+	var total, successes int64
+	lat := make([]int64, 0, len(bm.wins))
+	for _, o := range bm.wins {
+		if o.ts.Before(cutoff) {
+			continue
+		}
+		total++
+		if o.success {
+			successes++
+		}
+		lat = append(lat, o.latencyMs)
+	}
+	bm.obsMu.Unlock()
+
+	if total == 0 {
+		return 0, 0, bm.bytesTotal.Load()
+	}
+	sort.Slice(lat, func(i, j int) bool { return lat[i] < lat[j] })
+	rank := (95*len(lat) + 99) / 100 // ceil(0.95 * n)
+	return float64(successes) / float64(total), lat[rank-1], bm.bytesTotal.Load()
+}
+
+// BackhaulUtilization returns the local-backhaul throughput in bytes/sec,
+// averaged over the trailing 60s window.
 func (bm *BackhaulManager) BackhaulUtilization() float64 {
-	return 0
+	bm.obsMu.Lock()
+	defer bm.obsMu.Unlock()
+	return bm.utilizationLocked(time.Now())
+}
+
+func (bm *BackhaulManager) utilizationLocked(now time.Time) float64 {
+	cutoff := now.Add(-backhaulUtilizationWindow)
+	var sum int64
+	for _, o := range bm.wins {
+		if o.ts.Before(cutoff) {
+			continue
+		}
+		sum += o.bytes
+	}
+	return float64(sum) / backhaulUtilizationWindow.Seconds()
+}
+
+// SetBackhaulCapacityMbps publishes the configured backhaul capacity to the
+// edge_backhaul_capacity_bytes gauge (mbps * 1e6 / 8 bytes/sec — the gauge
+// is bytes-based; the UI contract's *_bps fields multiply by 8 downstream).
+// mbps <= 0 means "capacity unknown": the gauge is left unreported. Wire
+// from cfg.Access.DataPlane.BackhaulCapacityMbps at node startup.
+func (bm *BackhaulManager) SetBackhaulCapacityMbps(mbps int) {
+	if mbps <= 0 || bm.metrics == nil {
+		return
+	}
+	bm.metrics.SetBackhaulCapacity(int64(mbps) * 1_000_000 / 8)
 }

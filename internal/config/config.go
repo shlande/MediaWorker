@@ -233,6 +233,11 @@ type DataPlaneConfig struct {
 	// node's HTTPLocationClient (GET {endpoint}/v1/blob-locations/{hash}).
 	// REQUIRED when Enabled is true — LoadConfig fails otherwise.
 	LocationEndpoint string `yaml:"location_endpoint"`
+	// BackhaulCapacityMbps is the operator-declared uplink capacity of this
+	// node's backhaul path, in megabits/sec. 0 (default) means "unknown" —
+	// the edge_backhaul_capacity_bytes gauge is not reported. Consumed via
+	// backhaul.BackhaulManager.SetBackhaulCapacityMbps.
+	BackhaulCapacityMbps int `yaml:"backhaul_capacity_mbps"`
 }
 
 // LinkPoolConfig controls the max number of cached driver-link entries.
