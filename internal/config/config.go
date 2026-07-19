@@ -228,6 +228,10 @@ type AccessConfig struct {
 type DataPlaneConfig struct {
 	Enabled  bool           `yaml:"enabled"`
 	LinkPool LinkPoolConfig `yaml:"link_pool"`
+	// LocationEndpoint is the control-plane HTTP base URL used by the edge
+	// node's HTTPLocationClient (GET {endpoint}/v1/blob-locations/{hash}).
+	// REQUIRED when Enabled is true — LoadConfig fails otherwise.
+	LocationEndpoint string `yaml:"location_endpoint"`
 }
 
 // LinkPoolConfig controls the max number of cached driver-link entries.
@@ -397,6 +401,9 @@ func LoadConfig(path string) (*Config, error) {
 	}
 	if cfg.Node.JWTService.Endpoint == "" {
 		return nil, fmt.Errorf("config: node.jwt_service.endpoint is required")
+	}
+	if cfg.Access.DataPlane.Enabled && cfg.Access.DataPlane.LocationEndpoint == "" {
+		return nil, fmt.Errorf("config: access_layer.data_plane.location_endpoint is required when access_layer.data_plane.enabled is true")
 	}
 
 	normalizeJWTRefreshDurations(&cfg.Node.JWTService)

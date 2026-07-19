@@ -74,6 +74,7 @@ edge:
 access_layer:
   data_plane:
     enabled: true
+    location_endpoint: "https://control-plane.example.com"
     # subscribe_control: removed in T17 (deprecated)
     # drivers: removed in T17 (deprecated)
     link_pool: { max_entries: 10000 }
@@ -151,6 +152,9 @@ func TestLoadConfig_L4Node(t *testing.T) {
 	// Access layer
 	if !cfg.Access.DataPlane.Enabled {
 		t.Error("data_plane.enabled expected true")
+	}
+	if cfg.Access.DataPlane.LocationEndpoint != "https://control-plane.example.com" {
+		t.Errorf("LocationEndpoint = %q, want %q", cfg.Access.DataPlane.LocationEndpoint, "https://control-plane.example.com")
 	}
 
 	// Hash ring
@@ -395,6 +399,100 @@ node:
 	_, err := LoadConfig(path)
 	if err == nil {
 		t.Fatal("expected error for missing jwt endpoint, got nil")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// access_layer.data_plane.location_endpoint validation
+// ---------------------------------------------------------------------------
+
+// minimalValidNodeYAML is the smallest node config that passes all required
+// field checks; data-plane stanzas are appended per test.
+const minimalValidNodeYAML = `
+node:
+  identity:
+    priv_key_path: "/data/key"
+  libp2p:
+    listen: ["/ip4/0.0.0.0/tcp/9001"]
+    dht:
+      namespace: "edge"
+  jwt_service:
+    endpoint: "https://cp.example.com/v1/node/jwt"
+`
+
+func TestDataPlaneLocationEndpoint_RequiredWhenEnabled(t *testing.T) {
+	// Given: data_plane.enabled=true with an empty location_endpoint
+	path := writeTempYAML(t, minimalValidNodeYAML+`
+access_layer:
+  data_plane:
+    enabled: true
+    location_endpoint: ""
+`)
+
+	// When: the config is loaded
+	_, err := LoadConfig(path)
+
+	// Then: loading fails and the message names the missing field
+	if err == nil {
+		t.Fatal("expected error for empty location_endpoint, got nil")
+	}
+	if !strings.Contains(err.Error(), "access_layer.data_plane.location_endpoint") {
+		t.Fatalf("error must name the missing field, got: %v", err)
+	}
+}
+
+func TestDataPlaneLocationEndpoint_AbsentWhenEnabled(t *testing.T) {
+	// Given: data_plane.enabled=true with the key absent entirely
+	path := writeTempYAML(t, minimalValidNodeYAML+`
+access_layer:
+  data_plane:
+    enabled: true
+`)
+
+	// When/Then: same failure as the explicit-empty case
+	_, err := LoadConfig(path)
+	if err == nil {
+		t.Fatal("expected error for absent location_endpoint, got nil")
+	}
+	if !strings.Contains(err.Error(), "access_layer.data_plane.location_endpoint") {
+		t.Fatalf("error must name the missing field, got: %v", err)
+	}
+}
+
+func TestDataPlaneLocationEndpoint_NotRequiredWhenDisabled(t *testing.T) {
+	// Given: data_plane.enabled=false (default) with no location_endpoint
+	path := writeTempYAML(t, minimalValidNodeYAML)
+
+	// When: the config is loaded
+	cfg, err := LoadConfig(path)
+
+	// Then: loading succeeds with an empty endpoint (non-L4 node)
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.Access.DataPlane.LocationEndpoint != "" {
+		t.Fatalf("LocationEndpoint = %q, want empty", cfg.Access.DataPlane.LocationEndpoint)
+	}
+}
+
+func TestDataPlaneLocationEndpoint_ParsedWhenSet(t *testing.T) {
+	// Given: data_plane.enabled=true with a valid location_endpoint
+	path := writeTempYAML(t, minimalValidNodeYAML+`
+access_layer:
+  data_plane:
+    enabled: true
+    location_endpoint: "https://control-plane.example.com"
+`)
+
+	// When: the config is loaded
+	cfg, err := LoadConfig(path)
+
+	// Then: the endpoint round-trips into DataPlaneConfig
+	if err != nil {
+		t.Fatalf("LoadConfig failed: %v", err)
+	}
+	if cfg.Access.DataPlane.LocationEndpoint != "https://control-plane.example.com" {
+		t.Fatalf("LocationEndpoint = %q", cfg.Access.DataPlane.LocationEndpoint)
 	}
 }
 

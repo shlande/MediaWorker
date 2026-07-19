@@ -34,6 +34,7 @@ import (
 	"github.com/shlande/mediaworker/internal/node/backhaul"
 	"github.com/shlande/mediaworker/internal/node/cache"
 	"github.com/shlande/mediaworker/internal/node/dht"
+	"github.com/shlande/mediaworker/internal/node/events"
 	"github.com/shlande/mediaworker/internal/node/gossippop"
 	"github.com/shlande/mediaworker/internal/node/hashring"
 	"github.com/shlande/mediaworker/internal/node/icp"
@@ -47,6 +48,9 @@ import (
 	nodesync "github.com/shlande/mediaworker/internal/node/syncbroadcaster"
 	"github.com/shlande/mediaworker/internal/shared/identity"
 	sjwt "github.com/shlande/mediaworker/internal/shared/jwt"
+	"github.com/shlande/mediaworker/internal/storage/accountpool"
+	"github.com/shlande/mediaworker/internal/storage/dataplane"
+	"github.com/shlande/mediaworker/internal/storage/linkpool"
 	"github.com/shlande/mediaworker/internal/types"
 
 	// T20 — metrics package (added at end of import block to avoid merge
@@ -381,6 +385,38 @@ func main() {
 	}
 
 	// -------------------------------------------------------------------
+	// 17b. L4 data plane stack (gated by access_layer.data_plane.enabled):
+	// HTTPLocationClient (CP blob-location queries, JWT from the live client)
+	// + AccountPool (starts empty; the first ACCOUNT_SNAPSHOT event fills it)
+	// + LinkPool + LocalDataPlane. Non-L4 nodes leave dataPlane/pool nil —
+	// the event dispatcher below tolerates a nil pool (events are skipped).
+	// The pool is NOT persisted: on restart the 60s ACCOUNT_SNAPSHOT cycle
+	// rebuilds it. No health-probe worker is instantiated here.
+	// -------------------------------------------------------------------
+	var (
+		dataPlane *dataplane.LocalDataPlane
+		pool      *accountpool.AccountPool
+	)
+	if cfg.Access.DataPlane.Enabled {
+		locClient := dataplane.NewHTTPLocationClient(
+			cfg.Access.DataPlane.LocationEndpoint,
+			func() string { return string(jwtClient.CurrentJWT()) },
+		)
+		pool = accountpool.BuildFromSnapshot(nil, locClient)
+		maxEntries := cfg.Access.DataPlane.LinkPool.MaxEntries
+		if maxEntries <= 0 {
+			maxEntries = 100
+		}
+		linkP := linkpool.NewLinkPool(maxEntries)
+		dataPlane = dataplane.NewLocalDataPlane(pool, linkP, locClient, http.DefaultClient)
+		logger.Info("local data plane stack built",
+			"location_endpoint", cfg.Access.DataPlane.LocationEndpoint,
+			"link_pool_max_entries", maxEntries,
+		)
+	}
+	dispatcher := events.NewDispatcher(pool, nil, logger)
+
+	// -------------------------------------------------------------------
 	// 18. SyncBroadcaster client — receive PinPlan from control plane
 	// -------------------------------------------------------------------
 	syncClient := nodesync.NewClient(h, func(plan types.PinPlan) {
@@ -390,7 +426,7 @@ func main() {
 			return
 		}
 		nodepinstrategy.HandlePinPlan(plan, pinStore, nil, nil)
-	}, nil)
+	}, dispatcher.HandleEvent)
 	logger.Info("syncbroadcaster client registered",
 		"protocol", string(nodesync.ControlProtocol),
 	)
@@ -539,16 +575,15 @@ func main() {
 	var backhaulMgr *backhaul.BackhaulManager
 	switch {
 	case cfg.Access.DataPlane.Enabled:
-		// L4 node: data plane available. The DataPlane interface is not yet
-		// implemented — passed as nil. HandleBlobL4 will fall through to L4
-		// after cache miss + ICP miss (until data plane is wired).
+		// L4 node: local data plane wired (section 17b). HandleBlobL4 falls
+		// back to ICP / L4 stream on data-plane failure inside the manager.
 		backhaulMgr = backhaul.NewBackhaulManager(
 			backhaulWarmCache{warmCache},
-			nil, // dataPlane — TBD
+			dataPlane,
 			backhaulICPFetcher{h: h, ring: ring, self: nodeIdentity.PeerID},
 			nil, // l4Fetcher — this IS an L4 node
 		)
-		logger.Info("backhaul manager created (L4 mode, data plane TBD)")
+		logger.Info("backhaul manager created (L4 mode, data plane wired)")
 
 	default:
 		// Non-L4 edge node: no data plane. HandleBlobNoL4 uses cache → ICP →

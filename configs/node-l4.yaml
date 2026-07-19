@@ -49,6 +49,9 @@ edge:
 access_layer:
   data_plane:
     enabled: true
+    # CP HTTP base for blob-location queries (GET {location_endpoint}/v1/blob-locations/{hash}).
+    # REQUIRED when enabled=true — edge-node refuses to start without it.
+    location_endpoint: "https://control-plane.example.com"
     link_pool: { max_entries: 10000 }
     # subscribe_control: removed in T17 (deprecated)
     # drivers: removed in T17 (deprecated)
