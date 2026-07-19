@@ -880,7 +880,7 @@ func TestIntegration_Pin(t *testing.T) {
 
 	// The orchestrator sends a PinPlan to node A.
 	// Manually apply the pin on node A.
-	nodeA.pinStore.ApplyPin("pin-blob-1", "mp4_init_segment", "init", 100)
+	nodeA.pinStore.ApplyPin("pin-blob-1", "mp4_init_segment", "init", 100, "")
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {

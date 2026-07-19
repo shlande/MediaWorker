@@ -70,7 +70,7 @@ func TestHandlePinPlan_LegacyPayloadFallsBack(t *testing.T) {
 	roles := []types.BlobRole{{BlobHash: "h_init", Role: "init"}}
 
 	// Pre-pin h_seg1 so the unpin has an effect to observe.
-	ps.ApplyPin("h_seg1", "m4s_media_segment", "media", 200)
+	ps.ApplyPin("h_seg1", "m4s_media_segment", "media", 200, "")
 	if !ps.IsPinned("h_seg1") {
 		t.Fatal("setup: h_seg1 should be pinned")
 	}
@@ -85,6 +85,51 @@ func TestHandlePinPlan_LegacyPayloadFallsBack(t *testing.T) {
 	}
 	if got := ps.QuerySpace().TotalPinnedSize; got != 100 {
 		t.Errorf("TotalPinnedSize = %d, want 100 (legacy size lookup)", got)
+	}
+}
+
+// Given a plan whose update carries PinBlobMetas and a content_id, When
+// handled, Then the content id lands on the stored pin entries.
+func TestHandlePinPlan_MetasPathPassesContentID(t *testing.T) {
+	ps := newTestStore(t)
+
+	plan := types.PinPlan{
+		Seq: 4, TargetNode: "node_a",
+		Updates: []types.PinUpdate{{
+			ContentID: "cont_1",
+			PinBlobMetas: []types.PinBlobMeta{
+				{BlobHash: "h_init", BlobType: "mp4_init_segment", Role: "init", Size: 100},
+			},
+		}},
+	}
+	HandlePinPlan(plan, ps, nil, nil)
+
+	entry, ok := ps.Get("h_init")
+	if !ok {
+		t.Fatal("h_init should be pinned via metas path")
+	}
+	if entry.ContentID != "cont_1" {
+		t.Errorf("ContentID = %q, want %q", entry.ContentID, "cont_1")
+	}
+}
+
+// Given an old-payload plan (no metas), When handled, Then the stored pin
+// entry carries an empty content id.
+func TestHandlePinPlan_LegacyPathLeavesContentIDEmpty(t *testing.T) {
+	ps := newTestStore(t)
+
+	plan := types.PinPlan{
+		Seq: 5, TargetNode: "node_a",
+		Updates: []types.PinUpdate{{PinBlobs: []string{"h_init"}}},
+	}
+	HandlePinPlan(plan, ps, nil, nil)
+
+	entry, ok := ps.Get("h_init")
+	if !ok {
+		t.Fatal("h_init should be pinned via legacy path")
+	}
+	if entry.ContentID != "" {
+		t.Errorf("ContentID = %q, want empty for legacy path", entry.ContentID)
 	}
 }
 

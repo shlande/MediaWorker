@@ -34,13 +34,20 @@ const keyPrefix = "p:"
 // ─── Types ───
 
 // PinEntry is the persisted pin record for a single blob.
+//
+// State/LastError are guarded by PinStore.stateMu (fetch goroutines mutate
+// them while List/Get read them). Ready is the lock-free fast path for
+// IsReady and is always kept equal to (State == PinStateReady).
 type PinEntry struct {
-	BlobHash string      `json:"blob_hash"`
-	BlobType string      `json:"blob_type"`
-	Role     string      `json:"role"`
-	Size     int64       `json:"size"`
-	PinnedAt time.Time   `json:"pinned_at"`
-	Ready    atomic.Bool `json:"-"`
+	BlobHash  string      `json:"blob_hash"`
+	BlobType  string      `json:"blob_type"`
+	Role      string      `json:"role"`
+	Size      int64       `json:"size"`
+	PinnedAt  time.Time   `json:"pinned_at"`
+	ContentID string      `json:"content_id,omitempty"`
+	State     string      `json:"state"` // PinStateReady | PinStatePulling | PinStateFailed
+	LastError string      `json:"last_error,omitempty"`
+	Ready     atomic.Bool `json:"-"`
 }
 
 // PinDelta records an incremental pin/unpin operation for logging/audit.
@@ -74,6 +81,7 @@ type PinStore struct {
 	index       sync.Map // map[string]*PinEntry
 	deltaBuffer *DeltaBuffer
 	fetchFunc   func(blobHash string) ([]byte, error)
+	stateMu     sync.RWMutex // guards State/LastError on all index entries
 }
 
 // NewPinStore opens (or creates) a BadgerDB at dbPath and returns a PinStore.
@@ -110,35 +118,57 @@ func makePinKey(blobHash string) []byte {
 }
 
 type pinEntryJSON struct {
-	BlobHash string    `json:"blob_hash"`
-	BlobType string    `json:"blob_type"`
-	Size     int64     `json:"size"`
-	PinnedAt time.Time `json:"pinned_at"`
-	Ready    bool      `json:"ready"`
+	BlobHash  string    `json:"blob_hash"`
+	BlobType  string    `json:"blob_type"`
+	Size      int64     `json:"size"`
+	PinnedAt  time.Time `json:"pinned_at"`
+	Ready     bool      `json:"ready"`
+	ContentID string    `json:"content_id,omitempty"`
+	State     string    `json:"state,omitempty"`
+	LastError string    `json:"last_error,omitempty"`
 }
 
+// encodePinEntry serializes an entry. Callers must hold stateMu (or be in a
+// single-goroutine context) since it reads State/LastError.
 func encodePinEntry(entry *PinEntry) ([]byte, error) {
 	return json.Marshal(pinEntryJSON{
-		BlobHash: entry.BlobHash,
-		BlobType: entry.BlobType,
-		Size:     entry.Size,
-		PinnedAt: entry.PinnedAt,
-		Ready:    entry.Ready.Load(),
+		BlobHash:  entry.BlobHash,
+		BlobType:  entry.BlobType,
+		Size:      entry.Size,
+		PinnedAt:  entry.PinnedAt,
+		Ready:     entry.Ready.Load(),
+		ContentID: entry.ContentID,
+		State:     entry.State,
+		LastError: entry.LastError,
 	})
 }
 
+// decodePinEntry deserializes an entry. Legacy records (written before the
+// state field existed) carry no state: they map Ready=true→ready,
+// Ready=false→pulling.
 func decodePinEntry(data []byte) (*PinEntry, error) {
 	var j pinEntryJSON
 	if err := json.Unmarshal(data, &j); err != nil {
 		return nil, fmt.Errorf("pinstore decode pin entry: %w", err)
 	}
-	entry := &PinEntry{
-		BlobHash: j.BlobHash,
-		BlobType: j.BlobType,
-		Size:     j.Size,
-		PinnedAt: j.PinnedAt,
+	state := j.State
+	if state == "" {
+		if j.Ready {
+			state = PinStateReady
+		} else {
+			state = PinStatePulling
+		}
 	}
-	entry.Ready.Store(j.Ready)
+	entry := &PinEntry{
+		BlobHash:  j.BlobHash,
+		BlobType:  j.BlobType,
+		Size:      j.Size,
+		PinnedAt:  j.PinnedAt,
+		ContentID: j.ContentID,
+		State:     state,
+		LastError: j.LastError,
+	}
+	entry.Ready.Store(state == PinStateReady)
 	return entry, nil
 }
 
@@ -161,17 +191,21 @@ func (ps *PinStore) dbView(fn func(txn *badger.Txn) error) error {
 // Idempotent: if the blob is already pinned, this is a no-op.
 // blobType: binary output type ("mp4_init_segment" etc).
 // role: semantic role of the blob within its content ("init"/"media" etc), used by eviction logic.
-func (ps *PinStore) ApplyPin(blobHash string, blobType string, role string, size int64) {
+// contentID: owning content id ("" when the plan carries no content_id).
+// The entry starts in State=pulling; fetchPinnedBlob moves it to ready/failed.
+func (ps *PinStore) ApplyPin(blobHash string, blobType string, role string, size int64, contentID string) {
 	if _, ok := ps.index.Load(blobHash); ok {
 		return // already pinned, idempotent
 	}
 
 	entry := &PinEntry{
-		BlobHash: blobHash,
-		BlobType: blobType,
-		Role:     role,
-		Size:     size,
-		PinnedAt: time.Now(),
+		BlobHash:  blobHash,
+		BlobType:  blobType,
+		Role:      role,
+		Size:      size,
+		PinnedAt:  time.Now(),
+		ContentID: contentID,
+		State:     PinStatePulling,
 	}
 
 	// 1. Persist to BadgerDB.
@@ -246,44 +280,77 @@ func (ps *PinStore) IsReady(blobHash string) bool {
 
 // fetchPinnedBlob asynchronously fetches a blob and writes it to the prefix
 // partition. Panics in the fetchFunc are recovered so the node does not crash.
-// On failure, Ready stays false and the blob is served via the normal origin path.
+// On failure the entry transitions to State=failed with LastError set and the
+// blob is served via the normal origin path; on success State=ready.
 func (ps *PinStore) fetchPinnedBlob(blobHash string) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("[pinstore] fetchPinnedBlob panicked: blob=%s panic=%v", blobHash, r)
+			ps.setPinState(blobHash, "", PinStateFailed, truncateLastError(fmt.Sprintf("fetch panicked: %v", r)))
 		}
 	}()
 
 	data, err := ps.fetchFunc(blobHash)
 	if err != nil {
 		log.Printf("[pinstore] fetch pinned blob failed: blob=%s err=%v", blobHash, err)
+		ps.setPinState(blobHash, "", PinStateFailed, truncateLastError(err.Error()))
 		return
 	}
 
 	if err := ps.storage.Put(blobHash, data); err != nil {
 		log.Printf("[pinstore] storage put failed: blob=%s err=%v", blobHash, err)
+		ps.setPinState(blobHash, "", PinStateFailed, truncateLastError(err.Error()))
 		return
 	}
 
-	// Mark Ready in both BadgerDB and the in-memory index.
+	ps.setPinState(blobHash, "", PinStateReady, "")
+}
+
+// maxLastErrorLen caps persisted LastError messages.
+const maxLastErrorLen = 512
+
+func truncateLastError(s string) string {
+	if len(s) <= maxLastErrorLen {
+		return s
+	}
+	r := []rune(s)
+	if len(r) <= maxLastErrorLen {
+		return s
+	}
+	return string(r[:maxLastErrorLen])
+}
+
+// setPinState transitions an entry's state and persists it. When from is
+// non-empty, the transition only happens if the current state equals from
+// (atomic compare-and-set under stateMu). Returns false when the entry is
+// gone or the state precondition does not hold.
+func (ps *PinStore) setPinState(blobHash, from, to, lastErr string) bool {
 	val, ok := ps.index.Load(blobHash)
 	if !ok {
-		return
+		return false
 	}
 	entry, ok := val.(*PinEntry)
 	if !ok {
-		return
+		return false
 	}
-	entry.Ready.Store(true)
-
-	data, err = encodePinEntry(entry)
+	ps.stateMu.Lock()
+	if from != "" && entry.State != from {
+		ps.stateMu.Unlock()
+		return false
+	}
+	entry.State = to
+	entry.LastError = lastErr
+	entry.Ready.Store(to == PinStateReady)
+	data, err := encodePinEntry(entry)
+	ps.stateMu.Unlock()
 	if err != nil {
-		log.Printf("[pinstore] encode ready entry %s: %v", blobHash, err)
-		return
+		log.Printf("[pinstore] encode %s entry %s: %v", to, blobHash, err)
+		return false
 	}
 	ps.dbUpdate(func(txn *badger.Txn) error {
 		return txn.Set(makePinKey(blobHash), data)
 	})
+	return true
 }
 
 // ─── Space queries ───
