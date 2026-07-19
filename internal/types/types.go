@@ -307,9 +307,12 @@ type BlobLocation struct {
 
 const (
 	EventCredentialUpdate   = "CREDENTIAL_UPDATE"
+	EventAccountSnapshot    = "ACCOUNT_SNAPSHOT"
 	EventHealthChange       = "HEALTH_CHANGE"
 	EventBan                = "BAN"
 	EventUnban              = "UNBAN"
+	EventCircuitForceOpen   = "CIRCUIT_FORCE_OPEN"
+	EventCircuitForceClose  = "CIRCUIT_FORCE_CLOSE"
 	EventNewSegmentLocation = "NEW_SEGMENT_LOCATION"
 	EventQuotaUpdate        = "QUOTA_UPDATE"
 	EventQuotaBorrow        = "QUOTA_BORROW"
@@ -320,4 +323,27 @@ const (
 type Event struct {
 	Type    string `json:"type"`
 	Payload []byte `json:"payload"`
+}
+
+// CredentialChangePayload is the CREDENTIAL_UPDATE event payload. Credential is
+// the new credential body; old control planes omit it — nodes then wait for the
+// next ACCOUNT_SNAPSHOT (<=60s) to converge instead of applying it immediately.
+type CredentialChangePayload struct {
+	Vendor     Vendor     `json:"vendor"`
+	AccountID  string     `json:"account_id"`
+	Credential Credential `json:"credential,omitempty"`
+}
+
+// BanPayload is the BAN/UNBAN event payload.
+type BanPayload struct {
+	Vendor    Vendor    `json:"vendor"`
+	AccountID string    `json:"account_id"`
+	Reason    string    `json:"reason,omitempty"`
+	BanUntil  time.Time `json:"ban_until,omitempty"`
+}
+
+// CircuitPayload is the CIRCUIT_FORCE_OPEN/CIRCUIT_FORCE_CLOSE event payload.
+type CircuitPayload struct {
+	Vendor    Vendor `json:"vendor"`
+	AccountID string `json:"account_id"`
 }

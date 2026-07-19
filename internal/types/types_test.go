@@ -332,6 +332,61 @@ func TestEvent_roundtrip(t *testing.T) {
 	})
 }
 
+func TestCircuitPayload_roundtrip(t *testing.T) {
+	roundtrip(t, CircuitPayload{Vendor: VendorBaidu, AccountID: "bd_01"})
+}
+
+func TestBanPayload_roundtrip(t *testing.T) {
+	roundtrip(t, BanPayload{
+		Vendor:    VendorOneDrive,
+		AccountID: "od_01",
+		Reason:    "http 403",
+		BanUntil:  time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC),
+	})
+}
+
+// Given a BAN payload carrying only vendor/account_id (old CP), When decoded,
+// Then Reason/BanUntil stay zero without error.
+func TestBanPayload_minimalJSON_decodesToZeroOptionals(t *testing.T) {
+	var p BanPayload
+	if err := json.Unmarshal([]byte(`{"vendor":"baidu","account_id":"bd_01"}`), &p); err != nil {
+		t.Fatalf("minimal BAN payload must decode: %v", err)
+	}
+	if p.Vendor != VendorBaidu || p.AccountID != "bd_01" {
+		t.Errorf("scalars = (%q, %q), want (baidu, bd_01)", p.Vendor, p.AccountID)
+	}
+	if p.Reason != "" || !p.BanUntil.IsZero() {
+		t.Errorf("optionals must be zero, got reason=%q ban_until=%v", p.Reason, p.BanUntil)
+	}
+}
+
+func TestCredentialChangePayload_roundtrip(t *testing.T) {
+	roundtrip(t, CredentialChangePayload{
+		Vendor:    VendorBaidu,
+		AccountID: "bd_01",
+		Credential: Credential{
+			RefreshToken: "rt-new",
+		},
+	})
+}
+
+// Given a CREDENTIAL_UPDATE payload without the credential body (old CP
+// contract), When decoded, Then Credential stays zero without error — the node
+// waits for the next ACCOUNT_SNAPSHOT to converge.
+func TestCredentialChangePayload_withoutCredential_decodesZero(t *testing.T) {
+	var p CredentialChangePayload
+	if err := json.Unmarshal([]byte(`{"vendor":"baidu","account_id":"bd_01"}`), &p); err != nil {
+		t.Fatalf("credential-less payload must decode: %v", err)
+	}
+	if p.Vendor != VendorBaidu || p.AccountID != "bd_01" {
+		t.Errorf("scalars = (%q, %q), want (baidu, bd_01)", p.Vendor, p.AccountID)
+	}
+	if p.Credential.RefreshToken != "" || p.Credential.Cookies != nil ||
+		p.Credential.AccessToken != "" || !p.Credential.TokenExpire.IsZero() {
+		t.Errorf("Credential must be zero when absent, got %+v", p.Credential)
+	}
+}
+
 func TestVendor_constants(t *testing.T) {
 	if Vendor115 != "115" {
 		t.Fatalf("Vendor115 = %q, want %q", Vendor115, "115")

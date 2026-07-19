@@ -654,3 +654,72 @@ func TestNewAccountPool(t *testing.T) {
 		t.Error("NewAccountPool: metadata client not set")
 	}
 }
+
+// ─── ForceCircuit / ForceCloseCircuit tests ───
+
+func TestForceCircuit_openAndClose(t *testing.T) {
+	mc := &mockBlobLocationClient{}
+	pool := NewAccountPool(mc)
+	cb := newMockCB(StateClosed)
+
+	acct := newAccount(string(types.VendorBaidu), "acct1", mock.NewMockDriver(types.VendorBaidu, mock.MockDriverConfig{}), 2.0, rate.NewLimiter(10, 20), cb)
+	pool.AddAccount(acct)
+
+	pool.ForceCircuit(string(types.VendorBaidu), "acct1", true)
+	if cb.State() != StateOpen {
+		t.Errorf("ForceCircuit(open=true): CB.State = %d, want %d (StateOpen)", cb.State(), StateOpen)
+	}
+
+	pool.ForceCircuit(string(types.VendorBaidu), "acct1", false)
+	if cb.State() != StateClosed {
+		t.Errorf("ForceCircuit(open=false): CB.State = %d, want %d (StateClosed)", cb.State(), StateClosed)
+	}
+}
+
+func TestForceCircuit_nonexistentAccount_noop(t *testing.T) {
+	mc := &mockBlobLocationClient{}
+	pool := NewAccountPool(mc)
+
+	// Should not panic
+	pool.ForceCircuit(string(types.VendorBaidu), "nonexistent", true)
+	pool.ForceCircuit(string(types.VendorBaidu), "nonexistent", false)
+}
+
+func TestForceCloseCircuit(t *testing.T) {
+	mc := &mockBlobLocationClient{}
+	pool := NewAccountPool(mc)
+	cb := newMockCB(StateClosed)
+
+	acct := newAccount(string(types.VendorBaidu), "acct1", mock.NewMockDriver(types.VendorBaidu, mock.MockDriverConfig{}), 2.0, rate.NewLimiter(10, 20), cb)
+	pool.AddAccount(acct)
+
+	pool.MarkBanned("baidu:acct1")
+	if cb.State() != StateOpen {
+		t.Fatalf("MarkBanned: CB.State = %d, want %d (StateOpen)", cb.State(), StateOpen)
+	}
+
+	pool.ForceCloseCircuit(string(types.VendorBaidu), "acct1")
+	if cb.State() != StateClosed {
+		t.Errorf("ForceCloseCircuit: CB.State = %d, want %d (StateClosed)", cb.State(), StateClosed)
+	}
+}
+
+func TestForceCloseCircuit_nonexistentAccount_noop(t *testing.T) {
+	mc := &mockBlobLocationClient{}
+	pool := NewAccountPool(mc)
+
+	// Should not panic
+	pool.ForceCloseCircuit(string(types.VendorBaidu), "nonexistent")
+}
+
+func TestForceCircuit_nilCB_noop(t *testing.T) {
+	mc := &mockBlobLocationClient{}
+	pool := NewAccountPool(mc)
+
+	acct := newAccount(string(types.VendorBaidu), "acct1", mock.NewMockDriver(types.VendorBaidu, mock.MockDriverConfig{}), 2.0, rate.NewLimiter(10, 20), nil)
+	pool.AddAccount(acct)
+
+	// Should not panic with nil CB
+	pool.ForceCircuit(string(types.VendorBaidu), "acct1", true)
+	pool.ForceCloseCircuit(string(types.VendorBaidu), "acct1")
+}

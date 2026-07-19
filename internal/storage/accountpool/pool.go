@@ -326,6 +326,31 @@ func (ap *AccountPool) MarkBanned(key string) {
 	}
 }
 
+// ForceCloseCircuit force-closes the circuit breaker for the account identified
+// by vendor and accountID. If the account does not exist the call is a no-op.
+func (ap *AccountPool) ForceCloseCircuit(vendor, accountID string) {
+	ap.mu.Lock()
+	defer ap.mu.Unlock()
+	if a, ok := ap.accounts[accountKey(types.Vendor(vendor), accountID)]; ok && a.CB != nil {
+		a.CB.ForceClose()
+	}
+}
+
+// ForceCircuit forces the circuit breaker for the account identified by vendor
+// and accountID open (open=true) or closed (open=false). If the account does
+// not exist the call is a no-op.
+func (ap *AccountPool) ForceCircuit(vendor, accountID string, open bool) {
+	ap.mu.Lock()
+	defer ap.mu.Unlock()
+	if a, ok := ap.accounts[accountKey(types.Vendor(vendor), accountID)]; ok && a.CB != nil {
+		if open {
+			a.CB.ForceOpen()
+		} else {
+			a.CB.ForceClose()
+		}
+	}
+}
+
 // SnapshotAccounts returns a snapshot of all accounts in the pool.
 // The caller receives a shallow copy safe for read-only use without holding the lock.
 func (ap *AccountPool) SnapshotAccounts() []*Account {
