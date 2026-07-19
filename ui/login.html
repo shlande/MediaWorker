@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>登录 · MediaWorker 管理门户</title>
+<link rel="stylesheet" href="assets/app.css" />
+<style>
+  body { display: grid; place-items: center; min-height: 100vh; }
+  .login-card {
+    width: 400px; max-width: calc(100vw - 32px);
+    border: 1px solid var(--border); border-radius: 10px;
+    background: var(--surface); padding: 34px 34px 28px;
+  }
+  .login-brand { display: flex; align-items: center; gap: 12px; margin-bottom: 26px; }
+  .login-brand .mark {
+    width: 38px; height: 38px; border-radius: 8px; display: grid; place-items: center;
+    background: var(--fg); color: var(--bg); font: 700 14px var(--font-mono); letter-spacing: 0.02em;
+  }
+  .login-brand .name { font-weight: 700; font-size: 16px; letter-spacing: -0.01em; }
+  .login-brand .sub { font: 10.5px var(--font-mono); letter-spacing: 0.12em; color: var(--muted); }
+  .login-err {
+    display: none; border: 1px solid var(--danger); border-radius: var(--radius);
+    background: var(--danger-bg); color: var(--danger);
+    font-size: 12.5px; padding: 9px 12px; margin-bottom: 14px;
+  }
+  .login-err.show { display: block; }
+  .login-meta {
+    margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--border);
+    font: 11px var(--font-mono); color: var(--muted); line-height: 1.8;
+  }
+  #lg-btn { width: 100%; justify-content: center; margin-top: 4px; }
+</style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="login-brand">
+      <div class="mark">MW</div>
+      <div>
+        <div class="name">MediaWorker</div>
+        <div class="sub">CONTROL PLANE</div>
+      </div>
+    </div>
+
+    <div class="login-err" id="lg-err">账号或密码错误,请重试。</div>
+
+    <form id="lg-form" novalidate>
+      <div class="field" style="margin-bottom:12px;">
+        <label for="lg-user">账号</label>
+        <input class="input mono" id="lg-user" autocomplete="username" placeholder="admin@mediaworker.internal" />
+      </div>
+      <div class="field" style="margin-bottom:16px;">
+        <label for="lg-pass">密码</label>
+        <input class="input" id="lg-pass" type="password" autocomplete="current-password" placeholder="••••••••" />
+      </div>
+      <button class="btn primary" id="lg-btn" type="submit">登录</button>
+    </form>
+
+    <div class="login-meta">
+      POST /v1/auth/login · 会话过期将自动跳回本页(F1 精简认证)<br/>
+      演示:任意账号可登录;密码输入 <code>fail</code> 可查看失败态。
+    </div>
+  </div>
+
+<script src="assets/app.js"></script>
+<script>
+  const form = document.getElementById('lg-form');
+  const err = document.getElementById('lg-err');
+  const btn = document.getElementById('lg-btn');
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const u = document.getElementById('lg-user').value.trim();
+    const p = document.getElementById('lg-pass').value;
+    err.classList.remove('show');
+    if (!u || !p) { err.textContent = '请输入账号与密码。'; err.classList.add('show'); return; }
+    if (p === 'fail') { err.textContent = '账号或密码错误,请重试。'; err.classList.add('show'); return; }
+    btn.disabled = true; btn.textContent = '验证中…';
+    setTimeout(() => { location.href = 'index.html'; }, 700);
+  });
+</script>
+</body>
+</html>

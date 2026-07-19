@@ -30,13 +30,12 @@
     color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px;
   }
   .jwt-meter { margin-top: 12px; }
-  tr.row-active td { background: var(--danger-bg); }
-  tr.row-dim td { opacity: 0.6; }
-  tr.group-row td {
-    padding: 5px 14px; font: 600 10.5px var(--font-mono); letter-spacing: 0.06em;
-    text-transform: uppercase; color: var(--muted);
+  .empty-note {
+    border: 1px dashed var(--border); border-radius: var(--radius);
+    padding: 18px 16px; font-size: 12.5px; color: var(--muted); line-height: 1.7;
     background: oklch(98.5% 0.004 250);
   }
+  .empty-note b { color: var(--fg); font-weight: 600; }
   @keyframes fd-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
   .freshness .dot { animation: fd-pulse 2s ease-in-out infinite; }
   .freshness .tick { font: 11px var(--font-mono); color: var(--muted); }
@@ -57,8 +56,8 @@
     <!-- 状态一句话:先给结论,再给依据;活动告警单独亮出 -->
     <div class="status-strip" data-od-id="status-strip">
       <span class="pill ok"><span class="d"></span>healthy</span>
-      <span class="s-text">节点自治运行正常,评分 <b>31</b>;JWT <b>29 天</b>后过期,续签链路正常;prefix 命中率 <b>71.2%</b> 高于 60% 阈值。</span>
-      <span class="s-alert"><span class="pill bad">1 活动告警</span>PeerScoreGraylist · 对端已断连</span>
+      <span class="s-text">节点自治运行正常,灰名单对端 <b>1</b>;JWT <b>38 分钟</b>后过期,续签链路正常;prefix 命中率 <b>71.2%</b> 高于 60% 阈值。</span>
+      <span class="s-alert"><span class="pill warn">1 灰名单对端</span>评分 -24 ≤ -20 · 已断连</span>
     </div>
 
     <!-- 身份 / JWT / 关键指标 -->
@@ -76,12 +75,12 @@
       </div>
 
       <div class="card card-anchor" data-od-id="jwt">
-        <h3>JWT 生命线 <span class="watch">核心信号</span> <span class="hint">过期无宽限期,立即降级</span></h3>
-        <div class="jwt-count">29<small> 天 </small>06<small> 时后过期</small></div>
-        <div class="meter jwt-meter"><div class="m-top"><span>有效期已用 1 / 30 天</span><span>剩余 97%</span></div><div class="bar"><i style="width:3%"></i></div></div>
+        <h3>JWT 生命线 <span class="watch">核心信号</span> <span class="hint">有效期 1h · 过期无宽限期,立即降级</span></h3>
+        <div class="jwt-count">38<small> 分钟后过期</small></div>
+        <div class="meter jwt-meter"><div class="m-top"><span>有效期已用 22 / 60 分钟</span><span>剩余 63%</span></div><div class="bar"><i style="width:37%"></i></div></div>
         <dl class="dl" style="margin-top:14px;">
           <dt>上次续签</dt><dd class="num">12:00:07 · <span class="pill ok">成功</span></dd>
-          <dt>下次续签</dt><dd class="num">12:30:07(26 分钟后)</dd>
+          <dt>下次续签</dt><dd class="num">12:55:07(到期前 5 分钟)</dd>
           <dt>续签失败</dt><dd class="num">0 次(近 24h)</dd>
         </dl>
       </div>
@@ -89,7 +88,7 @@
       <div class="card">
         <h3>关键指标 <span class="hint">edge_* · 实时</span></h3>
         <dl class="dl">
-          <dt>节点评分</dt><dd class="num" style="font-weight:650;">31</dd>
+          <dt>灰名单对端</dt><dd class="num" style="font-weight:650;">1<span style="font-size:11px;color:var(--muted);font-weight:400;">(评分 ≤ -20)</span></dd>
           <dt>prefix 命中率</dt><dd class="num">71.2%</dd>
           <dt>TTFB P95</dt><dd class="num">142 ms</dd>
           <dt>连接数</dt><dd class="num">132(入 74 / 出 58)</dd>
@@ -121,7 +120,7 @@
 
     <div class="grid g-3 mt" data-od-id="metrics">
       <div class="card">
-        <h3>命中率趋势 <span class="hint">edge_cache_hit_total / request_total · 24h</span></h3>
+        <h3>命中率趋势 <span class="hint">edge_cache_hit_total / request_total · 24h · 数据源:Prometheus 直查(节点不存时序)</span></h3>
         <div style="display:flex;flex-direction:column;gap:14px;">
           <div>
             <div class="spark-label"><span>prefix</span><span>71.2%</span></div>
@@ -140,7 +139,7 @@
       </div>
 
       <div class="card">
-        <h3>TTFB 分布 <span class="hint">edge_ttfb_seconds</span></h3>
+        <h3>TTFB 分布 <span class="hint">edge_ttfb_seconds · histogram_quantile · 数据源:Prometheus 直查</span></h3>
         <dl class="dl">
           <dt>P50</dt><dd class="num">18 ms</dd>
           <dt>P90</dt><dd class="num">96 ms</dd>
@@ -151,18 +150,13 @@
       </div>
 
       <div class="card">
-        <h3>逐出活动 <span class="hint">近 1h · warm/cold 自治</span></h3>
-        <div class="tbl-wrap" style="border:0;">
-          <table class="tbl">
-            <thead><tr><th>blob</th><th>分区</th><th>原因</th></tr></thead>
-            <tbody>
-              <tr><td><code>b3f1…8c</code></td><td>warm</td><td style="font-size:12px;color:var(--muted)">LRU</td></tr>
-              <tr><td><code>9a04…e2</code></td><td>cold</td><td style="font-size:12px;color:var(--muted)">LRU</td></tr>
-              <tr><td><code>c77a…41</code></td><td>warm</td><td style="font-size:12px;color:var(--muted)">空间压力</td></tr>
-              <tr><td><code>12be…9d</code></td><td>cold</td><td style="font-size:12px;color:var(--muted)">LRU</td></tr>
-            </tbody>
-          </table>
-        </div>
+        <h3>逐出计数 <span class="hint">近 1h · warm/cold 自治</span></h3>
+        <dl class="dl">
+          <dt>warm · LRU</dt><dd class="num">42 blobs</dd>
+          <dt>cold · LRU</dt><dd class="num">117 blobs</dd>
+          <dt>空间压力</dt><dd class="num">6 blobs</dd>
+        </dl>
+        <div class="ring-note">逐出无事件记录,v1 仅计数;明细表需缓存层事件日志(二期)</div>
       </div>
     </div>
 
@@ -173,45 +167,16 @@
         <h3>/metrics 暴露</h3>
         <dl class="dl">
           <dt>挂载状态</dt><dd><span class="pill ok"><span class="d"></span>已挂载</span></dd>
-          <dt>Prometheus 抓取</dt><dd class="num">正常 · 8s 前</dd>
           <dt>暴露序列</dt><dd class="num">214(edge_* / storage_*)</dd>
         </dl>
-        <div class="ring-note">cmd/edge-node/main.go:535 · 无需额外接线</div>
+        <div class="ring-note">cmd/edge-node/main.go:535 · 节点不感知抓取时刻;"抓取正常"属 Prometheus <code>up{}</code>,在控制面展示</div>
+        <div style="margin-top:10px;"><button class="btn sm" disabled title="Grafana 实例地址待部署">Grafana 深度排查 ↗ 待部署</button></div>
       </div>
 
       <div class="card" style="grid-column: span 2;" data-od-id="alerts">
-        <h3>本地告警事件 <span class="hint">节点自治产生 · 近 24h · 1 活动 / 3 已恢复</span></h3>
-        <div class="tbl-wrap" style="border:0;">
-          <table class="tbl">
-            <thead><tr><th>时间</th><th>告警</th><th>严重度</th><th>详情</th><th>状态</th></tr></thead>
-            <tbody>
-              <tr class="row-active">
-                <td class="mono" style="font-size:12px;">11:52:40</td><td><code>PeerScoreGraylist</code></td>
-                <td><span class="pill warn">warn</span></td>
-                <td style="font-size:12.5px;">对端 12D3KooW…77c1 评分 -24 ≤ -20,已断连并丢弃其热度消息</td>
-                <td><span class="pill bad"><span class="d"></span>活动</span></td>
-              </tr>
-              <tr class="group-row"><td colspan="5">已恢复 · 按时间倒序</td></tr>
-              <tr class="row-dim">
-                <td class="mono" style="font-size:12px;">09:14:02</td><td><code>LowCacheHitRate</code></td>
-                <td><span class="pill warn">warn</span></td>
-                <td style="font-size:12.5px;">prefix 命中率 15 分钟均值 58% &lt; 阈值 60%,已自动恢复</td>
-                <td><span class="pill neutral"><span class="d"></span>已恢复</span></td>
-              </tr>
-              <tr class="row-dim">
-                <td class="mono" style="font-size:12px;">06:31:55</td><td><code>HighBackhaulFailureRate</code></td>
-                <td><span class="pill warn">warn</span></td>
-                <td style="font-size:12.5px;">baidu:mw_bak_01 回源失败率 5 分钟 8.2%,熔断器转 HalfOpen</td>
-                <td><span class="pill neutral"><span class="d"></span>已恢复</span></td>
-              </tr>
-              <tr class="row-dim">
-                <td class="mono" style="font-size:12px;">03:02:11</td><td><code>SchedulerPartition</code></td>
-                <td><span class="pill bad">critical</span></td>
-                <td style="font-size:12.5px;">JWT 续签连续失败 3 次(控制面不可达),第 4 次重试成功</td>
-                <td><span class="pill neutral"><span class="d"></span>已恢复</span></td>
-              </tr>
-            </tbody>
-          </table>
+        <h3>本地告警事件 <span class="hint">告警规则在 Prometheus / Alertmanager 评估,非节点本地产生</span></h3>
+        <div class="empty-note">
+          <b>告警管线建设中</b>(E12 · Alertmanager webhook → alert_events)。落地后此面板按本节点过滤展示;此前不展示本地告警,避免 mock 误导。
         </div>
       </div>
     </div>
@@ -220,8 +185,9 @@
     <div class="section-h">本地操作
       <span class="hint">节点自治运行 — UI 仅暴露只读监控与少数安全操作</span>
     </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;">
-      <button class="btn" id="op-reload">重载配置</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <button class="btn" id="op-reload" disabled title="配置重载端点未实现(待后端)">重载配置</button>
+      <span style="font-size:11.5px;color:var(--muted);">重载端点待后端实现,暂禁用</span>
       <button class="btn danger" id="op-flush">清空 warm / cold 缓存</button>
     </div>
     <p style="font-size:11.5px;color:var(--muted);margin-top:10px;">
@@ -261,9 +227,6 @@
     }, 1000);
     let last = '12:04:31';
   })();
-
-  document.getElementById('op-reload').onclick = () =>
-    MW.toast('配置重载已触发', '节点将在数秒内应用新配置(本地即时生效)');
 
   document.getElementById('op-flush').onclick = () => MW.confirmDanger({
     title: '清空 warm / cold 缓存',

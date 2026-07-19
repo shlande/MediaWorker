@@ -43,8 +43,8 @@
     <!-- 状态一句话:异常节点置顶,结论先行 -->
     <div class="status-strip" data-od-id="status-strip">
       <span class="pill warn"><span class="d"></span>128 / 142 在线</span>
-      <span class="s-text">四类能力注册正常;灰名单 <b>1</b>(评分 ≤-20)、续签异常 <b>1</b>(失败 ×3)、空间耗尽 <b>1</b>(&lt;5GB)、离线 <b>1</b>,异常节点已按严重度置顶。</span>
-      <span class="s-alert"><span class="pill bad">4 需关注</span>灰名单 -24 · 续签失败 · 空间耗尽 · 离线</span>
+      <span class="s-text">四类能力注册正常;连接骤降 <b>1</b>、应续未续 <b>1</b>(CP 按签发记录推断)、空间耗尽 <b>1</b>(&lt;5GB)、离线 <b>1</b>,异常节点已按严重度置顶。</span>
+      <span class="s-alert"><span class="pill bad">4 需关注</span>连接骤降 · 应续未续 · 空间耗尽 · 离线</span>
     </div>
 
     <div class="toolbar">
@@ -65,7 +65,7 @@
         <thead>
           <tr>
             <th>Peer ID</th><th>能力</th><th>prefix(NVMe)</th><th>warm(SSD)</th>
-            <th class="r">评分</th><th>状态</th><th>最近上报</th><th class="r">操作</th>
+            <th>状态</th><th>最近上报</th><th class="r">操作</th>
           </tr>
         </thead>
         <tbody id="node-body"></tbody>
@@ -148,14 +148,14 @@
   MW.injectChrome();
 
   const nodes = [
-    { peer:'12D3KooW…f3a9', caps:['edge','l4_backhaul'], prefix:[312,500], warm:[640,1000], score:12, st:'warn', stTxt:'续签异常', seen:'12s 前', region:'cn-east',  ver:'v0.9.4', up:'18d 4h', conns:87,  jwt:'41 分钟后过期 · 续签失败 3 次', wl:true  },
-    { peer:'12D3KooW…77c1', caps:['edge','peer_icp'],     prefix:[188,500], warm:[210,1000], score:-24, st:'bad',  stTxt:'灰名单',   seen:'30s 前', region:'cn-north', ver:'v0.9.4', up:'6d 11h', conns:12,  jwt:'23 天后过期', wl:false },
-    { peer:'12D3KooW…b82e', caps:['edge','l4_backhaul','relay_provider'], prefix:[401,500], warm:[812,1000], score:31, st:'ok', stTxt:'健康', seen:'8s 前',  region:'cn-south', ver:'v0.9.4', up:'41d 2h', conns:132, jwt:'29 天后过期', wl:true },
-    { peer:'12D3KooW…9c04', caps:['edge'],              prefix:[96,300],  warm:[480,800],  score:8,  st:'ok',  stTxt:'健康',    seen:'21s 前', region:'cn-east',  ver:'v0.9.3', up:'3d 9h',  conns:64,  jwt:'27 天后过期', wl:false },
-    { peer:'12D3KooW…d517', caps:['edge','peer_icp'],     prefix:[18,300],  warm:[120,800],  score:4,  st:'warn',stTxt:'空间耗尽', seen:'44s 前', region:'cn-west',  ver:'v0.9.4', up:'12d 7h', conns:41,  jwt:'19 天后过期', wl:false },
-    { peer:'12D3KooW…e6aa', caps:['edge','relay_provider'],prefix:[255,500],warm:[390,1000], score:17, st:'ok',  stTxt:'健康',    seen:'15s 前', region:'cn-north', ver:'v0.9.4', up:'25d 14h',conns:98,  jwt:'25 天后过期', wl:false },
-    { peer:'12D3KooW…1f9b', caps:['edge'],              prefix:[0,0],     warm:[0,0],      score:0,  st:'off', stTxt:'离线',    seen:'14 分钟前',region:'cn-south',ver:'v0.9.3', up:'—',      conns:0,   jwt:'—', wl:false },
-    { peer:'12D3KooW…a3d8', caps:['edge','l4_backhaul'], prefix:[287,500], warm:[521,1000], score:22, st:'ok',  stTxt:'健康',    seen:'9s 前',  region:'cn-east',  ver:'v0.9.4', up:'33d 1h', conns:110, jwt:'28 天后过期', wl:true },
+    { peer:'12D3KooW…f3a9', caps:['edge','l4_backhaul'], prefix:[312,500], warm:[640,1000], st:'warn', stTxt:'应续未续', seen:'12s 前', region:'cn-east',  ver:'v0.9.4', up:'18d 4h', conns:87,  jwt:'41 分钟后过期 · 应续未续(CP 推断)', wl:true  },
+    { peer:'12D3KooW…77c1', caps:['edge','peer_icp'],     prefix:[188,500], warm:[210,1000], st:'warn', stTxt:'连接骤降', seen:'30s 前', region:'cn-north', ver:'v0.9.4', up:'6d 11h', conns:12,  jwt:'9 分钟后过期', wl:false },
+    { peer:'12D3KooW…b82e', caps:['edge','l4_backhaul','relay_provider'], prefix:[401,500], warm:[812,1000], st:'ok', stTxt:'健康', seen:'8s 前',  region:'cn-south', ver:'v0.9.4', up:'41d 2h', conns:132, jwt:'38 分钟后过期', wl:true },
+    { peer:'12D3KooW…9c04', caps:['edge'],              prefix:[96,300],  warm:[480,800],  st:'ok',  stTxt:'健康',    seen:'21s 前', region:'cn-east',  ver:'v0.9.3', up:'3d 9h',  conns:64,  jwt:'52 分钟后过期', wl:false },
+    { peer:'12D3KooW…d517', caps:['edge','peer_icp'],     prefix:[18,300],  warm:[120,800],  st:'warn',stTxt:'空间耗尽', seen:'44s 前', region:'cn-west',  ver:'v0.9.4', up:'12d 7h', conns:41,  jwt:'26 分钟后过期', wl:false },
+    { peer:'12D3KooW…e6aa', caps:['edge','relay_provider'],prefix:[255,500],warm:[390,1000], st:'ok',  stTxt:'健康',    seen:'15s 前', region:'cn-north', ver:'v0.9.4', up:'25d 14h',conns:98,  jwt:'44 分钟后过期', wl:false },
+    { peer:'12D3KooW…1f9b', caps:['edge'],              prefix:[0,0],     warm:[0,0],      st:'off', stTxt:'离线',    seen:'14 分钟前',region:'cn-south',ver:'v0.9.3', up:'—',      conns:0,   jwt:'—', wl:false },
+    { peer:'12D3KooW…a3d8', caps:['edge','l4_backhaul'], prefix:[287,500], warm:[521,1000], st:'ok',  stTxt:'健康',    seen:'9s 前',  region:'cn-east',  ver:'v0.9.4', up:'33d 1h', conns:110, jwt:'51 分钟后过期', wl:true },
   ];
 
   const pill = n => n.st==='ok' ? '<span class="pill ok"><span class="d"></span>健康</span>'
@@ -192,7 +192,6 @@
         <td>${n.caps.map(c=>`<span class="chip">${c}</span>`).join(' ')}</td>
         <td>${meter(n.prefix[0],n.prefix[1])}</td>
         <td>${meter(n.warm[0],n.warm[1])}</td>
-        <td class="r num" style="color:${n.score<=-20?'var(--danger)':'inherit'}">${n.score}</td>
         <td>${pill(n)}</td>
         <td class="mono" style="font-size:12px;color:var(--muted)">${n.seen}</td>
         <td class="r"><button class="btn sm ghost" data-i="${nodes.indexOf(n)}">详情</button></td>
@@ -210,8 +209,7 @@
       <dt>区域 / 版本</dt><dd>${n.region} · ${n.ver}</dd>
       <dt>JWT 状态</dt><dd>${n.jwt}</dd>
       <dt>Uptime</dt><dd>${n.up}</dd>
-      <dt>连接数</dt><dd>${n.conns}</dd>
-      <dt>评分</dt><dd class="num">${n.score}${n.score<=-20 ? ' · ≤-20 已进灰名单(GossipSub 热度丢弃、连接被拒)' : ''}</dd>`;
+      <dt>连接数</dt><dd>${n.conns}</dd>`;
     const parts = [['prefix(NVMe) · pin 驻留',n.prefix],['warm(SSD)',n.warm],['cold(HDD)',[Math.round(n.warm[0]*0.3),2000]]];
     document.getElementById('nd-parts').innerHTML = parts.map(([name,[u,t]]) => `
       <div class="meter"><div class="m-top"><span style="font-family:var(--font-body);font-weight:550;color:var(--fg)">${name}</span><span>${u} / ${t} GB</span></div>

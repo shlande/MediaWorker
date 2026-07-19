@@ -48,7 +48,7 @@
     </div>
 
     <div class="notice planned" style="margin-bottom:14px;">
-      <div><b>DASH pin 策略(当前生效):</b>init 段恒 pin;media 段按节点剩余空间 — ＞50GB pin 5 个 / ＞20GB pin 2 个 / ≤20GB 不 pin。手动 pin/unpin 经 PinOrchestrator 定向下发,反馈路径 = 节点下次状态上报(≤30s)。</div>
+      <div><b>DASH pin 策略(当前生效):</b>init 段恒 pin;media 段按节点剩余空间 — ＞50GB pin 5 个 / ＞20GB pin 2 个 / ≤20GB 不 pin。手动 pin/unpin 经 PinOrchestrator 定向下发,反馈路径 = 节点下次状态上报(≤30s)。「pin 节点数」列依赖 CP 下发记账(E5),落地前暂隐。</div>
     </div>
 
     <div class="toolbar">
@@ -63,17 +63,17 @@
       <table class="tbl">
         <thead>
           <tr><th>内容</th><th>类型</th><th class="r">总大小</th><th class="r">blob 数</th>
-          <th>副本健康</th><th class="r">24h 热度</th><th class="r">pin 节点</th><th class="r">操作</th></tr>
+          <th>副本健康</th><th class="r">24h 热度</th><th class="r">操作</th></tr>
         </thead>
         <tbody id="c-body"></tbody>
       </table>
     </div>
 
     <!-- PinPlan 下发记录 -->
-    <div class="section-h">PinPlan 下发记录 <span class="hint">PinOrchestrator + SyncBroadcaster</span></div>
+    <div class="section-h">PinPlan 下发记录 <span class="hint">PinOrchestrator + SyncBroadcaster · 状态 = 下发时间 vs 该节点最近一次上报时间比较(无逐条 ACK)</span></div>
     <div class="tbl-wrap">
       <table class="tbl">
-        <thead><tr><th>seq</th><th>目标节点</th><th>pin</th><th>unpin</th><th>触发</th><th>时间</th><th>确认</th></tr></thead>
+        <thead><tr><th>seq</th><th>目标节点</th><th>pin</th><th>unpin</th><th>触发</th><th>时间</th><th>状态</th></tr></thead>
         <tbody id="pp-body"></tbody>
       </table>
     </div>
@@ -148,21 +148,21 @@
   MW.injectChrome();
 
   const contents = [
-    { id:'c_7f3a91', t:'发布会回放-0718', type:'dash_video', size:'6.4 GB', blobs:46, rep:2, hot:48213, pins:31, del:false,
+    { id:'c_7f3a91', t:'发布会回放-0718', type:'dash_video', size:'6.4 GB', blobs:46, rep:2, hot:48213, del:false,
       meta:{ 时长:'01:42:18', 码率阶梯:'500k / 1500k / 4000k', 段时长:'4s', 创建:'2026-07-18 20:14' } },
-    { id:'c_2e8b04', t:'产品演示-第四章', type:'dash_video', size:'2.1 GB', blobs:22, rep:2, hot:31875, pins:26, del:false,
+    { id:'c_2e8b04', t:'产品演示-第四章', type:'dash_video', size:'2.1 GB', blobs:22, rep:2, hot:31875, del:false,
       meta:{ 时长:'00:31:02', 码率阶梯:'500k / 1500k / 4000k', 段时长:'4s', 创建:'2026-07-15 11:40' } },
-    { id:'c_9d1c56', t:'教程-快速上手', type:'dash_video', size:'1.3 GB', blobs:14, rep:2, hot:27340, pins:22, del:false,
+    { id:'c_9d1c56', t:'教程-快速上手', type:'dash_video', size:'1.3 GB', blobs:14, rep:2, hot:27340, del:false,
       meta:{ 时长:'00:18:44', 码率阶梯:'500k / 1500k', 段时长:'4s', 创建:'2026-07-11 09:02' } },
-    { id:'c_44aa17', t:'封面图-夏季活动', type:'image', size:'18 MB', blobs:3, rep:2, hot:19652, pins:18, del:false,
+    { id:'c_44aa17', t:'封面图-夏季活动', type:'image', size:'18 MB', blobs:3, rep:2, hot:19652, del:false,
       meta:{ 尺寸:'3840×2160', 缩略图:'200 / 800 px', EXIF:'已剥离', 创建:'2026-07-10 16:22' } },
-    { id:'c_81f0c3', t:'访谈-基础设施团队', type:'dash_video', size:'3.8 GB', blobs:31, rep:1, hot:15208, pins:14, del:false,
+    { id:'c_81f0c3', t:'访谈-基础设施团队', type:'dash_video', size:'3.8 GB', blobs:31, rep:1, hot:15208, del:false,
       meta:{ 时长:'00:58:37', 码率阶梯:'500k / 1500k / 4000k', 段时长:'4s', 创建:'2026-07-08 14:51' } },
-    { id:'c_6b5d2f', t:'教程-高级转码', type:'dash_video', size:'1.9 GB', blobs:19, rep:2, hot:11947, pins:12, del:false,
+    { id:'c_6b5d2f', t:'教程-高级转码', type:'dash_video', size:'1.9 GB', blobs:19, rep:2, hot:11947, del:false,
       meta:{ 时长:'00:27:19', 码率阶梯:'500k / 1500k', 段时长:'4s', 创建:'2026-07-05 10:36' } },
-    { id:'c_03c7e8', t:'缩略图集-文档站', type:'image', size:'41 MB', blobs:9, rep:2, hot:9411, pins:9, del:false,
+    { id:'c_03c7e8', t:'缩略图集-文档站', type:'image', size:'41 MB', blobs:9, rep:2, hot:9411, del:false,
       meta:{ 尺寸:'1920×1080', 缩略图:'200 / 800 px', EXIF:'已剥离', 创建:'2026-07-03 13:08' } },
-    { id:'c_5e19d0', t:'直播切片-社区问答', type:'dash_video', size:'940 MB', blobs:11, rep:1, hot:7803, pins:7, del:true,
+    { id:'c_5e19d0', t:'直播切片-社区问答', type:'dash_video', size:'940 MB', blobs:11, rep:1, hot:7803, del:true,
       meta:{ 时长:'00:12:53', 码率阶梯:'500k / 1500k', 段时长:'4s', 创建:'2026-06-28 19:44' } },
   ];
 
@@ -189,7 +189,6 @@
         <td class="r num">${c.blobs}</td>
         <td>${repPill(c)}</td>
         <td class="r num">${c.hot.toLocaleString()}</td>
-        <td class="r num">${c.pins}</td>
         <td class="r"><button class="btn sm ghost" data-i="${contents.indexOf(c)}">详情</button></td>
       </tr>`).join('');
     document.querySelectorAll('#c-body tr').forEach(tr =>
@@ -272,18 +271,18 @@
   }
 
   const plans = [
-    [1043,'12D3KooW…b82e','+5','−0','手动 · admin','12:11:02','已确认'],
-    [1042,'12D3KooW…f3a9','+5','−0','自动 · 热度', '12:04:31','已确认'],
-    [1041,'12D3KooW…e6aa','+2','−0','自动 · 热度', '12:01:18','已确认'],
-    [1040,'12D3KooW…a3d8','+0','−8','自动 · 空间', '11:57:44','已确认'],
-    [1039,'12D3KooW…9c04','+2','−0','自动 · 热度', '11:58:02','已确认'],
+    [1043,'12D3KooW…b82e','+5','−0','手动 · admin','12:11:02','已下发'],
+    [1042,'12D3KooW…f3a9','+5','−0','自动 · 热度', '12:04:31','已下发'],
+    [1041,'12D3KooW…e6aa','+2','−0','自动 · 热度', '12:01:18','已下发'],
+    [1040,'12D3KooW…a3d8','+0','−8','自动 · 空间', '11:57:44','已下发'],
+    [1039,'12D3KooW…9c04','+2','−0','自动 · 热度', '11:58:02','已下发'],
     [1038,'12D3KooW…77c1','+0','−12','手动 · ops', '11:49:20','待节点上报'],
   ];
   document.getElementById('pp-body').innerHTML = plans.map(p => `
-    <tr class="${p[6]==='已确认'?'':'row-warn'}"><td class="mono">${p[0]}</td><td><code>${p[1]}</code></td>
+    <tr class="${p[6]==='已下发'?'':'row-warn'}"><td class="mono">${p[0]}</td><td><code>${p[1]}</code></td>
     <td class="num" style="color:var(--success)">${p[2]}</td><td class="num" style="color:var(--muted)">${p[3]}</td>
     <td style="font-size:12.5px">${p[4]}</td><td class="mono" style="font-size:12px">${p[5]}</td>
-    <td>${p[6]==='已确认' ? '<span class="pill ok"><span class="d"></span>已确认</span>' : '<span class="pill warn"><span class="d"></span>待节点上报</span>'}</td></tr>`).join('');
+    <td>${p[6]==='已下发' ? '<span class="pill ok"><span class="d"></span>已下发</span>' : '<span class="pill warn"><span class="d"></span>待节点上报</span>'}</td></tr>`).join('');
 
   ['q','f-type','f-rep'].forEach(id => document.getElementById(id).addEventListener('input', render));
   render();

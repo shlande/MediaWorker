@@ -44,14 +44,14 @@
     <!-- 状态一句话:先给结论,再给依据;失败条目单独亮出 -->
     <div class="status-strip" data-od-id="status-strip">
       <span class="pill ok"><span class="d"></span>拉取链路正常</span>
-      <span class="s-text">就绪率 <b>97.2%</b>(138 / 142);拉取中 <b>3</b> 条平均进度 <b>61%</b>,为节点自治异步拉取,无需介入。</span>
+      <span class="s-text">就绪率 <b>97.2%</b>(138 / 142);拉取中 <b>3</b> 条,为节点自治异步拉取,无需介入。</span>
       <span class="s-alert"><span class="pill bad">1 失败待重试</span>回源 404 · 源端副本缺失</span>
     </div>
 
     <div class="grid g-4" data-od-id="pin-stats">
       <div class="card stat"><span class="label">Pin 总数</span><span class="value">142</span><span class="target">init 38 · media 104</span></div>
       <div class="card stat ok"><span class="label">就绪 ready</span><span class="value">138</span><span class="target">异步拉取已完成</span></div>
-      <div class="card stat warn"><span class="label">拉取中</span><span class="value">3</span><span class="target">平均进度 61%</span></div>
+      <div class="card stat warn"><span class="label">拉取中</span><span class="value">3</span><span class="target">节点自治异步拉取</span></div>
       <div class="card stat bad card-anchor"><span class="label">失败<span class="watch">需处理 · 唯一写操作</span></span><span class="value">1</span><span class="target">可手动重试</span></div>
     </div>
 
@@ -97,7 +97,7 @@
     </div>
 
     <div class="notice mt">
-      <div><b>Pin 执行是节点自治。</b>节点接收 PinPlan 后异步拉取 blob,完成才置 ready;UI 不写 pin 清单,仅有的写操作是失败条目的重试(<code>POST /v1/pins/{hash}/retry</code>)。要调整哪些内容驻留本节点,请走「内容与 Pin 编排」的手动 pin 下发。</div>
+      <div><b>Pin 执行是节点自治。</b>节点接收 PinPlan 后异步拉取 blob,完成才置 ready;UI 不写 pin 清单,仅有的写操作是失败条目的重试(<code>POST /v1/pins/{hash}/retry</code>)。要调整哪些内容驻留本节点,请走「内容与 Pin 编排」的手动 pin 下发。拉取进度无追踪,v1 仅三态(就绪 / 拉取中 / 失败),百分比二期再议。</div>
     </div>
   </main>
 </div>
@@ -112,18 +112,18 @@
     { h:'77d0…a41f', c:'c_7f3a91', role:'media', size:'48 MB',   at:'12:04:33', st:'ok'   },
     { h:'e992…0b77', c:'c_7f3a91', role:'media', size:'51 MB',   at:'12:04:33', st:'ok'   },
     { h:'40ac…d5e9', c:'c_2e8b04', role:'media', size:'36 MB',   at:'11:58:05', st:'ok'   },
-    { h:'1b6e…7c30', c:'c_2e8b04', role:'media', size:'44 MB',   at:'11:58:05', st:'pull', prog:62 },
+    { h:'1b6e…7c30', c:'c_2e8b04', role:'media', size:'44 MB',   at:'11:58:05', st:'pull' },
     { h:'8f31…b9a2', c:'c_55ad07', role:'init',  size:'1.8 MB',  at:'11:20:17', st:'ok'   },
     { h:'c204…6f18', c:'c_55ad07', role:'media', size:'52 MB',   at:'11:20:17', st:'ok'   },
-    { h:'5a7b…e0c4', c:'c_55ad07', role:'media', size:'47 MB',   at:'11:20:17', st:'pull', prog:71 },
+    { h:'5a7b…e0c4', c:'c_55ad07', role:'media', size:'47 MB',   at:'11:20:17', st:'pull' },
     { h:'9d38…4ab6', c:'c_09f2b6', role:'media', size:'39 MB',   at:'10:52:51', st:'fail', err:'回源 404 · 源端副本缺失' },
     { h:'f167…c9d3', c:'c_3c10de', role:'init',  size:'2.4 MB',  at:'10:11:02', st:'ok'   },
     { h:'02be…5a7d', c:'c_3c10de', role:'media', size:'55 MB',   at:'10:11:02', st:'ok'   },
-    { h:'6e45…f281', c:'c_3c10de', role:'media', size:'49 MB',   at:'10:11:02', st:'pull', prog:55 },
+    { h:'6e45…f281', c:'c_3c10de', role:'media', size:'49 MB',   at:'10:11:02', st:'pull' },
   ];
 
   const stPill = p => p.st==='ok' ? '<span class="pill ok"><span class="d"></span>就绪</span>'
-    : p.st==='pull' ? `<span class="pill warn"><span class="d"></span>拉取中 ${p.prog}%</span>`
+    : p.st==='pull' ? '<span class="pill warn"><span class="d"></span>拉取中</span>'
     : `<span class="pill bad"><span class="d"></span>失败</span>`;
 
   function render() {

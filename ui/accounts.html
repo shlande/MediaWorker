@@ -26,6 +26,70 @@
   @keyframes fd-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
   .freshness .dot { animation: fd-pulse 2s ease-in-out infinite; }
   .freshness .tick { font: 11px var(--font-mono); color: var(--muted); }
+
+  /* 动态表单改版(accounts-ui-checklist)— 全部页面级样式 */
+  .vpick { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .vpick .vc {
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 12px 14px; cursor: pointer; background: var(--surface);
+    transition: border-color 0.12s;
+  }
+  .vpick .vc:hover { border-color: var(--accent); }
+  .vpick .vn { font-weight: 650; font-size: 13.5px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .vpick .vd { font-size: 11.5px; color: var(--muted); margin-top: 5px; line-height: 1.5; }
+  .mocktag {
+    font: 600 10px var(--font-mono); letter-spacing: 0.06em;
+    color: oklch(42% 0.1 65); background: var(--warn-bg);
+    border: 1px solid oklch(85% 0.06 75); border-radius: 4px; padding: 1px 6px;
+  }
+  .pill.mut { color: var(--muted); border-color: var(--border); background: oklch(97% 0.003 250); }
+  .pill.mut .d { background: var(--muted); }
+  .cred-warn { color: oklch(42% 0.1 65); font-weight: 600; }
+  .incbar {
+    display: inline-block; font-size: 12px; color: var(--muted);
+    background: oklch(96% 0.004 250); border: 1px solid var(--border);
+    border-radius: 4px; padding: 2px 8px;
+  }
+  .pw-wrap { position: relative; }
+  .pw-wrap .input { padding-right: 36px; width: 100%; }
+  .pw-wrap .eye {
+    position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+    border: 0; background: none; cursor: pointer; color: var(--muted);
+    padding: 4px; display: grid; place-items: center;
+  }
+  .pw-wrap .eye:hover { color: var(--fg); }
+  .pw-wrap .eye svg { width: 15px; height: 15px; }
+  .kv-row { display: grid; grid-template-columns: 128px 1fr 30px; gap: 8px; margin-bottom: 8px; align-items: center; }
+  .kv-row.dup .kv-k { border-color: var(--danger); }
+  .kv-add { margin-top: 2px; }
+  .cookie-sum {
+    display: flex; align-items: center; gap: 10px;
+    border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 8px 12px; font-size: 12.5px; background: oklch(98.5% 0.003 250);
+  }
+  .ferr { font-size: 11.5px; color: var(--danger); display: none; }
+  .ferr.on { display: block; }
+  .input.err { border-color: var(--danger); }
+  .q {
+    display: inline-grid; place-items: center; width: 14px; height: 14px;
+    border: 1px solid var(--border); border-radius: 50%;
+    font-size: 10px; color: var(--muted); cursor: help; margin-left: 4px;
+  }
+  .tres {
+    margin-top: 10px; border-radius: var(--radius); padding: 9px 12px;
+    font-size: 12.5px; display: none; align-items: center; gap: 8px;
+    font-variant-numeric: tabular-nums;
+  }
+  .tres.on { display: flex; }
+  .tres.ok { background: oklch(95% 0.04 145); color: oklch(35% 0.1 145); border: 1px solid oklch(85% 0.06 145); }
+  .tres.bad { background: var(--danger-bg); color: oklch(38% 0.12 27); border: 1px solid oklch(85% 0.05 27); }
+  .tres.mut { background: oklch(96% 0.004 250); color: var(--muted); border: 1px solid var(--border); }
+  .spin {
+    width: 12px; height: 12px; border: 2px solid oklch(80% 0.02 250);
+    border-top-color: var(--fg); border-radius: 50%;
+    animation: sp 0.7s linear infinite; display: inline-block; vertical-align: -2px;
+  }
+  @keyframes sp { to { transform: rotate(360deg); } }
 </style>
 </head>
 <body>
@@ -44,12 +108,12 @@
     <!-- 状态一句话:健康率结论先行,banned/degraded 单独亮出 -->
     <div class="status-strip" data-od-id="status-strip">
       <span class="pill warn"><span class="d"></span>健康率 76.9% · 低于 80% SLO</span>
-      <span class="s-text">13 个注册账号:<b>10</b> healthy / <b>1</b> degraded(baidu 15m 错误率 2.8%,HalfOpen 观察中)/ <b>2</b> banned(quark 风控,ban_until 07-20 / 07-21)。</span>
+      <span class="s-text">15 个注册账号(按 13 个参与调度计):<b>10</b> healthy / <b>1</b> degraded(baidu 15m 错误率 2.8%)/ <b>2</b> banned(quark 风控,ban_until 07-20 / 07-21);<b>2</b> 个不参与调度(1 待首次探测 · 1 凭据不完整)。</span>
       <span class="s-alert"><span class="pill bad">3 需处理</span>2 banned · 副本不可读 · 1 degraded</span>
     </div>
 
     <div class="grid g-4" style="margin-bottom:14px;">
-      <div class="card stat"><span class="label">注册账号</span><span class="value num">13</span><span class="target">cloud_account 表</span></div>
+      <div class="card stat"><span class="label">注册账号</span><span class="value num">15</span><span class="target">cloud_account 表</span></div>
       <div class="card stat ok"><span class="label">healthy</span><span class="value num">10</span><span class="target">account_health.state</span></div>
       <div class="card stat warn"><span class="label">degraded</span><span class="value num">1</span><span class="target">baidu · 错误率升高</span></div>
       <div class="card stat bad card-anchor"><span class="label">banned <span class="watch">需处理</span></span><span class="value num">2</span><span class="target">quark · 含 ban_until · 副本不可读</span></div>
@@ -62,15 +126,16 @@
       </select>
       <select class="input" id="f-state">
         <option value="">全部健康态</option><option>healthy</option><option>degraded</option><option>banned</option>
+        <option value="pending">待首次探测</option><option value="incomplete">凭据不完整</option>
       </select>
     </div>
 
-    <div class="tbl-wrap">
+    <div class="tbl-wrap" data-od-id="acct-table">
       <table class="tbl">
         <thead>
           <tr>
-            <th>厂商</th><th>Account ID</th><th>启用</th><th>健康状态</th><th>熔断器</th>
-            <th>限流(QPS/Burst/并发)</th><th class="r">存储用量</th><th class="r">操作</th>
+            <th>厂商</th><th>Account ID</th><th>凭据</th><th>启用</th><th>健康状态</th>
+            <th>限流(QPS/Burst/并发)</th><th class="r">操作</th>
           </tr>
         </thead>
         <tbody id="acct-body"></tbody>
@@ -79,9 +144,7 @@
 
     <!-- VendorProfile -->
     <div class="section-h">VendorProfile 厂商画像
-      <span class="hint">weight / base_latency_ms / bandwidth_mbps · 当前生效值</span>
-      <span class="spacer"></span>
-      <button class="btn sm" id="vp-save">保存修改</button>
+      <span class="hint">weight / base_latency_ms / bandwidth_mbps · 只读 — 节点以本地 YAML 为准,CP 改动不传播</span>
     </div>
     <div class="tbl-wrap">
       <table class="tbl">
@@ -96,158 +159,523 @@
   </main>
 </div>
 
-<!-- 编辑抽屉 -->
-<div class="drawer" id="acct-drawer">
+<!-- 账号抽屉:厂商选择 / 添加 / 编辑 三态,内容由 JS 渲染 -->
+<div class="drawer" id="acct-drawer" data-od-id="acct-drawer">
   <div class="d-head">
     <div>
-      <h2 id="ad-title">编辑账号</h2>
+      <h2 id="ad-title">添加账号</h2>
       <div class="sub mono" id="ad-id"></div>
     </div>
     <button class="d-close" onclick="MW.closeAll()">✕</button>
   </div>
-  <div class="d-body">
-    <div class="card">
-      <h3>基本信息</h3>
-      <div class="form-row">
-        <div class="field"><label>厂商</label>
-          <select class="input" id="ad-vendor"><option>115</option><option>baidu</option><option>quark</option><option>onedrive</option><option>aliyundrive</option></select>
-        </div>
-        <div class="field"><label>Account ID</label><input class="input mono" id="ad-acct" /></div>
-      </div>
-      <div class="field">
-        <label>凭据(JSON)</label>
-        <textarea class="input mono" id="ad-cred" rows="4" placeholder='留空 = 不修改。当前值已掩码:{"cookies":"••••••","refresh_token":"••••••"}'></textarea>
-        <span class="help">凭据为敏感数据,默认只显示掩码;覆盖写入会触发 CREDENTIAL_UPDATE 广播并写审计。</span>
-      </div>
-    </div>
-
-    <div class="card mt">
-      <h3>限流配置</h3>
-      <div class="form-row">
-        <div class="field"><label>QPS</label><input class="input num" id="ad-qps" /></div>
-        <div class="field"><label>Burst</label><input class="input num" id="ad-burst" /></div>
-      </div>
-      <div class="field" style="width:50%;"><label>并发数</label><input class="input num" id="ad-conc" /></div>
-    </div>
-
-    <div class="card mt">
-      <h3>运行状态(只读)</h3>
-      <dl class="dl" id="ad-status"></dl>
-    </div>
-
-    <div class="section-h">操作</div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;">
-      <button class="btn primary" id="ad-save">保存并下发</button>
-      <button class="btn" id="ad-rotate">轮换凭据</button>
-      <button class="btn" id="ad-circuit">手动熔断</button>
-      <button class="btn danger" id="ad-ban">手动封禁</button>
-    </div>
-    <p style="font-size:11.5px;color:var(--muted);margin-top:10px;">
-      封禁 / 熔断为危险操作,需二次确认并写审计日志;解封与解禁在确认后同样走 6–10s 传播。
-    </p>
-  </div>
+  <div class="d-body" id="ad-body"></div>
 </div>
+
+<!-- 轮换凭据弹层 / 通用确认弹层 -->
+<div class="modal" id="rotate-modal"></div>
+<div class="modal" id="mini-modal"></div>
 
 <script src="assets/app.js"></script>
 <script>
   MW.injectSidebar('accounts');
   MW.injectChrome();
 
+  const EYE = 'M1 12s4-7 11-7 11 7 11 7-4 7-11 7S1 12 1 12zM12 12m-3 0a3 3 0 106 0 3 3 0 10-6 0';
+
+  /* ---------- 五厂商字段规格(与后端校验 B4 / vendor-account-params 同源) ---------- */
+  const VENDORS = {
+    baidu: { kind: 'oauth', mock: false, limits: [2, 4, 8], latency: 412,
+      desc: 'OAuth2 · client_id(AppKey) + client_secret + refresh_token',
+      fields: [
+        { k: 'client_id', label: 'client_id (AppKey)', req: true },
+        { k: 'client_secret', label: 'client_secret', req: true, secret: true },
+        { k: 'refresh_token', label: 'refresh_token', req: true, secret: true },
+        { k: 'redirect_uri', label: 'redirect_uri', req: false, url: true, help: '选填,默认回跳地址' },
+      ] },
+    onedrive: { kind: 'oauth', mock: false, limits: [10, 20, 16], latency: 361,
+      desc: 'OAuth2 · 含 region(决定 token 与 API host)',
+      fields: [
+        { k: 'client_id', label: 'client_id', req: true },
+        { k: 'client_secret', label: 'client_secret', req: true, secret: true },
+        { k: 'refresh_token', label: 'refresh_token', req: true, secret: true },
+        { k: 'redirect_uri', label: 'redirect_uri', req: true, url: true },
+        { k: 'region', label: 'region', req: true, hint: 'region 决定 token 端点与 API host,选错 = 授权失败',
+          select: [['global', '全球'], ['cn', '世纪互联'], ['us', 'US Gov'], ['de', '德国']] },
+      ] },
+    aliyundrive: { kind: 'oauth', mock: true, limits: [5, 10, 10], latency: 298,
+      desc: 'OAuth2 · refresh_token 必填,自建应用选填',
+      fields: [
+        { k: 'refresh_token', label: 'refresh_token', req: true, secret: true },
+        { k: 'client_id', label: 'client_id', req: false, help: '选填,自建应用;与 client_secret 成对' },
+        { k: 'client_secret', label: 'client_secret', req: false, secret: true, pair: 'client_id' },
+      ] },
+    '115': { kind: 'cookies', mock: true, limits: [1, 2, 5], latency: 342,
+      desc: 'Cookies 凭据 · 预置 UID / CID / SEID', preset: ['UID', 'CID', 'SEID'] },
+    quark: { kind: 'cookies', mock: true, limits: [0.5, 1, 5], latency: 520,
+      desc: 'Cookies 凭据 · 下载链 IP 绑定,不可跨节点复用', preset: [] },
+  };
+
+  /* ---------- mock 数据:15 账号(10 healthy / 1 degraded / 2 banned / 1 待探测 / 1 凭据不完整) ---------- */
   const accts = [
-    { v:'115',         id:'mw_store_01', on:true,  st:'healthy',  circ:'Closed',   qps:[20,40,8],  use:'4.2 TB', err:'—' },
-    { v:'115',         id:'mw_store_02', on:true,  st:'healthy',  circ:'Closed',   qps:[20,40,8],  use:'3.8 TB', err:'—' },
-    { v:'baidu',       id:'mw_bak_01',   on:true,  st:'degraded', circ:'HalfOpen', qps:[10,20,4],  use:'2.1 TB', err:'15m 错误率 2.8%,观察中' },
-    { v:'baidu',       id:'mw_bak_02',   on:true,  st:'healthy',  circ:'Closed',   qps:[10,20,4],  use:'1.9 TB', err:'—' },
-    { v:'quark',       id:'mw_qk_01',    on:false, st:'banned',   circ:'Open',     qps:[5,10,2],   use:'0.9 TB', err:'ban_until 2026-07-21 09:00 · 风控触发' },
-    { v:'quark',       id:'mw_qk_02',    on:false, st:'banned',   circ:'Open',     qps:[5,10,2],   use:'0.7 TB', err:'ban_until 2026-07-20 18:30 · 风控触发' },
-    { v:'onedrive',    id:'mw_od_01',    on:true,  st:'healthy',  circ:'Closed',   qps:[15,30,6],  use:'2.6 TB', err:'—' },
-    { v:'aliyundrive', id:'mw_ali_01',   on:true,  st:'healthy',  circ:'Closed',   qps:[15,30,6],  use:'3.1 TB', err:'—' },
+    { v: '115',         id: 'mw_store_01', on: true,  st: 'healthy',  qps: [1, 2, 5],    cred: { kind: 'cookies', keys: 3 }, err: '—' },
+    { v: '115',         id: 'mw_store_02', on: true,  st: 'healthy',  qps: [1, 2, 5],    cred: { kind: 'cookies', keys: 3 }, err: '—' },
+    { v: '115',         id: 'mw_store_03', on: true,  st: 'healthy',  qps: [1, 2, 5],    cred: { kind: 'cookies', keys: 2 }, err: '—' },
+    { v: 'baidu',       id: 'mw_bak_01',   on: true,  st: 'degraded', qps: [2, 4, 8],    cred: { kind: 'oauth', ok: true },  err: '15m 错误率 2.8%,观察中' },
+    { v: 'baidu',       id: 'mw_bak_02',   on: true,  st: 'healthy',  qps: [2, 4, 8],    cred: { kind: 'oauth', ok: true },  err: '—' },
+    { v: 'baidu',       id: 'mw_bak_03',   on: true,  st: 'healthy',  qps: [2, 4, 8],    cred: { kind: 'oauth', ok: true },  err: '—' },
+    { v: 'baidu',       id: 'mw_bak_04',   on: false, st: 'healthy',  qps: [2, 4, 8],    cred: { kind: 'oauth', ok: false, missing: 'client_secret' }, incomplete: true, err: '缺 client_secret — 补全后恢复调度' },
+    { v: 'quark',       id: 'mw_qk_01',    on: false, st: 'banned',   qps: [0.5, 1, 5],  cred: { kind: 'cookies', keys: 2 }, err: 'ban_until 2026-07-21 09:00 · 风控触发' },
+    { v: 'quark',       id: 'mw_qk_02',    on: false, st: 'banned',   qps: [0.5, 1, 5],  cred: { kind: 'cookies', keys: 2 }, err: 'ban_until 2026-07-20 18:30 · 风控触发' },
+    { v: 'onedrive',    id: 'mw_od_01',    on: true,  st: 'healthy',  qps: [10, 20, 16], region: 'cn',     cred: { kind: 'oauth', ok: true }, err: '—' },
+    { v: 'onedrive',    id: 'mw_od_02',    on: true,  st: 'healthy',  qps: [10, 20, 16], region: 'global', cred: { kind: 'oauth', ok: true }, err: '—' },
+    { v: 'onedrive',    id: 'mw_od_03',    on: true,  st: 'pending',  qps: [10, 20, 16], region: 'cn',     cred: { kind: 'oauth', ok: true }, err: '创建 2 分钟 · 等待首个 30s 探测周期' },
+    { v: 'aliyundrive', id: 'mw_ali_01',   on: true,  st: 'healthy',  qps: [5, 10, 10],  cred: { kind: 'oauth', ok: true },  err: '—' },
+    { v: 'aliyundrive', id: 'mw_ali_02',   on: true,  st: 'healthy',  qps: [5, 10, 10],  cred: { kind: 'oauth', ok: true },  err: '—' },
+    { v: 'aliyundrive', id: 'mw_ali_03',   on: true,  st: 'healthy',  qps: [5, 10, 10],  cred: { kind: 'oauth', ok: true },  err: '—' },
   ];
 
-  const healthPill = s => s==='healthy' ? '<span class="pill ok"><span class="d"></span>healthy</span>'
-    : s==='degraded' ? '<span class="pill warn"><span class="d"></span>degraded</span>'
-    : '<span class="pill bad"><span class="d"></span>banned</span>';
-  const circPill = c => c==='Closed' ? '<span class="pill ok">Closed</span>'
-    : c==='HalfOpen' ? '<span class="pill warn">HalfOpen</span>'
-    : '<span class="pill bad">Open</span>';
+  /* ---------- 列表 ---------- */
+  const healthCell = a => {
+    if (a.incomplete) return `<span class="incbar">凭据不完整 · 不参与调度</span><div style="font-size:11px;color:var(--muted);margin-top:3px;max-width:220px">${a.err}</div>`;
+    if (a.st === 'pending') return `<span class="pill mut"><span class="d"></span>待首次探测</span><div style="font-size:11px;color:var(--muted);margin-top:3px;max-width:220px">${a.err}</div>`;
+    const pill = a.st === 'healthy' ? '<span class="pill ok"><span class="d"></span>healthy</span>'
+      : a.st === 'degraded' ? '<span class="pill warn"><span class="d"></span>degraded</span>'
+      : '<span class="pill bad"><span class="d"></span>banned</span>';
+    return `${pill}<div style="font-size:11px;color:var(--muted);margin-top:3px;max-width:220px">${a.err}</div>`;
+  };
+  const credCell = a => a.cred.kind === 'cookies'
+    ? `<span class="mono" style="font-size:12px">Cookies · ${a.cred.keys} 键</span>`
+    : a.cred.ok
+      ? `<span class="mono" style="font-size:12px">OAuth2 · 已配置</span>`
+      : `<span class="mono cred-warn" style="font-size:12px">OAuth2 · 缺 ${a.cred.missing}</span>`;
+  const vendorCell = a =>
+    `<span class="chip">${a.v}</span>` +
+    (a.region ? `<div style="font-size:11px;color:var(--muted);margin-top:3px">region · ${a.region}</div>` : '') +
+    (a.v === 'quark' ? `<div style="font-size:11px;color:var(--muted);margin-top:3px;max-width:180px">下载链 IP 绑定,链接不可跨节点复用</div>` : '');
+
+  function rowState(a) { return a.incomplete ? 'incomplete' : a.st; }
 
   function render() {
     const q = document.getElementById('q').value.trim().toLowerCase();
     const fv = document.getElementById('f-vendor').value;
     const fs = document.getElementById('f-state').value;
     const rows = accts.filter(a =>
-      (!q || (a.v + a.id).toLowerCase().includes(q)) && (!fv || a.v === fv) && (!fs || a.st === fs));
-    const rank = { banned: 0, degraded: 1, healthy: 2 };
-    rows.sort((a, b) => rank[a.st] - rank[b.st]);
-    const rowCls = a => a.st === 'banned' ? 'clickable row-bad' : a.st === 'degraded' ? 'clickable row-warn' : 'clickable';
+      (!q || (a.v + a.id).toLowerCase().includes(q)) && (!fv || a.v === fv) && (!fs || rowState(a) === fs));
+    const rank = { banned: 0, degraded: 1, incomplete: 2, healthy: 3, pending: 4 };
+    rows.sort((a, b) => rank[rowState(a)] - rank[rowState(b)]);
+    const rowCls = a => a.st === 'banned' ? 'clickable row-bad' : a.st === 'degraded' ? 'clickable row-warn' : a.st === 'pending' ? 'clickable row-dim' : 'clickable';
     document.getElementById('acct-body').innerHTML = rows.map(a => `
       <tr class="${rowCls(a)}" data-i="${accts.indexOf(a)}">
-        <td><span class="chip">${a.v}</span></td>
+        <td>${vendorCell(a)}</td>
         <td><code>${a.id}</code></td>
-        <td><label class="switch" onclick="event.stopPropagation()"><input type="checkbox" ${a.on?'checked':''} data-toggle="${accts.indexOf(a)}"><span class="track"></span></label></td>
-        <td>${healthPill(a.st)}<div style="font-size:11px;color:var(--muted);margin-top:3px;max-width:220px">${a.err}</div></td>
-        <td>${circPill(a.circ)}</td>
+        <td>${credCell(a)}</td>
+        <td><label class="switch" onclick="event.stopPropagation()"><input type="checkbox" ${a.on ? 'checked' : ''} data-toggle="${accts.indexOf(a)}"><span class="track"></span></label></td>
+        <td>${healthCell(a)}</td>
         <td class="mono" style="font-size:12px">${a.qps.join(' / ')}</td>
-        <td class="r num">${a.use}</td>
-        <td class="r"><button class="btn sm ghost" data-i="${accts.indexOf(a)}">编辑</button></td>
+        <td class="r" style="white-space:nowrap">
+          <button class="btn sm ghost" data-test="${accts.indexOf(a)}">测试</button>
+          <button class="btn sm ghost" data-edit="${accts.indexOf(a)}">编辑</button>
+        </td>
       </tr>`).join('');
     document.querySelectorAll('#acct-body tr').forEach(tr =>
-      tr.addEventListener('click', () => openAcct(+tr.dataset.i)));
+      tr.addEventListener('click', () => openDrawerFlow('edit', +tr.dataset.i)));
+    document.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', e => {
+      e.stopPropagation(); openDrawerFlow('edit', +b.dataset.edit);
+    }));
+    document.querySelectorAll('[data-test]').forEach(b => b.addEventListener('click', e => {
+      e.stopPropagation(); rowTest(accts[+b.dataset.test]);
+    }));
     document.querySelectorAll('[data-toggle]').forEach(sw => sw.addEventListener('change', e => {
       const a = accts[+e.target.dataset.toggle];
       MW.dispatched(`${a.id} ${e.target.checked ? '启用' : '禁用'}`);
     }));
   }
 
-  function openAcct(i) {
-    const a = accts[i];
-    document.getElementById('ad-id').textContent = `${a.v}:${a.id}`;
-    document.getElementById('ad-vendor').value = a.v;
-    document.getElementById('ad-acct').value = a.id;
-    document.getElementById('ad-qps').value = a.qps[0];
-    document.getElementById('ad-burst').value = a.qps[1];
-    document.getElementById('ad-conc').value = a.qps[2];
-    document.getElementById('ad-cred').value = '';
-    document.getElementById('ad-status').innerHTML = `
-      <dt>健康状态</dt><dd>${healthPill(a.st)}</dd>
-      <dt>熔断器</dt><dd>${circPill(a.circ)}</dd>
-      <dt>最近错误</dt><dd style="font-size:12.5px">${a.err}</dd>
-      <dt>存储用量</dt><dd class="num">${a.use}</dd>
-      <dt>延迟(基线/实测)</dt><dd class="num">${({ '115':320, baidu:410, quark:520, onedrive:380, aliyundrive:300 })[a.v]} ms / ${({ '115':342, baidu:588, quark:0, onedrive:361, aliyundrive:298 })[a.v] || '—'} ms</dd>`;
-    document.getElementById('ad-save').onclick = () => { MW.closeAll(); MW.dispatched('账号配置更新'); };
-    document.getElementById('ad-rotate').onclick = () => MW.confirmDanger({
-      title:'轮换凭据', body:`将向全节点广播 CREDENTIAL_UPDATE,旧凭据在快照周期后失效。确认轮换 ${a.v}:${a.id} 的凭据?`,
-      phrase:'轮换凭据', actionLabel:'确认轮换', onConfirm:()=>MW.dispatched('凭据轮换')});
-    document.getElementById('ad-circuit').onclick = () => MW.confirmDanger({
-      title:'手动熔断(ForceOpen)', body:`熔断后该账号立即停止参与回源调度,恢复需手动 ForceClose。确认熔断 ${a.v}:${a.id}?`,
-      phrase:'手动熔断', actionLabel:'确认熔断', onConfirm:()=>MW.dispatched('熔断器 ForceOpen')});
-    document.getElementById('ad-ban').onclick = () => MW.confirmDanger({
-      title:'手动封禁', body:`MarkBanned 会将账号置为 banned 并强制开熔断,影响所有引用该账号副本的内容可读性。确认封禁 ${a.v}:${a.id}?`,
-      phrase:'确认封禁', actionLabel:'确认封禁', onConfirm:()=>MW.dispatched('手动封禁')});
+  /* 行内「测试」— 已存模式连接测试,结果 toast */
+  function rowTest(a) {
+    if (a.incomplete) return MW.toast(`${a.id} 连接测试`, '凭据不完整(缺 ' + a.cred.missing + '),无法发起测试');
+    if (a.st === 'pending') return MW.toast(`${a.id} 连接测试`, '凭据已存,首次探测随 30s 健康检查周期执行');
+    if (VENDORS[a.v].mock) return MW.toast(`${a.id} 连接测试`, '501 · 该厂商驱动未实现,连接测试不可用');
+    if (a.st === 'banned') return MW.toast(`${a.id} 连接测试`, 'banned · 账号封禁中(' + a.err.split(' · ')[0] + ')');
+    if (a.st === 'degraded') return MW.toast(`${a.id} 连接测试`, 'degraded · ' + a.err);
+    MW.toast(`${a.id} 连接测试`, `healthy · ${VENDORS[a.v].latency}ms`);
+  }
+
+  /* ---------- 抽屉:厂商选择 / 添加 / 编辑 三态 ---------- */
+  let mode = 'pick', cur = null, vendor = null;
+  let touched = new Set(), cookiesExpanded = false, testState = 'none';
+
+  function openDrawerFlow(m, i) {
+    mode = m;
+    cur = m === 'edit' ? accts[i] : null;
+    vendor = m === 'edit' ? cur.v : null;
+    touched = new Set(); cookiesExpanded = false; testState = 'none';
+    renderDrawer();
     MW.openDrawer('acct-drawer');
   }
 
-  document.getElementById('add-acct').onclick = () => openAcct(0);
+  function renderDrawer() {
+    document.getElementById('ad-title').textContent =
+      mode === 'pick' ? '添加账号 · 选择厂商' : mode === 'add' ? `添加账号 · ${vendor}` : '编辑账号';
+    document.getElementById('ad-id').textContent =
+      mode === 'pick' ? '选定厂商后渲染对应凭据字段' : mode === 'add' ? `${vendor} · 新账号` : `${cur.v}:${cur.id} · 主键锁定`;
+    const body = document.getElementById('ad-body');
+    body.innerHTML = mode === 'pick' ? pickHTML() : formHTML();
+    bindDrawer(body);
+    if (mode === 'edit') {
+      /* §1.5:非敏感字段正常回显(不触发 touched,不进入请求体) */
+      const prefill = (k, v) => { const el = document.getElementById('f-' + k); if (el && !el.value) el.value = v; };
+      prefill('client_id', 'mw-' + cur.id.replace(/^mw_/, ''));
+      prefill('redirect_uri', 'https://auth.mediaworker.internal/oauth/' + cur.v);
+      if (cur.region) { const r = document.getElementById('f-region'); if (r) r.value = cur.region; }
+    }
+  }
 
-  // VendorProfile — 需求文档 §5.1 默认值
+  function pickHTML() {
+    return `<div class="vpick" data-od-id="vendor-pick">` + Object.keys(VENDORS).map(v => {
+      const s = VENDORS[v];
+      return `<div class="vc" data-v="${v}">
+        <div class="vn">${v}${s.mock ? '<span class="mocktag">驱动未实现 · 501</span>' : ''}</div>
+        <div class="vd">${s.desc}</div>
+        <div class="vd">限流默认 ${s.limits.join(' / ')}(QPS/Burst/并发)</div>
+      </div>`;
+    }).join('') + `</div>
+    <p style="font-size:11.5px;color:var(--muted);margin-top:14px;">凭据按厂商字段填写,不再手填 JSON;字段校验与后端 B4 同源。mock 厂商保存后暂不参与上传/回源。</p>`;
+  }
+
+  const mockBar = v => VENDORS[v].mock
+    ? `<div class="notice" style="margin-bottom:12px;"><div>该厂商驱动未实现,保存后暂不参与上传/回源,连接测试不可用(501)。</div></div>` : '';
+
+  function fieldHTML(f, prefix, editMode) {
+    const id = prefix + f.k;
+    const lab = `<label>${f.label}${f.req ? ' <span style="color:var(--danger)">*</span>' : ''}${f.hint ? `<span class="q" title="${f.hint}">?</span>` : ''}</label>`;
+    let input;
+    if (f.select) {
+      input = `<select class="input" id="${id}">${f.select.map(o => `<option value="${o[0]}">${o[1]}(${o[0]})</option>`).join('')}</select>`;
+    } else if (f.secret) {
+      const ph = editMode ? '已设置,留空保持不变' : '';
+      input = `<div class="pw-wrap"><input class="input mono" type="password" id="${id}" placeholder="${ph}" autocomplete="new-password" /><button type="button" class="eye" data-eye="${id}">${MW.ICON(EYE)}</button></div>`;
+    } else {
+      input = `<input class="input mono" id="${id}" />`;
+    }
+    return `<div class="field" data-f="${f.k}">${lab}${input}${f.help ? `<span class="help">${f.help}</span>` : ''}<div class="ferr" id="err-${id}"></div></div>`;
+  }
+
+  function kvRowHTML(k, v) {
+    return `<div class="kv-row">
+      <input class="input mono kv-k" placeholder="键" value="${k}" />
+      <div class="pw-wrap"><input class="input mono kv-v" type="password" placeholder="值" value="${v}" autocomplete="new-password" /><button type="button" class="eye">${MW.ICON(EYE)}</button></div>
+      <button type="button" class="btn sm ghost kv-del" title="删除该行">✕</button>
+    </div>`;
+  }
+
+  function cookiesHTML(prefix, editMode) {
+    if (editMode && !cookiesExpanded) {
+      const keys = cur.v === '115' ? 'UID、CID、SEID' : '__bdus、stoken';
+      return `<div class="field" data-f="cookies"><label>cookies</label>
+        <div class="cookie-sum"><span class="mono" style="font-size:12px">${cur.cred.keys} 个键已设置(${keys})</span><button type="button" class="btn sm" id="ck-expand">修改</button></div>
+        <span class="help">展开即视为<b>整体替换</b>,不做键级合并;需为每个键提供新值。</span>
+      </div>`;
+    }
+    const rows = (mode === 'add' ? VENDORS[vendor].preset : cur.v === '115' ? ['UID', 'CID', 'SEID'] : [])
+      .map(k => kvRowHTML(k, '')).join('');
+    return `<div class="field" data-f="cookies"><label>cookies <span style="color:var(--danger)">*</span></label>
+      ${mode === 'edit' ? '<div class="notice" style="margin-bottom:10px;"><div>整体替换语义:提交后旧 cookies 集合被完整覆盖,不做键级合并。</div></div>' : ''}
+      <div id="${prefix}cookies-rows">${rows}</div>
+      <button type="button" class="btn sm kv-add" id="${prefix}cookies-add">+ 添加一行</button>
+      <span class="help">键名仅允许字母 / 数字 / 下划线,重复键会被标红。${vendor === '115' && mode === 'add' ? '115 已预置 UID / CID / SEID 三行。' : ''}</span>
+      <div class="ferr" id="err-${prefix}cookies"></div>
+    </div>`;
+  }
+
+  function authHTML(prefix, editMode) {
+    const s = VENDORS[vendor];
+    if (s.kind === 'cookies') return mockBar(vendor) + cookiesHTML(prefix, editMode);
+    return mockBar(vendor) + s.fields.map(f => fieldHTML(f, prefix, editMode)).join('');
+  }
+
+  function formHTML() {
+    const s = VENDORS[vendor];
+    const edit = mode === 'edit';
+    const basic = `<div class="card">
+      <h3>基本信息</h3>
+      <div class="form-row">
+        <div class="field"><label>厂商</label>
+          ${edit
+            ? `<input class="input" value="${cur.v}" disabled /><span class="help">主键不可改,修改 = 删旧建新</span>`
+            : `<div style="display:flex;align-items:center;gap:10px;"><span class="chip">${vendor}</span><button type="button" class="btn sm ghost" id="ad-repick">更换厂商</button></div>`}
+        </div>
+        <div class="field"><label>Account ID <span style="color:var(--danger)">*</span></label>
+          <input class="input mono" id="f-account_id" ${edit ? `value="${cur.id}" disabled` : ''} />
+          ${edit ? '<span class="help">主键不可改</span>' : '<span class="help">2–64 位,字母 / 数字 / _ / -</span>'}
+          <div class="ferr" id="err-f-account_id"></div>
+        </div>
+      </div>
+    </div>`;
+    const auth = `<div class="card mt"><h3>凭据</h3><div id="ad-auth">${authHTML('f-', edit)}</div></div>`;
+    const limits = `<div class="card mt">
+      <h3>限流配置</h3>
+      <div class="form-row">
+        <div class="field"><label>QPS</label><input class="input num" id="f-qps" placeholder="${s.limits[0]}" ${edit ? `value="${cur.qps[0]}"` : ''} /><div class="ferr" id="err-f-qps"></div></div>
+        <div class="field"><label>Burst</label><input class="input num" id="f-burst" placeholder="${s.limits[1]}" ${edit ? `value="${cur.qps[1]}"` : ''} /><div class="ferr" id="err-f-burst"></div></div>
+      </div>
+      <div class="field" style="width:50%;"><label>并发数</label><input class="input num" id="f-conc" placeholder="${s.limits[2]}" ${edit ? `value="${cur.qps[2]}"` : ''} /><div class="ferr" id="err-f-conc"></div></div>
+      <span class="help">留空 = 用驱动默认 ${s.limits.join(' / ')}(QPS/Burst/并发)。</span>
+    </div>`;
+    const status = edit ? `<div class="card mt">
+      <h3>运行状态(只读)</h3>
+      <dl class="dl">
+        <dt>健康状态</dt><dd>${healthCell(cur)}</dd>
+        <dt>最近错误</dt><dd style="font-size:12.5px">${cur.err}</dd>
+        <dt>延迟(基线/实测)</dt><dd class="num">${({ '115': 320, baidu: 410, quark: 520, onedrive: 380, aliyundrive: 300 })[cur.v]} ms / ${({ '115': 342, baidu: 588, quark: 0, onedrive: 361, aliyundrive: 298 })[cur.v] || '—'} ms</dd>
+      </dl>
+    </div>` : '';
+    const acts = `<div class="section-h">操作</div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+      <button class="btn" id="ad-test">测试连接</button>
+      <button class="btn primary" id="ad-save">保存并下发</button>
+      ${edit ? '<button class="btn" id="ad-rotate">轮换凭据</button><button class="btn" id="ad-circuit">手动熔断</button><button class="btn danger" id="ad-ban">手动封禁</button>' : ''}
+    </div>
+    <div class="tres" id="ad-test-res"></div>
+    <p style="font-size:11.5px;color:var(--muted);margin-top:10px;">
+      ${edit ? '未修改的敏感字段不会进入请求体;封禁 / 熔断为危险操作,需二次确认并写审计日志。' : '保存不强制要求测试通过;测试失败时保存会再次确认。'}
+    </p>`;
+    return basic + auth + limits + status + acts;
+  }
+
+  /* ---------- 抽屉事件绑定 ---------- */
+  function bindDrawer(body) {
+    if (mode === 'pick') {
+      body.querySelectorAll('.vc').forEach(c => c.addEventListener('click', () => {
+        vendor = c.dataset.v; mode = 'add'; renderDrawer();
+      }));
+      return;
+    }
+    const repick = document.getElementById('ad-repick');
+    if (repick) repick.onclick = () => { mode = 'pick'; vendor = null; renderDrawer(); };
+
+    body.addEventListener('click', e => {
+      const eye = e.target.closest('.eye');
+      if (eye) {
+        const input = eye.dataset.eye ? document.getElementById(eye.dataset.eye) : eye.parentElement.querySelector('input');
+        input.type = input.type === 'password' ? 'text' : 'password';
+        return;
+      }
+      const del = e.target.closest('.kv-del');
+      if (del) { del.closest('.kv-row').remove(); return; }
+      if (e.target.id === 'ck-expand') {
+        cookiesExpanded = true; touched.add('cookies');
+        document.getElementById('ad-auth').innerHTML = authHTML('f-', true);
+      }
+      if (e.target.id === 'f-cookies-add') {
+        document.getElementById('f-cookies-rows').insertAdjacentHTML('beforeend', kvRowHTML('', ''));
+      }
+    });
+    body.addEventListener('input', e => {
+      const f = e.target.closest('[data-f]');
+      if (f) touched.add(f.dataset.f);
+      if (e.target.id === 'f-qps' || e.target.id === 'f-burst' || e.target.id === 'f-conc') touched.add(e.target.id.slice(2));
+      e.target.classList.remove('err');
+      const row = e.target.closest('.kv-row'); if (row) row.classList.remove('dup');
+    });
+    /* 敏感字段聚焦清空占位,失焦复原 */
+    body.addEventListener('focusin', e => {
+      if (e.target.type === 'password' && e.target.placeholder === '已设置,留空保持不变') {
+        e.target.dataset.ph = e.target.placeholder; e.target.placeholder = '';
+      }
+    });
+    body.addEventListener('focusout', e => {
+      if (e.target.dataset.ph && !e.target.value) { e.target.placeholder = e.target.dataset.ph; delete e.target.dataset.ph; }
+    });
+
+    document.getElementById('ad-test').onclick = () => runConnectionTest('f-', 'ad-test', 'ad-test-res');
+    document.getElementById('ad-save').onclick = save;
+    if (mode === 'edit') {
+      document.getElementById('ad-rotate').onclick = openRotate;
+      document.getElementById('ad-circuit').onclick = () => MW.confirmDanger({
+        title: '手动熔断(ForceOpen)', body: `熔断后该账号立即停止参与回源调度,恢复需手动 ForceClose。确认熔断 ${cur.v}:${cur.id}?`,
+        phrase: '手动熔断', actionLabel: '确认熔断', onConfirm: () => MW.dispatched('熔断器 ForceOpen') });
+      document.getElementById('ad-ban').onclick = () => MW.confirmDanger({
+        title: '手动封禁', body: `MarkBanned 会将账号置为 banned 并强制开熔断,影响所有引用该账号副本的内容可读性。确认封禁 ${cur.v}:${cur.id}?`,
+        phrase: '确认封禁', actionLabel: '确认封禁', onConfirm: () => MW.dispatched('手动封禁') });
+    }
+  }
+
+  /* ---------- 校验(前端预校验,与 B4 同源) ---------- */
+  function setErr(id, msg) {
+    const err = document.getElementById('err-' + id);
+    const input = document.getElementById(id);
+    if (err) { err.textContent = msg; err.classList.add('on'); }
+    if (input) input.classList.add('err');
+  }
+  function clearErrs() {
+    document.querySelectorAll('#ad-body .ferr, #rotate-modal .ferr').forEach(e => e.classList.remove('on'));
+    document.querySelectorAll('#ad-body .input.err, #rotate-modal .input.err').forEach(e => e.classList.remove('err'));
+    document.querySelectorAll('.kv-row.dup').forEach(e => e.classList.remove('dup'));
+  }
+
+  function validate(prefix, scope, authOnly) {
+    clearErrs();
+    let bad = [];
+    const s = VENDORS[vendor];
+    const edit = mode === 'edit' && scope === 'drawer';
+    const rotate = scope === 'rotate';
+    const val = k => { const el = document.getElementById(prefix + k); return el ? el.value.trim() : ''; };
+
+    if (!edit && !rotate) {
+      const id = val('account_id');
+      if (!/^[a-zA-Z0-9_-]{2,64}$/.test(id)) { setErr(prefix + 'account_id', 'account_id 需 2–64 位,仅字母 / 数字 / _ / -'); bad.push('account_id'); }
+      else if (mode === 'add' && accts.some(a => a.v === vendor && a.id === id)) { setErr(prefix + 'account_id', '409 · 该厂商下 account_id 已存在'); bad.push('account_id'); }
+    }
+    if (s.kind === 'oauth') {
+      s.fields.forEach(f => {
+        const v = val(f.k);
+        const skip = f.secret && edit && !touched.has(f.k);
+        if (skip) return;
+        if (f.req && !v) { setErr(prefix + f.k, '必填'); bad.push(f.k); return; }
+        if (v && f.url && !/^https?:\/\/.+/.test(v)) { setErr(prefix + f.k, '需为 http(s) URL'); bad.push(f.k); }
+        if (v && f.pair && !val(f.pair)) { setErr(prefix + f.k, `与 ${f.pair} 成对填写`); bad.push(f.k); }
+      });
+      if (s.fields.some(f => f.k === 'client_id' && !f.req)) {
+        const cid = val('client_id'), cs = val('client_secret');
+        if (cid && !cs) { setErr(prefix + 'client_secret', '与 client_id 成对填写'); bad.push('client_secret'); }
+      }
+    } else {
+      const need = !edit || cookiesExpanded || rotate;
+      if (need) {
+        const rows = [...document.querySelectorAll(`#${prefix}cookies-rows .kv-row`)];
+        const seen = {};
+        let msg = '';
+        if (!rows.length) msg = '至少一行键值';
+        rows.forEach(r => {
+          const k = r.querySelector('.kv-k').value.trim();
+          const v = r.querySelector('.kv-v').value.trim();
+          if (!/^[A-Za-z0-9_]+$/.test(k)) { msg = '键名仅允许字母 / 数字 / 下划线'; r.classList.add('dup'); }
+          else if (seen[k]) { msg = `键 "${k}" 重复`; r.classList.add('dup'); }
+          else if (!v) { msg = `键 "${k}" 缺少值`; r.classList.add('dup'); }
+          seen[k] = 1;
+        });
+        if (msg) { setErr(prefix + 'cookies', msg); bad.push('cookies'); }
+      }
+    }
+    if (!authOnly && !rotate) {
+      [['qps', n => n > 0, 'QPS 需 > 0'], ['burst', n => n > 0, 'Burst 需 > 0'], ['conc', n => Number.isInteger(n) && n >= 1, '并发需为 ≥1 的整数']].forEach(([k, ok, msg]) => {
+        const v = val(k);
+        if (v && !(Number(v) && ok(Number(v)))) { setErr(prefix + k, msg); bad.push(k); }
+      });
+    }
+    if (bad.length) {
+      const first = document.querySelector('#ad-body .input.err, #rotate-modal .input.err, .kv-row.dup input');
+      if (first) first.focus();
+    }
+    return bad.length === 0;
+  }
+
+  /* ---------- 测试连接 ---------- */
+  function runConnectionTest(prefix, btnId, resId) {
+    if (!validate(prefix, prefix === 'rt-' ? 'rotate' : 'drawer', true)) return;
+    const btn = document.getElementById(btnId), res = document.getElementById(resId);
+    btn.disabled = true; btn.innerHTML = '<span class="spin"></span> 测试中…';
+    res.className = 'tres on mut'; res.textContent = '连接中(超时 15s)…';
+    setTimeout(() => {
+      btn.disabled = false; btn.textContent = '测试连接';
+      const s = VENDORS[vendor];
+      if (s.mock) { res.className = 'tres on mut'; res.textContent = '501 · 该厂商驱动未实现,连接测试不可用'; testState = '501'; }
+      else if (cur && cur.st === 'banned') { res.className = 'tres on bad'; res.textContent = 'degraded · invalid_grant: refresh_token expired'; testState = 'fail'; }
+      else { res.className = 'tres on ok'; res.textContent = `healthy · ${s.latency}ms`; testState = 'ok'; }
+    }, 1200);
+  }
+
+  /* ---------- 保存 ---------- */
+  function save() {
+    if (!validate('f-', 'drawer', false)) return;
+    if (testState === 'fail') {
+      miniConfirm('凭据测试未通过,仍要保存吗?', doSave);
+      return;
+    }
+    doSave();
+  }
+  function doSave() {
+    if (mode === 'add') {
+      const id = document.getElementById('f-account_id').value.trim();
+      const q = ['f-qps', 'f-burst', 'f-conc'].map((k, i) => {
+        const v = document.getElementById(k).value.trim();
+        return v ? Number(v) : VENDORS[vendor].limits[i];
+      });
+      accts.unshift({ v: vendor, id, on: true, st: 'pending', qps: q,
+        cred: VENDORS[vendor].kind === 'cookies' ? { kind: 'cookies', keys: document.querySelectorAll('#f-cookies-rows .kv-row').length } : { kind: 'oauth', ok: true },
+        err: '刚刚创建 · 等待首个 30s 探测周期' });
+      render();
+      MW.closeAll();
+      MW.toast(`${vendor}:${id} 已创建`, '快照周期(≤60s)后全网可见 · 健康态将在首个探测周期后更新' + (VENDORS[vendor].mock ? ' · 驱动未实现,暂不参与上传/回源' : ''));
+    } else {
+      const sens = [...touched].filter(k => k !== 'qps' && k !== 'burst' && k !== 'conc');
+      MW.closeAll();
+      MW.toast('账号配置更新 — 已下发,待生效', '预计 6–10s 传播 · ' + (sens.length ? `提交凭据字段 ${sens.length} 项` : '凭据字段未修改,不进入请求体'));
+    }
+  }
+
+  function miniConfirm(msg, onOk) {
+    const m = document.getElementById('mini-modal');
+    m.innerHTML = `<h3>确认保存</h3><p>${msg}</p>
+      <div class="m-acts"><button class="btn" id="mm-cancel">取消</button><button class="btn primary" id="mm-ok">仍要保存</button></div>`;
+    m.classList.add('open');
+    document.getElementById('scrim').classList.add('open');
+    m.querySelector('#mm-cancel').onclick = MW.closeAll;
+    m.querySelector('#mm-ok').onclick = () => { onOk(); };
+  }
+
+  /* ---------- 轮换凭据:弹层只渲染该厂商 auth 字段 ---------- */
+  function openRotate() {
+    vendor = cur.v;
+    const m = document.getElementById('rotate-modal');
+    m.innerHTML = `<h3>轮换凭据 · ${cur.v}:${cur.id}</h3>
+      <p>仅更新该厂商的凭据字段,其余配置不动。旧凭据在快照周期(≤60s)后失效。</p>
+      ${mockBar(cur.v)}
+      <div style="margin-top:10px;">${authHTML('rt-', false)}</div>
+      <div class="tres" id="rt-res"></div>
+      <div class="m-acts">
+        <button class="btn" id="rt-test">测试连接</button>
+        <button class="btn" id="rt-cancel">取消</button>
+        <button class="btn primary" id="rt-ok">确认轮换</button>
+      </div>`;
+    m.classList.add('open');
+    document.getElementById('scrim').classList.add('open');
+    m.onclick = e => {
+      const eye = e.target.closest('.eye');
+      if (eye) { const i = eye.parentElement.querySelector('input'); i.type = i.type === 'password' ? 'text' : 'password'; }
+      if (e.target.closest('.kv-del')) e.target.closest('.kv-row').remove();
+      if (e.target.id === 'rt-cookies-add') document.getElementById('rt-cookies-rows').insertAdjacentHTML('beforeend', kvRowHTML('', ''));
+    };
+    m.querySelector('#rt-test').onclick = () => runConnectionTest('rt-', 'rt-test', 'rt-res');
+    m.querySelector('#rt-cancel').onclick = MW.closeAll;
+    m.querySelector('#rt-ok').onclick = () => {
+      if (!validate('rt-', 'rotate', false)) return;
+      MW.closeAll();
+      MW.toast('CREDENTIAL_UPDATE 已广播', '旧凭据在快照周期(≤60s)后失效');
+    };
+  }
+
+  document.getElementById('add-acct').onclick = () => openDrawerFlow('pick');
+
+  /* VendorProfile — 需求文档 §5.1 默认值(只读:节点从本地 YAML 读画像,CP 改动不传播) */
   const vp = [
-    ['115',         3.0, 320, 80,  '默认权重最高,主存储后端'],
-    ['baidu',       2.0, 410, 60,  ''],
-    ['onedrive',    2.0, 380, 70,  ''],
-    ['aliyundrive', 2.5, 300, 90,  ''],
-    ['quark',       1.0, 520, 40,  '权重最低,风控敏感'],
+    ['115',         3.0, 320, 80, '默认权重最高,主存储后端'],
+    ['baidu',       2.0, 410, 60, ''],
+    ['onedrive',    2.0, 380, 70, ''],
+    ['aliyundrive', 2.5, 300, 90, ''],
+    ['quark',       1.0, 520, 40, '权重最低,风控敏感'],
   ];
   document.getElementById('vp-body').innerHTML = vp.map(r => `
     <tr><td><span class="chip">${r[0]}</span></td>
-      <td class="r"><input class="input num" style="width:76px;padding:4px 8px;text-align:right" value="${r[1].toFixed(1)}"></td>
+      <td class="r num">${r[1].toFixed(1)}</td>
       <td class="r num">${r[2]}</td><td class="r num">${r[3]}</td>
-      <td style="font-size:12px;color:var(--muted)">${r[4]||'—'}</td></tr>`).join('');
-  document.getElementById('vp-save').onclick = () => MW.dispatched('VendorProfile 更新');
+      <td style="font-size:12px;color:var(--muted)">${r[4] || '—'}</td></tr>`).join('');
 
-  ['q','f-vendor','f-state'].forEach(id => document.getElementById(id).addEventListener('input', render));
+  ['q', 'f-vendor', 'f-state'].forEach(id => document.getElementById(id).addEventListener('input', render));
   render();
 
-  // 轮询活体感:倒计时 + 更新时刻(时钟真实走动,健康态为 30s 检查快照)
+  /* 轮询活体感:倒计时 + 更新时刻(时钟真实走动,健康态为 30s 检查快照) */
   (function () {
     const tick = document.getElementById('poll-tick');
     let left = 30, last = '12:04:31';

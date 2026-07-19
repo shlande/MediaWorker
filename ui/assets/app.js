@@ -38,6 +38,7 @@
       <div class="foot">
         <span>admin@mediaworker.internal</span>
         <span>角色 · 平台管理员</span>
+        <a href="login.html" style="color:inherit;text-decoration:underline;opacity:.75;">切换账号 / 重新登录</a>
       </div>`;
     el.innerHTML = html;
   }

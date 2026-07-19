@@ -1,16 +1,16 @@
 {
   "kind": "critique-panel",
-  "target": "dashboard.html + nodes.html + content.html + accounts.html + policy.html + audit.html",
+  "target": "accounts.html · 动态表单改版(accounts-ui-checklist 10 项速查全落地)",
   "score": 4,
   "axes": {
-    "clarity":   { "score": 4, "notes": "六页均新增 status-strip 一句话结论:dashboard SLO 3/4 达标(账号池破线)、nodes 128/142 在线(4 需关注)、content 副本完整 6/8(G6)、accounts 健康率 76.9%(3 需处理)、policy quark 0.86 越线(G5)、audit 12 条 1 失败已恢复;结论先行,依据数字加粗" },
-    "hierarchy": { "score": 4, "notes": "dashboard 账号池健康率卡与 accounts banned 卡升锚点('需处理' watch 章);nodes/accounts/policy 表按严重度排序(灰名单/banned/越线置顶),content 保持热度序仅着色,audit 保持时间序仅着色——排序语义不破坏各页既有口径" },
-    "typography":{ "score": 4, "notes": "watch 章大写 0.08em 字距、结论数字 font-weight 650 + tabular-nums,沿用 tech-utility 规范" },
-    "motion":    { "score": 4, "notes": "5 页 poll-tick 倒计时按各自数据路径周期(30s 上报 / 300s 聚合 / 60s 快照)真实走动;audit 为实时流只保留脉冲圆点,不伪造倒计时;数据保持快照诚实" },
-    "brand":     { "score": 4, "notes": "样式全部页面级且六页逐字一致,app.css 零改动;行分层用 --danger-bg/--warn-bg 既有令牌,强调色预算未破" }
+    "clarity":   { "score": 5, "notes": "凭据 JSON textarea 删除,UI 不再拼裸 JSON;添加流程先选厂商(修复 openAcct(0) 直开第一账号的 bug);列表新增凭据列(OAuth2 · 已配置 / 缺 secret 标黄 / Cookies · N 键),健康列新增'待首次探测''凭据不完整 · 不参与调度'两种真实空态,不再默认 healthy" },
+    "hierarchy": { "score": 4, "notes": "抽屉三态(厂商选择/添加/编辑)职责单一;编辑态 vendor+account_id 锁定并明示'主键不可改=删旧建新';运行状态保持只读区;危险操作留在抽屉内不进列表行" },
+    "typography":{ "score": 4, "notes": "沿用 tech-utility 规范;字段级红字错误置于字段下方;mock 厂商 mocktag 与 info 条复用既有 warn 色系;region '?' 提示不侵占 label 层级" },
+    "motion":    { "score": 4, "notes": "测试连接 testing 态(spinner+禁用,模拟 1.2s,超时口径 15s)三态结果块 healthy/degraded(后端 error_msg 直出)/501 灰态;30s 轮询倒计时不变" },
+    "brand":     { "score": 4, "notes": "诚实化贯穿:115/quark/aliyundrive 字段区顶部'驱动未实现 501'info 条,测试按钮对这些厂商返回 501 而非假成功;cookies 编辑态明示'整体替换不做键级合并';敏感字段未触碰不进请求体并在保存 toast 中说明;保存不强制测试通过但失败时二次确认" }
   },
   "weakest": [],
   "recommendedLane": "converged",
   "synced": [],
-  "template": "edge-node-monitor.html 同模板收敛(状态条 + 锚点卡 + 行分层 + 轮询活体感),控制面六页与节点本地三页全部统一"
+  "template": "列表 mock 扩至 15 账号(10/1/2 + 1 待探测 + 1 不完整),状态条口径同步;操作列加'测试'(已存模式,结果 toast);quark 行固定'下载链 IP 绑定'提示;轮换凭据弹层只渲染该厂商 auth 字段,确认后 toast CREDENTIAL_UPDATE 已广播"
 }

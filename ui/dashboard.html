@@ -23,6 +23,12 @@
   tr.row-bad td { background: var(--danger-bg); }
   tr.row-warn td { background: var(--warn-bg); }
   tr.row-dim td { opacity: 0.6; }
+  .empty-note {
+    border: 1px dashed var(--border); border-radius: var(--radius);
+    padding: 18px 16px; font-size: 12.5px; color: var(--muted); line-height: 1.7;
+    background: oklch(98.5% 0.004 250);
+  }
+  .empty-note b { color: var(--fg); font-weight: 600; }
   @keyframes fd-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
   .freshness .dot { animation: fd-pulse 2s ease-in-out infinite; }
   .freshness .tick { font: 11px var(--font-mono); color: var(--muted); }
@@ -44,7 +50,7 @@
     <div class="status-strip" data-od-id="status-strip">
       <span class="pill warn"><span class="d"></span>SLO 3/4 达标</span>
       <span class="s-text">TTFB P95 <b>2.41s</b>、命中率 <b>84.7%</b>、回源成功率 <b>99.2%</b> 均在阈值内;账号池健康率 <b>76.9%</b> 低于 80% SLO,quark 2 账号 banned 是主因。</span>
-      <span class="s-alert"><span class="pill bad">4 未恢复告警</span>账号池健康率破线 · 8 分钟前</span>
+      <span class="s-alert"><span class="pill bad">SLO 破线</span>账号池健康率 76.9% &lt; 80% · quark 2 账号 banned</span>
     </div>
 
     <!-- SLO 指标卡 -->
@@ -81,16 +87,16 @@
             <div class="kv"><span class="k">l4_backhaul</span><span class="v num">23</span></div>
             <div class="kv"><span class="k">relay_provider</span><span class="v num">9</span></div>
             <div class="kv"><span class="k">peer_icp</span><span class="v num">61</span></div>
-            <div class="kv"><span class="k">社区节点</span><span class="v num">74</span></div>
+            <div class="kv"><span class="k">非 L4 节点</span><span class="v num">105</span></div>
           </div>
           <div class="hbar"><span>prefix 空间充足</span><div class="hb-track"><i style="width:58%"></i></div><span class="num">74 节点</span></div>
           <div class="hbar"><span>空间紧张 &lt;20GB</span><div class="hb-track"><i style="width:23%;background:var(--warn)"></i></div><span class="num">29 节点</span></div>
           <div class="hbar"><span>空间耗尽 &lt;5GB</span><div class="hb-track"><i style="width:12%;background:var(--danger)"></i></div><span class="num">15 节点</span></div>
-          <div class="hbar"><span>评分灰名单 ≤-20</span><div class="hb-track"><i style="width:4%;background:var(--danger)"></i></div><span class="num">5 节点</span></div>
+          <div class="hbar"><span>上报异常 &gt;2 周期未见</span><div class="hb-track"><i style="width:2%;background:var(--danger)"></i></div><span class="num">3 节点</span></div>
         </div>
 
         <div class="card">
-          <h3>缓存命中率 · 近 24h <span class="hint">按 cache_type 聚合,5m 粒度</span></h3>
+          <h3>缓存命中率 · 近 24h <span class="hint">按 cache_type 聚合,5m 粒度 · 前端直查 Prometheus</span></h3>
           <div class="spark" id="spark-hit"></div>
           <div class="kv-strip" style="margin-top:10px;">
             <div class="kv"><span class="k">prefix(NVMe)命中</span><span class="v num">71.2%</span></div>
@@ -101,10 +107,10 @@
         </div>
 
         <div class="card">
-          <h3>24h 热门内容 Top 8 <span class="hint">content_popularity.window_24h</span></h3>
+          <h3>24h 热门内容 Top 8 <span class="hint">content_popularity.window_24h · pin 节点数列待 E5 下发记账,暂隐</span></h3>
           <div class="tbl-wrap" style="border:0;">
             <table class="tbl">
-              <thead><tr><th>#</th><th>内容</th><th>类型</th><th class="r">24h 请求</th><th class="r">pin 节点数</th><th>副本</th></tr></thead>
+              <thead><tr><th>#</th><th>内容</th><th>类型</th><th class="r">24h 请求</th><th>副本</th></tr></thead>
               <tbody id="hot-body"></tbody>
             </table>
           </div>
@@ -114,20 +120,12 @@
       <!-- 右列:告警 -->
       <div style="display:flex;flex-direction:column;gap:14px;min-width:0;">
         <div class="card">
-          <h3>当前告警 <span class="hint">4 条未恢复</span></h3>
-          <div style="display:flex;flex-direction:column;gap:10px;">
-            <div class="notice bad">
-              <div><b>账号池健康率低于 SLO</b><br>quark 厂商 2 个账号进入 banned,健康率 76.9% &lt; 80%。<br><span class="mono" style="font-size:11px;">account_health · 8 分钟前</span></div>
-            </div>
-            <div class="notice warn">
-              <div><b>JWT 续签连续失败</b><br>节点 <code>12D3KooW…f3a9</code> SchedulerPartition 告警,续签失败 3 次,距过期 41 分钟。<br><span class="mono" style="font-size:11px;">12 分钟前</span></div>
-            </div>
-            <div class="notice warn">
-              <div><b>缓存命中率低</b><br>节点 <code>12D3KooW…77c1</code> LowCacheHitRate,1h 窗口命中率 52%。<br><span class="mono" style="font-size:11px;">36 分钟前</span></div>
-            </div>
-            <div class="notice">
-              <div><b>回源失败率升高</b><br>baidu 厂商 HighBackhaulFailureRate,15m 失败率 2.8%,熔断器 HalfOpen 观察中。<br><span class="mono" style="font-size:11px;">1 小时前</span></div>
-            </div>
+          <h3>当前告警 <span class="hint">Alertmanager → alert_events · E12</span></h3>
+          <div class="empty-note">
+            <b>告警管线建设中</b>(E12 · Alertmanager webhook → alert_events 表)。落地后此面板展示未恢复告警;JWT 续签类将以「应续未续」推断口径呈现(CP 按签发记录判断:exp 将尽但未收到新申请)。此前不展示 mock 告警。
+          </div>
+          <div style="margin-top:10px;font-size:12px;color:var(--muted);">
+            当前可参考的真实信号:账号池健康率 76.9%(&lt; 80% SLO)· 上报异常 3 节点 · <a href="accounts.html" style="color:var(--accent);">账号管理 →</a>
           </div>
         </div>
 
@@ -151,7 +149,7 @@
         </div>
 
         <div class="notice">
-          <div>指标来自 Prometheus <code>/metrics</code>(已挂载);深度排查可跳转 Grafana。SLO 口径见需求文档 §5.1。</div>
+          <div>指标来自 Prometheus <code>/metrics</code>(已挂载),SLO 口径见需求文档 §5.1。深度排查入口:<span class="mono" style="font-size:11.5px;">Grafana(技术选型已定,实例地址待部署)</span> <button class="btn sm" disabled title="Grafana 实例地址待部署" style="margin-left:6px;">Grafana ↗ 待部署</button></div>
         </div>
       </div>
     </div>
@@ -169,23 +167,22 @@
     `<i style="height:${v}%" class="${i===hit.length-1?'hot':''}" title="${v}%"></i>`).join('');
 
   const hot = [
-    ['c_7f3a91','发布会回放-0718','dash_video','48,213','31','2/2'],
-    ['c_2e8b04','产品演示-第四章','dash_video','31,875','26','2/2'],
-    ['c_9d1c56','教程-快速上手','dash_video','27,340','22','2/2'],
-    ['c_44aa17','封面图-夏季活动','image','19,652','18','2/2'],
-    ['c_81f0c3','访谈-基础设施团队','dash_video','15,208','14','1/2'],
-    ['c_6b5d2f','教程-高级转码','dash_video','11,947','12','2/2'],
-    ['c_03c7e8','缩略图集-文档站','image','9,411','9','2/2'],
-    ['c_5e19d0','直播切片-社区问答','dash_video','7,803','7','1/2'],
+    ['c_7f3a91','发布会回放-0718','dash_video','48,213','2/2'],
+    ['c_2e8b04','产品演示-第四章','dash_video','31,875','2/2'],
+    ['c_9d1c56','教程-快速上手','dash_video','27,340','2/2'],
+    ['c_44aa17','封面图-夏季活动','image','19,652','2/2'],
+    ['c_81f0c3','访谈-基础设施团队','dash_video','15,208','1/2'],
+    ['c_6b5d2f','教程-高级转码','dash_video','11,947','2/2'],
+    ['c_03c7e8','缩略图集-文档站','image','9,411','2/2'],
+    ['c_5e19d0','直播切片-社区问答','dash_video','7,803','1/2'],
   ];
   document.getElementById('hot-body').innerHTML = hot.map((r,i) => `
-    <tr class="clickable ${r[5]==='2/2'?'':'row-warn'}" onclick="location.href='content.html'">
+    <tr class="clickable ${r[4]==='2/2'?'':'row-warn'}" onclick="location.href='content.html'">
       <td class="mono" style="color:var(--muted)">${i+1}</td>
       <td><div style="font-weight:550">${r[1]}</div><div class="mono" style="font-size:11px;color:var(--muted)">${r[0]}</div></td>
       <td><span class="chip">${r[2]}</span></td>
       <td class="r num">${r[3]}</td>
-      <td class="r num">${r[4]}</td>
-      <td>${r[5]==='2/2' ? '<span class="pill ok"><span class="d"></span>2/2 副本</span>' : '<span class="pill warn"><span class="d"></span>1/2 待补齐</span>'}</td>
+      <td>${r[4]==='2/2' ? '<span class="pill ok"><span class="d"></span>2/2 副本</span>' : '<span class="pill warn"><span class="d"></span>1/2 待补齐</span>'}</td>
     </tr>`).join('');
 
   // 轮询活体感:倒计时 + 更新时刻(只有时钟真实走动,数据为 30s 上报快照)
