@@ -178,7 +178,7 @@ var auditTestSecret = []byte("test-secret-key-for-admin-tokens")
 func makeAuditAccountsServer(rec AuditRecorder) (*fakeAccountRegistry, *Server) {
 	reg := newFakeAccountRegistry()
 	srv := NewServer(auditTestSecret)
-	RegisterAccountsRoutes(srv, reg, reg, &fakeBroadcaster{}, rec)
+	RegisterAccountsRoutes(srv, reg, nil, reg, &fakeBroadcaster{}, rec)
 	return reg, srv
 }
 

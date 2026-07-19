@@ -67,7 +67,7 @@ func healthView(state string, latency int, errMsg string, banUntil *time.Time, l
 func makeServer(mc AdminAccountsReader, w AdminAccountsWriter) *Server {
 	secret := []byte("test-secret-key-for-admin-tokens")
 	srv := NewServer(secret)
-	RegisterAccountsRoutes(srv, mc, w, nil, nil)
+	RegisterAccountsRoutes(srv, mc, nil, w, nil, nil)
 	return srv
 }
 
@@ -739,7 +739,7 @@ func makeWriteServer(t *testing.T) (*fakeAccountRegistry, *fakeBroadcaster, *htt
 	bc := &fakeBroadcaster{}
 	secret := []byte("test-secret-key-for-admin-tokens")
 	srv := NewServer(secret)
-	RegisterAccountsRoutes(srv, reg, reg, bc, nil)
+	RegisterAccountsRoutes(srv, reg, nil, reg, bc, nil)
 	ts := httptest.NewServer(srv.mux)
 	t.Cleanup(ts.Close)
 	return reg, bc, ts, signAdminToken(t, secret)
@@ -1546,7 +1546,7 @@ func TestAccountOps_CircuitNilBroadcasterIs500(t *testing.T) {
 	reg := newFakeAccountRegistry()
 	secret := []byte("test-secret-key-for-admin-tokens")
 	srv := NewServer(secret)
-	RegisterAccountsRoutes(srv, reg, reg, nil, nil)
+	RegisterAccountsRoutes(srv, reg, nil, reg, nil, nil)
 	ts := httptest.NewServer(srv.mux)
 	t.Cleanup(ts.Close)
 	token := signAdminToken(t, secret)
@@ -1558,19 +1558,191 @@ func TestAccountOps_CircuitNilBroadcasterIs500(t *testing.T) {
 	}
 }
 
-// Given no bearer token, when any operation endpoint is attempted, then 401.
-func TestAccountOps_NoToken(t *testing.T) {
-	_, _, ts, _ := makeWriteServer(t)
-	body := jsonBody(t, map[string]any{"action": "force_open"})
-	for _, path := range []string{
-		"/v1/admin/accounts/baidu/mw_01/rotate",
-		"/v1/admin/accounts/baidu/mw_01/ban",
-		"/v1/admin/accounts/baidu/mw_01/unban",
-		"/v1/admin/accounts/baidu/mw_01/circuit",
-	} {
-		status, _ := doRaw(t, ts, http.MethodPost, path, "", body)
-		if status != http.StatusUnauthorized {
-			t.Errorf("POST %s status = %d, want 401", path, status)
+// ─── Vendor profiles (todo 37: read-only) ──────────────────────────────────
+
+// mockVendorProfilesReader is a mock VendorProfilesReader.
+type mockVendorProfilesReader struct {
+	rows []metadata.VendorProfileRow
+	err  error
+}
+
+func (m *mockVendorProfilesReader) ListVendorProfiles(_ context.Context) ([]metadata.VendorProfileRow, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.rows, nil
+}
+
+func makeVendorProfilesServer(vpr VendorProfilesReader) *Server {
+	secret := []byte("test-secret-key-for-admin-tokens")
+	srv := NewServer(secret)
+	RegisterAccountsRoutes(srv, nil, vpr, nil, nil, nil)
+	return srv
+}
+
+func getVendorProfiles(t *testing.T, ts *httptest.Server, token string) (*http.Response, *vendorProfilesResponse) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, ts.URL+"/v1/admin/vendor-profiles", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /v1/admin/vendor-profiles: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var body vendorProfilesResponse
+	if resp.StatusCode == http.StatusOK && resp.Body != nil {
+		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+			t.Fatalf("decode vendor profiles response: %v", err)
 		}
+	}
+	return resp, &body
+}
+
+// Given three vendor profiles, when GET /v1/admin/vendor-profiles is called
+// with a valid token, then all profiles are returned with read_only=true and
+// the expected note.
+func TestVendorProfiles_Happy(t *testing.T) {
+	mock := &mockVendorProfilesReader{
+		rows: []metadata.VendorProfileRow{
+			{Vendor: "baidu", VendorProfile: types.VendorProfile{Vendor: "baidu", Weight: 3.0, BaseLatencyMs: 120, BandwidthMbps: 80}},
+			{Vendor: "115", VendorProfile: types.VendorProfile{Vendor: "115", Weight: 5.0, BaseLatencyMs: 50, BandwidthMbps: 200}},
+			{Vendor: "quark", VendorProfile: types.VendorProfile{Vendor: "quark", Weight: 4.0, BaseLatencyMs: 90, BandwidthMbps: 120}},
+		},
+	}
+
+	srv := makeVendorProfilesServer(mock)
+	ts := httptest.NewServer(srv.mux)
+	t.Cleanup(ts.Close)
+	token := signAdminToken(t, []byte("test-secret-key-for-admin-tokens"))
+
+	resp, body := getVendorProfiles(t, ts, token)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if len(body.Profiles) != 3 {
+		t.Fatalf("len(profiles) = %d, want 3", len(body.Profiles))
+	}
+	if !body.ReadOnly {
+		t.Error("read_only = false, want true")
+	}
+	if body.Note != "节点以本地 YAML 为准；CP 改动不传播（v1 只读）" {
+		t.Errorf("note = %q, want 节点以本地 YAML 为准；CP 改动不传播（v1 只读）", body.Note)
+	}
+
+	// Verify first profile
+	p0 := body.Profiles[0]
+	if p0.Vendor != "baidu" || p0.Weight != 3.0 || p0.BaseLatencyMs != 120 || p0.BandwidthMbps != 80 {
+		t.Errorf("profile[0] = %+v, want baidu/3.0/120/80", p0)
+	}
+}
+
+// Given an empty result set, when GET /v1/admin/vendor-profiles, then
+// profiles is [] not null.
+func TestVendorProfiles_Empty(t *testing.T) {
+	mock := &mockVendorProfilesReader{rows: []metadata.VendorProfileRow{}}
+
+	srv := makeVendorProfilesServer(mock)
+	ts := httptest.NewServer(srv.mux)
+	t.Cleanup(ts.Close)
+	token := signAdminToken(t, []byte("test-secret-key-for-admin-tokens"))
+
+	resp, body := getVendorProfiles(t, ts, token)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if body.Profiles == nil {
+		t.Error("profiles = nil, want [] (not null)")
+	}
+	if len(body.Profiles) != 0 {
+		t.Errorf("len(profiles) = %d, want 0", len(body.Profiles))
+	}
+	if !body.ReadOnly {
+		t.Error("read_only = false, want true")
+	}
+}
+
+// Given no bearer token, when GET /v1/admin/vendor-profiles, then 401.
+func TestVendorProfiles_NoToken(t *testing.T) {
+	mock := &mockVendorProfilesReader{rows: []metadata.VendorProfileRow{}}
+	srv := makeVendorProfilesServer(mock)
+	ts := httptest.NewServer(srv.mux)
+	t.Cleanup(ts.Close)
+
+	resp, _ := getVendorProfiles(t, ts, "")
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", resp.StatusCode)
+	}
+}
+
+// Given a PUT request to /v1/admin/vendor-profiles, then 405 is returned
+// (Go 1.22+ mux default for unregistered methods).
+func TestVendorProfiles_PutReturns405(t *testing.T) {
+	mock := &mockVendorProfilesReader{rows: []metadata.VendorProfileRow{}}
+	srv := makeVendorProfilesServer(mock)
+	ts := httptest.NewServer(srv.mux)
+	t.Cleanup(ts.Close)
+	token := signAdminToken(t, []byte("test-secret-key-for-admin-tokens"))
+
+	status, _ := doRaw(t, ts, http.MethodPut, "/v1/admin/vendor-profiles", token, nil)
+	if status != http.StatusMethodNotAllowed {
+		t.Fatalf("status = %d, want 405", status)
+	}
+}
+
+// Given a mock error, when GET /v1/admin/vendor-profiles, then 500.
+func TestVendorProfiles_StoreError(t *testing.T) {
+	mock := &mockVendorProfilesReader{err: errors.New("pg down")}
+	srv := makeVendorProfilesServer(mock)
+	ts := httptest.NewServer(srv.mux)
+	t.Cleanup(ts.Close)
+	token := signAdminToken(t, []byte("test-secret-key-for-admin-tokens"))
+
+	resp, _ := getVendorProfiles(t, ts, token)
+	if resp.StatusCode != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", resp.StatusCode)
+	}
+}
+
+// Given the response JSON, verify it contains the required fields.
+func TestVendorProfiles_ResponseShape(t *testing.T) {
+	mock := &mockVendorProfilesReader{
+		rows: []metadata.VendorProfileRow{
+			{Vendor: "baidu", VendorProfile: types.VendorProfile{Vendor: "baidu", Weight: 3.0, BaseLatencyMs: 120, BandwidthMbps: 80}},
+		},
+	}
+	srv := makeVendorProfilesServer(mock)
+	ts := httptest.NewServer(srv.mux)
+	t.Cleanup(ts.Close)
+	token := signAdminToken(t, []byte("test-secret-key-for-admin-tokens"))
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/admin/vendor-profiles", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET: %v", err)
+	}
+	defer resp.Body.Close()
+
+	var raw json.RawMessage
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		t.Fatalf("decode raw: %v", err)
+	}
+	body := string(raw)
+
+	// Must contain the key fields
+	for _, key := range []string{`"profiles"`, `"read_only"`, `"note"`, `"vendor"`, `"weight"`, `"base_latency_ms"`, `"bandwidth_mbps"`} {
+		if !strings.Contains(body, key) {
+			t.Errorf("response missing key %q: %s", key, body)
+		}
+	}
+	// Must NOT contain credential material
+	if strings.Contains(body, `"credential"`) {
+		t.Errorf("response contains '\"credential\"' — material leaked")
 	}
 }

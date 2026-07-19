@@ -26,6 +26,11 @@ type AdminAccountsReader interface {
 	ListAccounts(ctx context.Context, vendorFilter, stateFilter string) ([]metadata.AdminAccountView, error)
 }
 
+// VendorProfilesReader defines the read-only vendor profiles surface.
+type VendorProfilesReader interface {
+	ListVendorProfiles(ctx context.Context) ([]metadata.VendorProfileRow, error)
+}
+
 // ─── Wire response types ──────────────────────────────────────────────────
 //
 // These types control the exact JSON shape for the admin accounts endpoint.
@@ -115,6 +120,22 @@ func computeSummary(views []metadata.AdminAccountView) accountsSummary {
 	return summary
 }
 
+// ─── Vendor profile response types ─────────────────────────────────────────
+
+// vendorProfileRowResponse is the JSON shape for a single vendor profile row.
+type vendorProfileRowResponse struct {
+	Vendor        string  `json:"vendor"`
+	Weight        float64 `json:"weight"`
+	BaseLatencyMs int     `json:"base_latency_ms"`
+	BandwidthMbps int     `json:"bandwidth_mbps"`
+}
+
+type vendorProfilesResponse struct {
+	Profiles   []vendorProfileRowResponse `json:"profiles"`
+	ReadOnly   bool                       `json:"read_only"`
+	Note       string                     `json:"note"`
+}
+
 // ─── Handler ───────────────────────────────────────────────────────────────
 
 // listAccountsHandler returns an http.Handler that serves GET /v1/admin/accounts.
@@ -142,14 +163,43 @@ func listAccountsHandler(mc AdminAccountsReader) http.Handler {
 	})
 }
 
+// listVendorProfilesHandler returns an http.Handler that serves
+// GET /v1/admin/vendor-profiles. It is read-only (note + read_only marker).
+func listVendorProfilesHandler(mc VendorProfilesReader) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rows, err := mc.ListVendorProfiles(r.Context())
+		if err != nil {
+			WriteError(w, http.StatusInternalServerError, fmt.Sprintf("list vendor profiles: %v", err))
+			return
+		}
+
+		profiles := make([]vendorProfileRowResponse, 0, len(rows))
+		for i := range rows {
+			profiles = append(profiles, vendorProfileRowResponse{
+				Vendor:        rows[i].Vendor,
+				Weight:        rows[i].VendorProfile.Weight,
+				BaseLatencyMs: rows[i].VendorProfile.BaseLatencyMs,
+				BandwidthMbps: rows[i].VendorProfile.BandwidthMbps,
+			})
+		}
+
+		WriteJSON(w, http.StatusOK, vendorProfilesResponse{
+			Profiles: profiles,
+			ReadOnly: true,
+			Note:     vendorProfilesReadOnlyNote,
+		})
+	})
+}
+
 // ─── Route registration (for todo 54) ─────────────────────────────────────
 
-// RegisterAccountsRoutes mounts the accounts read + write + ops handlers on
-// srv. It is designed to be a one-line call in todo 54's route consolidation.
-// mc serves GET (todo 20); registry serves POST/PUT/rotate/ban/unban (todo 26/
-// 27, B2 CRUD); broadcaster serves circuit force open/close (todo 27).
-// audit receives one entry per write attempt (todo 33); nil disables it.
-func RegisterAccountsRoutes(srv *Server, mc AdminAccountsReader, registry AdminAccountsWriter, broadcaster EventBroadcaster, audit AuditRecorder) {
+// RegisterAccountsRoutes mounts the accounts read + write + ops + vendor-profiles
+// handlers on srv. It is designed to be a one-line call in todo 54's route
+// consolidation. mc serves GET (todo 20); vpr serves vendor profiles (todo 37);
+// registry serves POST/PUT/rotate/ban/unban (todo 26/27, B2 CRUD); broadcaster
+// serves circuit force open/close (todo 27). audit receives one entry per write
+// attempt (todo 33); nil disables it.
+func RegisterAccountsRoutes(srv *Server, mc AdminAccountsReader, vpr VendorProfilesReader, registry AdminAccountsWriter, broadcaster EventBroadcaster, audit AuditRecorder) {
 	srv.Handle("GET /v1/admin/accounts", listAccountsHandler(mc), true)
 	srv.Handle("POST /v1/admin/accounts", createAccountHandler(registry, audit), true)
 	srv.Handle("PUT /v1/admin/accounts/{vendor}/{id}", updateAccountHandler(registry, audit), true)
@@ -157,6 +207,7 @@ func RegisterAccountsRoutes(srv *Server, mc AdminAccountsReader, registry AdminA
 	srv.Handle("POST /v1/admin/accounts/{vendor}/{id}/ban", banAccountHandler(registry, audit), true)
 	srv.Handle("POST /v1/admin/accounts/{vendor}/{id}/unban", unbanAccountHandler(registry, audit), true)
 	srv.Handle("POST /v1/admin/accounts/{vendor}/{id}/circuit", circuitAccountHandler(broadcaster, audit), true)
+	srv.Handle("GET /v1/admin/vendor-profiles", listVendorProfilesHandler(vpr), true)
 }
 
 // ─── Write side (todo 26, B2 structured CRUD) ─────────────────────────────
@@ -424,6 +475,9 @@ type circuitAccountRequest struct {
 
 // defaultBanDuration applies when ban_until is absent from the ban body.
 const defaultBanDuration = 24 * time.Hour
+
+// vendorProfilesReadOnlyNote is the read-only marker on vendor profiles.
+const vendorProfilesReadOnlyNote = "节点以本地 YAML 为准；CP 改动不传播（v1 只读）"
 
 // rotateAccountHandler serves POST /v1/admin/accounts/{vendor}/{id}/rotate.
 // The request body IS the vendor's auth field set; internally it is exactly
