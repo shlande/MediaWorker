@@ -25,6 +25,7 @@ import (
 	"github.com/shlande/mediaworker/internal/ingest/syncpub"
 	"github.com/shlande/mediaworker/internal/node/monitor"
 	"github.com/shlande/mediaworker/internal/storage/accountpool"
+	"github.com/shlande/mediaworker/internal/storage/healthcheck"
 	"github.com/shlande/mediaworker/internal/storage/metadata"
 )
 
@@ -134,6 +135,13 @@ func run(configPath string) error {
 	// 8. Context + signal handling.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// 9. Account health checker — probes every 30s and writes to PG.
+	// HealthCheck() makes real HTTP calls to each vendor's drive API
+	// (Baidu: /rest/2.0/xpan/nas, OneDrive: graph API root) so the 30s
+	// period keeps per-account API cost at ~2 calls/min.
+	checker := healthcheck.NewHealthChecker(pool, 30*time.Second, mc)
+	go checker.Start(ctx)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
