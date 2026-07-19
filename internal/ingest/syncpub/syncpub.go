@@ -152,7 +152,6 @@ func (p *SyncPublisher) CheckConnectivity(ctx context.Context) error {
 // would starve). Publish always returns; the IngestPipeline calls it from a
 // goroutine whose return value is ignored (pipeline.go:79 async semantics).
 func (p *SyncPublisher) Publish(evt types.ContentIngestedEvent) {
-	slog.Info("syncpub.Publish: entered", "content_id", evt.ContentID, "content_type", evt.ContentType, "blob_count", len(evt.Blobs))
 	var lastErr error
 	for attempt := 0; attempt < maxRetries; attempt++ {
 		if attempt > 0 {
