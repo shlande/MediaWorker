@@ -168,7 +168,7 @@ func TestFormSchema_ConsistencyGuard(t *testing.T) {
 		}
 
 		// ValidateAuth required keys come from rule.RequiredAuth.
-		validateRequired := rule.RequiredAuth
+		// Copy before sorting — never mutate the global VendorRules table.
 
 		// account_id is NOT in RequiredAuth (it's in ValidateAccountID),
 		// but it IS marked required in the schema. Remove it for comparison.
@@ -180,12 +180,15 @@ func TestFormSchema_ConsistencyGuard(t *testing.T) {
 			schemaAuthRequired = append(schemaAuthRequired, k)
 		}
 
-		sort.Strings(schemaAuthRequired)
-		sort.Strings(validateRequired)
+		schemaAuthRequiredSorted := append([]string(nil), schemaAuthRequired...)
+		validateRequiredSorted := append([]string(nil), rule.RequiredAuth...)
 
-		if !strSetEqual(schemaAuthRequired, validateRequired) {
+		sort.Strings(schemaAuthRequiredSorted)
+		sort.Strings(validateRequiredSorted)
+
+		if !strSetEqual(schemaAuthRequiredSorted, validateRequiredSorted) {
 			t.Errorf("%s schema required (non-account_id) = %v, ValidateAuth required = %v",
-				vendor, schemaAuthRequired, validateRequired)
+				vendor, schemaAuthRequiredSorted, validateRequiredSorted)
 		}
 	}
 }
