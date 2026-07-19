@@ -18,6 +18,7 @@ import (
 	cpjwt "github.com/shlande/mediaworker/internal/controlplane/jwt"
 	"github.com/shlande/mediaworker/internal/controlplane/locationsvc"
 	cpmetrics "github.com/shlande/mediaworker/internal/controlplane/metrics"
+	"github.com/shlande/mediaworker/internal/controlplane/noderegistry"
 	"github.com/shlande/mediaworker/internal/controlplane/pinstrategy"
 	"github.com/shlande/mediaworker/internal/controlplane/syncbroadcaster"
 	"github.com/shlande/mediaworker/internal/shared/identity"
@@ -70,6 +71,13 @@ func run(configPath string) error {
 
 	// 5. JWT service + HTTP server.
 	jwtSvc := cpjwt.NewJWTService(privKey, ps, rateLimiter, auditLog, cfg.JWTPolicy)
+
+	// 5b. Node registry (todo 12): runtime view of node status reports +
+	//     JWT issuance records. Kept as a named variable — later admin
+	//     wiring (todos 18/24/31/32/52) consumes nodeReg here.
+	nodeReg := noderegistry.NewRegistry()
+	jwtSvc.SetIssuanceRecorder(nodeReg.RecordIssuance)
+
 	httpServer := cpjwt.NewJWTHTTPServer(jwtSvc)
 
 	// 6. Load libp2p identity (separate key path from JWT — protobuf format).
@@ -178,8 +186,15 @@ func run(configPath string) error {
 	slog.Info("PinOrchestrator started", "interval", rebalanceIntv, "top_contents_limit", cfg.PinOrchestrator.TopContentsLimit)
 
 	// 14. Subscribe to reverse channels.
+	// histWriter is nil on the PG-unavailable startup path (section 10);
+	// handleNodeStatusReport then skips history writes entirely.
+	var histWriter nodeStatusHistoryWriter
+	if mc != nil {
+		histWriter = mc
+	}
 	statusCh := sb.Subscribe("NODE_STATUS_REPORT")
 	go func() {
+		reportCounts := map[types.PeerId]int{}
 		for evt := range statusCh {
 			var report types.NodeStatusReport
 			if err := json.Unmarshal(evt.Payload, &report); err != nil {
@@ -187,6 +202,7 @@ func run(configPath string) error {
 				continue
 			}
 			po.OnNodeStatusReport(report)
+			handleNodeStatusReport(ctx, report, nodeReg, histWriter, reportCounts)
 		}
 	}()
 
@@ -259,3 +275,70 @@ func parseJWTHTTPDuration(s string, fieldName string) (time.Duration, error) {
 	}
 	return d, nil
 }
+
+// nodeStatusHistoryWriter is the narrow seam used by handleNodeStatusReport
+// to double-write reports into PG (todo 5 accessors).
+// *metadata.PGMetadataClient satisfies it; nil disables history writes.
+type nodeStatusHistoryWriter interface {
+	InsertNodeStatusHistory(ctx context.Context, row metadata.NodeStatusHistoryRow) error
+	PruneNodeStatusHistory(ctx context.Context, peerID string, keep int) error
+}
+
+// nodeStatusHistoryKeep bounds node_status_history rows per peer.
+const nodeStatusHistoryKeep = 50
+
+// nodeStatusPruneEvery prunes history once per this many reports per peer,
+// keeping DELETEs off the per-report hot path.
+const nodeStatusPruneEvery = 10
+
+// handleNodeStatusReport double-writes a decoded report: always into the
+// in-memory node registry, and (when hw != nil) into node_status_history.
+// History-write failures are Warn-only: the registry update has already
+// happened, and PG unavailability must not affect the runtime node view.
+// counts is a caller-owned per-peer report counter driving the prune
+// cadence; the subscribe loop is single-goroutine so no locking is needed.
+func handleNodeStatusReport(ctx context.Context, report types.NodeStatusReport, reg *noderegistry.Registry, hw nodeStatusHistoryWriter, counts map[types.PeerId]int) {
+	reg.UpsertReport(report)
+	if hw == nil {
+		return
+	}
+	if err := hw.InsertNodeStatusHistory(ctx, nodeStatusHistoryRowFromReport(report)); err != nil {
+		slog.Warn("node status history insert failed", "peer_id", report.PeerID, "err", err)
+	}
+	counts[report.PeerID]++
+	if counts[report.PeerID]%nodeStatusPruneEvery != 0 {
+		return
+	}
+	if err := hw.PruneNodeStatusHistory(ctx, string(report.PeerID), nodeStatusHistoryKeep); err != nil {
+		slog.Warn("node status history prune failed", "peer_id", report.PeerID, "err", err)
+	}
+}
+
+// nodeStatusHistoryRowFromReport converts a wire report into a history row.
+// Pointer columns are nil when the report does not carry the value
+// (Region/Version/NodeID empty = old node build, stored as NULL).
+func nodeStatusHistoryRowFromReport(report types.NodeStatusReport) metadata.NodeStatusHistoryRow {
+	connCount := int32(report.ConnCount)
+	row := metadata.NodeStatusHistoryRow{
+		PeerID:      string(report.PeerID),
+		Healthy:     report.Healthy,
+		ReportedAt:  time.Unix(report.LastUpdate, 0),
+		PrefixUsed:  ptr(report.PrefixSpace.UsedBytes),
+		PrefixTotal: ptr(report.PrefixSpace.TotalBytes),
+		WarmUsed:    ptr(report.WarmSpace.UsedBytes),
+		WarmTotal:   ptr(report.WarmSpace.TotalBytes),
+		ConnCount:   &connCount,
+	}
+	if report.NodeID != "" {
+		row.NodeID = ptr(report.NodeID)
+	}
+	if report.Region != "" {
+		row.Region = ptr(report.Region)
+	}
+	if report.Version != "" {
+		row.Version = ptr(report.Version)
+	}
+	return row
+}
+
+func ptr[T any](v T) *T { return &v }

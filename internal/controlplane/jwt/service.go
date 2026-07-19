@@ -24,6 +24,12 @@ type JWTService struct {
 	auditLog    *AuditLog
 	policy      config.JWTPolicyConfig
 	ttl         time.Duration
+
+	// issuanceRecorder is called on every successful issuance with the
+	// peer's ID, the issued JWT's expiry, and its L4Backhaul grant. Exposed
+	// as an injectable field (nil-tolerant) following the emitSnapshotFn
+	// pattern in accountregistry; main wires it to the node registry.
+	issuanceRecorder func(peerID types.PeerId, exp int64, l4 bool)
 }
 
 // NewJWTService creates a JWTService. privKey is the control plane's Ed25519
@@ -70,6 +76,14 @@ func applyPolicyDefaultsInPlace(p *config.JWTPolicyConfig) {
 		p.DefaultCapabilities.Edge = true
 		p.DefaultCapabilities.PeerICP = true
 	}
+}
+
+// SetIssuanceRecorder installs the callback invoked on every successful JWT
+// issuance (peer ID, JWT expiry, L4Backhaul grant). A nil recorder disables
+// the hook; the default is nil (no-op), so existing constructions keep their
+// exact behaviour.
+func (s *JWTService) SetIssuanceRecorder(fn func(peerID types.PeerId, exp int64, l4 bool)) {
+	s.issuanceRecorder = fn
 }
 
 // HandleJWTRequest validates a node's JWT request and returns a signed JWT.
@@ -144,6 +158,12 @@ func (s *JWTService) HandleJWTRequest(req types.JWTRequest, remoteIP string) (*t
 
 	// 8. Audit
 	s.auditLog.Log(req.PeerID, remoteIP, isL4, payload.BandwidthQuota, payload.Exp, "ok", "")
+
+	// 9. Issuance record (runtime authoritative source for 应续未续 / l4
+	//    effective status; memory-only, no-op when unset).
+	if s.issuanceRecorder != nil {
+		s.issuanceRecorder(req.PeerID, payload.Exp, isL4)
+	}
 
 	return &types.JWTResponse{
 		JWT:           jwtStr,
