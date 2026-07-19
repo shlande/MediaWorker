@@ -84,6 +84,26 @@ func (wc *WarmCache) blobPath(blobHash string) string {
 // UsedSize returns the current used size in bytes.
 func (wc *WarmCache) UsedSize() int64 { return wc.usedSize }
 
+// Usage returns the used and total capacity of the warm cache in bytes.
+// Reads follow the same unsynchronized convention as UsedSize: usedSize is
+// mutated by Put's eviction path outside wc.mu (pre-existing), so this is an
+// approximate snapshot — accurate enough for periodic status reporting.
+func (wc *WarmCache) Usage() (used, total int64) {
+	return wc.usedSize, wc.maxSize
+}
+
+// Count returns the number of warm-cache entries in the index (entries whose
+// Location is "warm"), matching the Has() semantics.
+func (wc *WarmCache) Count() int {
+	n := 0
+	for _, e := range wc.index.All() {
+		if e.Location == "warm" {
+			n++
+		}
+	}
+	return n
+}
+
 // Put writes data to disk and creates an index entry. If the cache is full,
 // it triggers Evict first to make room.
 func (wc *WarmCache) Put(blobHash string, data []byte, bitrate int) error {

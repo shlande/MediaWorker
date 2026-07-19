@@ -42,6 +42,7 @@ import (
 	"github.com/shlande/mediaworker/internal/node/peerstore"
 	"github.com/shlande/mediaworker/internal/node/pinstore"
 	nodepinstrategy "github.com/shlande/mediaworker/internal/node/pinstrategy"
+	"github.com/shlande/mediaworker/internal/node/reporter"
 	"github.com/shlande/mediaworker/internal/node/routing"
 	nodesync "github.com/shlande/mediaworker/internal/node/syncbroadcaster"
 	"github.com/shlande/mediaworker/internal/shared/identity"
@@ -73,6 +74,7 @@ var (
 const defaultHTTPListen = ":8080"
 
 func main() {
+	startedAt := time.Now()
 	flag.Parse()
 
 	if *showVersion {
@@ -381,7 +383,7 @@ func main() {
 	// -------------------------------------------------------------------
 	// 18. SyncBroadcaster client — receive PinPlan from control plane
 	// -------------------------------------------------------------------
-	_ = nodesync.NewClient(h, func(plan types.PinPlan) {
+	syncClient := nodesync.NewClient(h, func(plan types.PinPlan) {
 		if pinStore == nil {
 			logger.Debug("syncbroadcaster PinPlan received but prefix cache disabled — skipping",
 				"seq", plan.Seq, "target_node", plan.TargetNode)
@@ -392,6 +394,75 @@ func main() {
 	logger.Info("syncbroadcaster client registered",
 		"protocol", string(nodesync.ControlProtocol),
 	)
+
+	// -------------------------------------------------------------------
+	// 18b. Node status reporter — periodic NODE_STATUS_REPORT push to the
+	// control plane (reverse direction of the /edge/control/1.0.0 channel).
+	// Runs in its own goroutine; send failures are Warn-logged inside the
+	// reporter and the next cycle covers (no retry, never blocks main).
+	// -------------------------------------------------------------------
+	if len(bootstrapAddrs) == 0 {
+		logger.Warn("node status reporter disabled: no bootstrap peers configured (no CP target)")
+	} else {
+		collectReport := func() types.NodeStatusReport {
+			report := types.NodeStatusReport{
+				NodeID: h.ID().String(),
+				PeerID: nodeIdentity.PeerID,
+				Capabilities: types.NodeCapabilities{
+					Edge:          cfg.Node.DeclaredCapabilities.Edge,
+					L4Backhaul:    cfg.Node.DeclaredCapabilities.L4Backhaul,
+					RelayProvider: cfg.Node.DeclaredCapabilities.RelayProvider,
+					PeerICP:       cfg.Node.DeclaredCapabilities.PeerICP,
+				},
+				LastUpdate: time.Now().Unix(),
+				Region:     cfg.Node.Region,
+				Version:    BuildVersion,
+				StartedAt:  startedAt.Unix(),
+				ConnCount:  len(h.Network().Conns()),
+				ColdSpace:  nil, // cold cache unwired (see section 14 note)
+			}
+			if jwtClient != nil {
+				report.Healthy = !jwtClient.IsDegraded()
+				// Capabilities authorized by the current JWT win over the
+				// declared config; expired/absent JWT falls back to declared.
+				if jwt := jwtClient.CurrentJWT(); jwt != "" {
+					if payload, err := sjwt.VerifyJWTAnyPeerID(jwt, ed25519.PublicKey(cpPubKey)); err == nil {
+						report.Capabilities = payload.Capabilities
+					}
+				}
+				_, _, report.JWTRefreshFail24h = jwtClient.RefreshStats()
+			}
+			if pinStore != nil {
+				space := pinStore.QuerySpace()
+				report.PrefixSpace = types.PartitionStatus{
+					TotalBytes: space.TotalPinnedSize + space.AvailableBytes,
+					UsedBytes:  space.TotalPinnedSize,
+					BlobCount:  space.PinnedCount,
+				}
+			}
+			report.WarmSpace = types.PartitionStatus{
+				TotalBytes: int64(cfg.Edge.WarmCache.SizeGB) * 1_000_000_000,
+			}
+			if warmCache != nil {
+				used, total := warmCache.Usage()
+				report.WarmSpace.UsedBytes = used
+				report.WarmSpace.TotalBytes = total
+				report.WarmSpace.BlobCount = int32(warmCache.Count())
+			}
+			return report
+		}
+		statusReporter := reporter.NewReporter(reporter.Config{
+			Client:  syncClient,
+			CP:      bootstrapAddrs[0].ID,
+			Collect: collectReport,
+			Logger:  logger,
+		})
+		go statusReporter.Run(rootCtx)
+		logger.Info("node status reporter started",
+			"cp_peer", bootstrapAddrs[0].ID.ShortString(),
+			"interval", reporter.DefaultInterval.String(),
+		)
+	}
 
 	// -------------------------------------------------------------------
 	// 19. GossipSub + PeerScorer + MergedPopularity
