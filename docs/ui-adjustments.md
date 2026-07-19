@@ -48,6 +48,8 @@
 
 ### accounts.html
 
+> **动态表单改版**（凭据 JSON 手填 → 按厂商动态字段）的完整清单见 [`accounts-ui-checklist.md`](accounts-ui-checklist.md)，后端配套见 [`account-backend-adjustments.md`](account-backend-adjustments.md)、字段基线见 [`vendor-account-params.md`](vendor-account-params.md)。
+
 | 元素 | 处理 | 原因 / 建议替代 |
 |---|---|---|
 | 「熔断器」列 | 删（或改） | 熔断器是**节点本地**状态，每个 L4 节点各自一份，CP 单行聚合语义错误。v1 删除该列（熔断状态在 edge-network.html 本地页展示，语义正确）；若管理员需要全局视角，二期改为「熔断 Open 的节点数」聚合（需上报扩展） |
