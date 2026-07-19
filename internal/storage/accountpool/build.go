@@ -79,11 +79,17 @@ func BuildFromConfig(cfg StorageConfig, blobLocations BlobLocationClient) *Accou
 		}
 		vendor := types.Vendor(acctCfg.Vendor)
 
+		tokenURL := ""
+		if vendor == types.VendorOneDrive {
+			tokenURL = auth.OneDriveTokenURL(acctCfg.Region)
+		}
+
 		tokenMgr.Register(vendor, acctCfg.AccountID, auth.OAuth2Config{
 			ClientID:     acctCfg.ClientID,
 			ClientSecret: acctCfg.ClientSecret,
 			RefreshToken: acctCfg.RefreshToken,
 			RedirectURI:  acctCfg.RedirectURI,
+			TokenURL:     tokenURL,
 		})
 
 		var drv driver.Driver
