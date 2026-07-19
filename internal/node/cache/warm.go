@@ -15,14 +15,19 @@ import (
 // construction (the PinStore and GossipSub stack are typically built after the
 // cache). All reads and writes of these fields are guarded by mu. The Evict
 // call path in Put takes an RLock to snapshot the two functions atomically.
+//
+// evictMu guards evictTimestamps; it is separate from mu so the eviction
+// counter can be read without contending on cache operations.
 type WarmCache struct {
-	mu         sync.RWMutex
-	rootPath   string
-	maxSize    int64
-	usedSize   int64
-	index      *MemoryIndex
-	pinChecker PinChecker
-	popSource  PopSource
+	mu              sync.RWMutex
+	rootPath        string
+	maxSize         int64
+	usedSize        int64
+	index           *MemoryIndex
+	pinChecker      PinChecker
+	popSource       PopSource
+	evictMu         sync.Mutex
+	evictTimestamps []time.Time
 }
 
 // NewWarmCache creates a WarmCache rooted at the given path. The root directory
@@ -104,6 +109,47 @@ func (wc *WarmCache) Count() int {
 	return n
 }
 
+// evictionWindow bounds the sliding counter to 1 hour.
+const evictionWindow = 1 * time.Hour
+
+// recordEviction appends a timestamp to the sliding window and lazily prunes
+// expired entries. Must be called under evictMu.
+func (wc *WarmCache) recordEviction(now time.Time) {
+	wc.evictMu.Lock()
+	wc.evictTimestamps = append(wc.evictTimestamps, now)
+	cutoff := now.Add(-evictionWindow)
+	n := 0
+	for _, ts := range wc.evictTimestamps {
+		if !ts.Before(cutoff) {
+			wc.evictTimestamps[n] = ts
+			n++
+		}
+	}
+	wc.evictTimestamps = wc.evictTimestamps[:n]
+	wc.evictMu.Unlock()
+}
+
+// Evictions1h returns the number of warm-cache evictions in the last hour
+// (lazy-pruned sliding window). Safe for concurrent use with Put/Get.
+func (wc *WarmCache) Evictions1h() int {
+	now := time.Now()
+	cutoff := now.Add(-evictionWindow)
+
+	wc.evictMu.Lock()
+	// Prune expired entries before counting.
+	n := 0
+	for _, ts := range wc.evictTimestamps {
+		if !ts.Before(cutoff) {
+			wc.evictTimestamps[n] = ts
+			n++
+		}
+	}
+	wc.evictTimestamps = wc.evictTimestamps[:n]
+	count := n
+	wc.evictMu.Unlock()
+	return count
+}
+
 // Put writes data to disk and creates an index entry. If the cache is full,
 // it triggers Evict first to make room.
 func (wc *WarmCache) Put(blobHash string, data []byte, bitrate int) error {
@@ -129,6 +175,7 @@ func (wc *WarmCache) Put(blobHash string, data []byte, bitrate int) error {
 		}
 		wc.index.Delete(seg.BlobHash)
 		_ = os.Remove(path)
+		wc.recordEviction(time.Now())
 	}
 
 	path := wc.blobPath(blobHash)
