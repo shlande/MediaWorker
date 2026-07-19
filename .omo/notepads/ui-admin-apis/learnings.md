@@ -466,3 +466,30 @@ auditlog failure path audit: Added Result/Reason to AuditEntry, extended Log(pee
 - Secret-leak lock: TestAudit_DetailNeverContainsCredential marshals every captured Detail and greps sentinel values + "credential"/"client_secret"/"refresh_token"/"cookies" keys; ban reason + ban_until ARE detail (spec-sanctioned), update detail = {auth_changed bool, enabled?, rate_limit?, vendor_profile?} — never the auth map.
 - 018 inserted into all FOUR migrate-mock enumerations between 017(title) and 019(alert_events): pattern `CREATE TABLE IF NOT EXISTS admin_audit`.
 - accounts_handlers.go now 469 pure LOC (SIZE_OK marker extended: todo 33 adds one mechanical Record per terminal, no new logic units; file stays orchestrator-constrained).
+
+## [2026-07-20T22:00Z] Task: todo-37
+- RegisterAccountsRoutes signature extended to 6-arg: (srv, mc, vpr, registry, broadcaster, audit). The vpr param is the new VendorProfilesReader interface — separate from AdminAccountsReader because the read surface is broader than accounts.
+- Go 1.22+ mux returns 405 automatically for unregistered HTTP methods on a registered path — no explicit 405 handler needed. Verified by TestVendorProfiles_PutReturns405.
+- GET /v1/admin/vendor-profiles is a READ — no audit record per todo 33's read-exclusion rule.
+- vendorProfilesReadOnlyNote = "节点以本地 YAML 为准；CP 改动不传播（v1 只读）" — different from the vendorProfileNote used in PUT response (which is "节点以本地 YAML 为准"). The longer form includes the "CP 改动不传播（v1 只读）" clarification per ui-adjustments.md:60 wording.
+- 4 call sites of RegisterAccountsRoutes updated (3 in accounts_handlers_test.go, 1 in audit_test.go). Each test passes nil for vpr since no test needs vendor profiles + accounts together.
+- Full package test suite: 134/134 pass, 6.688s, -race clean.
+- Foreign breakage in jwt/auditlog.go (concurrent agent added unused "strings" import) — not caused by this task, build passes after the concurrent agent's code stabilized.
+
+## [2026-07-20] Task: todo-34
+- AuditLog ring lives in auditlog.go: 10000-cap, head/count counters, written synchronously inside the SAME mutex as the JSON-lines writer (Log path) — zero new sync surface. Query(f) iterates backwards = newest-first, write-order not resort (out-of-order clocks keep write order).
+- RegisterAuditRoutes(srv, auditLog, mc) narrow interfaces: AuditLogQuerier + AdminAuditLister. TODO 54 MUST pass the main.go:64 `auditLog` instance (cpjwt.NewAuditLog(os.Stdout)) — a second instance would silently split ring from writer.
+- kind contract LOCKED: empty->jwt; admin->Kind="" (all admin kinds); account/whitelist/pin/content/auth->exact Kind. No cross-source merge ever. q is source-relative (peer_id vs target ILIKE).
+- nil auditLog + kind=jwt -> 500 (loud wiring bug), never silent empty page.
+- Test gotcha: Log stamps time.Now() internally — from/to tests bound windows with real clocks (future/past ±1h), no timestamp injection seam needed.
+
+## [2026-07-20T06:00Z] Task: todo-54
+- CP consolidation done in cmd/control-plane/main.go 13c: SetAuditRecorder BEFORE RegisterAuthRoutes is LOAD-BEARING (auth captures srv.audit at registration time, auth_handlers.go:169,171 — verified, not request-time).
+- Typed-nil trap on PGAuditRecorder: keep AdminAuditInserter a nil INTERFACE when mc==nil; typed-nil *PGMetadataClient inside would pass the p.mc==nil check then panic on Insert. Same pattern for NodeHistoryReader — but node-detail handler does NOT tolerate nil (fetchRecentReports calls unconditionally), so main has noopNodeHistoryReader{} returning empty success.
+- Todo-53 quota hook is a wiring-layer decorator (quotaAwareAccountsWriter in package main overriding CreateAccount/SetRateLimit to call qa.SetGlobalLimit after successful registry write) — RegisterAccountsRoutes has no qa param BY DESIGN; do not add one.
+- RegisterContentsRoutes takes an anonymous struct param — pass `struct{ContentsListReader;ContentsDetailReader;ContentMetaReader}{mc,mc,mc}` literally.
+- Hoists required: registry (13b->run scope), qa (13d->above 13c), dispatchLog=po.DispatchLog() shared by 5 consumers.
+- Integration test pattern (CP): real socket via srv.Serve(freeAddr) (Server.mux unexported cross-package); one stateful cpStore implementing ALL PG narrow interfaces so writer->reader chains (ban->health view, recorder->audit query) are real; cpPinOrchestrator fake records into the REAL DispatchLog for pin->pin-plans linkage; deterministic readiness = poll an auth-gated route for 401, never sleep-first.
+- RegisterAuditRoutes(srv, auditLog, mc) landed mid-task (todo 34, commit 565b435) — kind=jwt reads the cpjwt.AuditLog ring, kind=admin/<kind> reads ListAdminAudit; mount inside `if mc != nil` so both sources answer.
+- PG-less degraded smoke verified: PG-independent mounts answer 401 (mounted+auth), PG-dependent 404 (unmounted); Warn lines name the skipped groups; shutdown clean.
+- main.go now 365 pure LOC (306 pre-existing at HEAD) — D1-mandated wiring block; split deferred to a dedicated refactor, documented in task-54 evidence.

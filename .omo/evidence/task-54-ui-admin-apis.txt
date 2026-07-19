@@ -1,0 +1,155 @@
+# Task 54 — 端到端集成测试：CP admin API 全链路 + CP route-mount consolidation (D1)
+
+Date: 2026-07-20
+Executor: sisyphus-junior (friday/kimi-k3)
+
+## Scope delivered
+
+PART A — cmd/control-plane/main.go mount consolidation (orchestrator D1: todo 54 owns ALL CP-admin mounts).
+PART B — test/integration/admin_api_test.go: seven-step chain E2E over a real socket.
+
+## PART A — main.go changes (13b/13c/13d)
+
+### Audit ordering (todo 33's note — VERIFIED, load-bearing)
+- READ server.go + auth_handlers.go: RegisterAuthRoutes captures `srv.audit` at
+  REGISTRATION time (auth_handlers.go:169,171 — `loginHandler(users, srv.secret, srv.audit)`,
+  `logoutHandler(srv.audit)`). It is NOT read at request time.
+- Therefore `adminSrv.SetAuditRecorder(...)` MUST precede RegisterAuthRoutes.
+  Implemented: auditInserter/auditRec built first inside the admin block, then
+  SetAuditRecorder, then ALL route mounts (auth routes mount later inside `if mc != nil`).
+- Typed-nil trap avoided: `auditInserter` stays a nil INTERFACE when mc == nil
+  (NewPGAuditRecorder(nil) is a documented no-op recorder; a typed-nil
+  *PGMetadataClient inside the interface would panic on Record).
+
+### Mounts (exact signatures read from working tree, not guessed)
+PG-independent (always mounted when admin_api.listen set):
+- RegisterNodesRoutes(srv, nodeReg, nodeHistory, dispatchLog, slog.Default(), time.Now)   (todos 24/31)
+- RegisterPinPlansRoutes(srv, dispatchLog, nodeReg)                                        (todo 22)
+- RegisterWhitelistRoutes(srv, wlStore, ps, nodeReg, auditRec)                             (todo 32)
+- RegisterQuotaRoutes(srv, qa, nodeReg)                                                    (todo 53)
+- RegisterFormSchemaRoutes(srv)                                                            (todo 58)
+PG-dependent (inside `if mc != nil`, Warn otherwise):
+- SeedAdminIfEmpty + RegisterAuthRoutes(srv, mc)                                           (todo 18)
+- RegisterAccountsRoutes(srv, mc, mc, quotaAwareAccountsWriter{registry, qa}, sb, auditRec) (todos 20/26/27/37; 6-arg incl. VendorProfilesReader)
+- RegisterPinRoutes(srv, mc, nodeReg, po, auditRec)                                        (todo 29)
+- RegisterContentsRoutes(srv, struct{List/Detail/Meta}{mc,mc,mc}, dispatchLog, mc, auditRec) (todos 28/30; anonymous-struct param)
+- RegisterAlertsRoutes(srv, mc, cfg.AdminAPI.AlertWebhookToken)                            (todo 51)
+- RegisterAccountTestRoutes(srv, accounttester.NewTester(registry, adminapi.ValidateAuth, nil)) (todo 57)
+- RegisterOverviewRoutes(srv, OverviewDeps{Prom: NewPromClient(cfg.AdminAPI.PrometheusURL), Metadata: mc, Registry: nodeReg, Dispatch: dispatchLog}) (todo 52)
+- RegisterAuditRoutes(srv, auditLog, mc)                                                   (todo 34 — landed mid-task, see below)
+
+### Quota linkage (todo 53 anchor)
+RegisterAccountsRoutes has NO qa param by design — the hook is a wiring-layer
+decorator: `quotaAwareAccountsWriter` (package main) embeds
+adminapi.AdminAccountsWriter and overrides CreateAccount (non-zero rate_limit)
++ SetRateLimit to call `qa.SetGlobalLimit("vendor:account_id", cfg)` AFTER the
+registry write succeeds. Handler logic untouched (MUST-NOT honored).
+
+### Hoists
+- `registry` (accountregistry) hoisted from 13b's if-block to run scope (13c needs it).
+- `qa := quota.NewQuotaAllocator(sb)` hoisted above 13c (accounts wrapper captures it);
+  13d keeps seeding (mc.ListAccounts) + `go qa.Run(ctx, quotaInterval)` unchanged.
+- `dispatchLog := po.DispatchLog()` single local for all five consumers.
+- `noopNodeHistoryReader{}` (package main): node-detail handler calls
+  GetNodeStatusHistory unconditionally and does NOT tolerate a nil interface —
+  PG-less path returns empty success ([] recent_reports, no per-request Warn spam).
+
+### main.go size
+306 pure LOC at HEAD (pre-existing >250 defect) -> 365 after consolidation.
+The +59 is the D1-mandated pure-wiring block (no new logic units); splitting
+main.go is out of this todo's scope (same accepted pattern as todo 49's node
+main.go consolidation). Documented here per the SIZE_OK protocol.
+
+## PART B — test/integration/admin_api_test.go (new, 878 LOC incl. fakes)
+
+Assembly: REAL adminapi.Server over a REAL socket (srv.Serve on free loopback
+port — Server has no exported mux, todo-49 pattern), REAL noderegistry.Registry,
+REAL pinstrategy.DispatchLog, REAL jwt.WhitelistStore+PeerIdSet (temp BadgerDB),
+REAL quota.QuotaAllocator, REAL usertoken sign/verify (login issues genuine
+HS256, bcrypt-verified user store). FAKES: one stateful cpStore implementing
+ALL PG-backed narrow interfaces (AdminUserStore, AdminAccountsReader,
+VendorProfilesReader, AdminAccountsWriter+AccountAuthWriter, contents
+readers/deleter, AlertEventStore, OverviewMetadataReader, AdminAuditInserter,
+AdminAuditLister, NodeHistoryReader, accounttester.SecretReader) — writes via
+writer interfaces visible through reader interfaces (ban->health-view chain).
+Mock cpPromReader (OverviewPromReader; no real Prometheus). cpPinOrchestrator
+records manual plans into the REAL DispatchLog. cpQuotaWriter mirrors main's
+quota decorator (contract-level hook assertion).
+
+Seven-step chain (TestAdminAPI_EndToEnd, all green, -race clean):
+0. no-token GET /v1/admin/accounts -> 401 (docs:86 acceptance).
+1. POST /v1/auth/login -> 200; token verifies via VerifyUserToken, admin role.
+2. POST /v1/admin/accounts -> 201; PUT rate_limit -> 202; GET shows qps=9;
+   GET /v1/admin/quota global_qps=9 (todo-53 hook through real handler).
+3. POST ban mw_01 -> 202; GET ?state=banned shows mw_01 health.state="banned"
+   — M3 acceptance (CP-side view logically consistent; node 10s: todo 36).
+4. whitelist POST -> 201 -> GET contains -> DELETE -> 204 -> GET absent
+   (real BadgerDB store + PeerIdSet double-write).
+5. GET /v1/admin/contents -> 200, seeded content present.
+6. POST /v1/admin/pin -> 202 with seq; GET /v1/admin/pin-plans shows the
+   record (REAL DispatchLog linkage, trigger=manual).
+7. GET /v1/admin/audit?kind=admin&page_size=100 -> 200; entries contain ALL
+   seven ok writes (auth/login, account/create+update+ban, whitelist/add+
+   remove, pin/pin); recorder-captured row count == query total.
+8. GET /v1/admin/overview -> 200 (cache_hit_rate 0.75 mock, nodes.total 1).
+Assembly smoke: nodes, nodes/{id}, form-schema, vendor-profiles, alerts all 200.
+
+## Verification (commands + results)
+
+- `go build ./...` — PASS.
+- `go vet ./test/integration/ ./cmd/control-plane/` — PASS.
+- `go test ./test/integration/ -run TestAdminAPI -v` — PASS (0.05s).
+- `go test ./test/integration/ -run TestAdminAPI -race -count=1` — PASS.
+- FULL-REPO REGRESSION `go build ./... && go test ./...` — exit 0, 52 packages
+  ok, zero FAIL/panic (log: /tmp/task54-full-regression.log). No foreign
+  failures surfaced.
+
+## Real-binary smoke (todo-49 style, PG-less degraded path)
+
+Fixture: derived config (/tmp/cp-smoke/config.yaml) with pg_dsn -> 127.0.0.1:1
+(instant conn-refused), admin_api{listen:127.0.0.1:18082, token_secret:set},
+tmp identity/whitelist paths, advertise_ttl/interval present (todo-18 gotcha).
+Startup log confirmed degraded path: "PG metadata client unavailable",
+"account snapshot sync skipped", "admin API enabled without PG: auth/accounts/
+pin/contents/alerts/account-test/overview endpoints not mounted", "quota
+allocator seed skipped", then "admin API listening addr=127.0.0.1:18082".
+
+Mount matrix over HTTP (no token):
+  401 /v1/admin/nodes            (mounted, bearer-enforced)
+  401 /v1/admin/pin-plans        (mounted)
+  401 /v1/admin/whitelist        (mounted)
+  401 /v1/admin/quota            (mounted)
+  401 /v1/admin/vendors/form-schema (mounted)
+  404 /v1/auth/login             (PG-dependent, correctly unmounted)
+  404 /v1/admin/accounts         (unmounted)
+  404 /v1/admin/pin              (unmounted)
+  404 /v1/admin/contents         (unmounted)
+  404 /v1/admin/alerts           (unmounted)
+  404 /v1/admin/overview         (unmounted)
+  404 /v1/admin/audit            (unmounted)
+  401 /v1/admin/nodes with "Bearer bogus" (middleware rejects before handler)
+SIGTERM -> "control-plane shutdown complete" (clean drain).
+Conclusion: mc-nil guards behave exactly as designed; no blocker. The PG-less
+startup does NOT prevent adminSrv from mounting PG-independent routes.
+
+## Mid-task foreign landings (multi-agent notes)
+
+- Task brief listed RegisterAuditRoutes (todo 34) as done; at start it was
+  IN FLIGHT (jwt/auditlog.go ring+Query uncommitted, no adminapi handler).
+  Polled per protocol; todo-34's audit_handlers.go landed mid-task
+  (RegisterAuditRoutes(srv, auditLog AuditLogQuerier, mc AdminAuditLister)),
+  then committed as 565b435. Mounted + chain-asserted (step 7 via HTTP).
+- Todo 37 (vendor-profiles) was uncommitted-in-tree at start (6-arg
+  RegisterAccountsRoutes incl. VendorProfilesReader); committed as 408b4f3.
+  Consolidation written against the 6-arg signature throughout.
+- No drive-by fixes; no foreign files touched (pathspec-scoped commit).
+
+## Files touched (scope check)
+
+- cmd/control-plane/main.go (mount consolidation + 2 wiring types + 2 hoists)
+- test/integration/admin_api_test.go (new)
+- .omo/evidence/task-54-ui-admin-apis.txt (this file)
+- .omo/notepads/ui-admin-apis/learnings.md (append)
+No handler logic edited. No narrow-interface changes needed in adminapi —
+every production dep satisfied the handler interfaces directly (compiler-
+verified), except the two main-package wiring adapters documented above.

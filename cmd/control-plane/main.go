@@ -15,6 +15,7 @@ import (
 
 	"github.com/shlande/mediaworker/internal/config"
 	"github.com/shlande/mediaworker/internal/controlplane/accountregistry"
+	"github.com/shlande/mediaworker/internal/controlplane/accounttester"
 	"github.com/shlande/mediaworker/internal/controlplane/adminapi"
 	cpdht "github.com/shlande/mediaworker/internal/controlplane/dhtbootstrap"
 	cpjwt "github.com/shlande/mediaworker/internal/controlplane/jwt"
@@ -192,28 +193,93 @@ func run(configPath string) error {
 	//      instantiation ACCOUNT_SNAPSHOT is never broadcast and todo 17's
 	//      node-side account pool never fills. StartSync spawns its own
 	//      goroutine and emits one snapshot immediately. Skipped (Warn) on the
-	//      PG-unavailable degraded path.
+	//      PG-unavailable degraded path. registry is hoisted to run scope: the
+	//      admin mounts below (13c) inject it into the accounts write handlers.
+	var registry *accountregistry.AccountRegistry
 	if mc != nil {
-		registry := accountregistry.NewAccountRegistry(mc.DB(), sb)
+		registry = accountregistry.NewAccountRegistry(mc.DB(), sb)
 		registry.StartSync(ctx, 60*time.Second)
 		slog.Info("account snapshot sync started", "interval", "60s")
 	} else {
 		slog.Warn("account snapshot sync skipped: PG metadata client unavailable")
 	}
 
-	// 13c. Admin API server (todo 18): auth endpoints + bootstrap admin seed,
-	//      mounted only when admin_api.listen is configured. Auth routes need
-	//      the user table, so mc == nil leaves them unmounted (Warn).
-	//      ADMIN ROUTES: consolidated mounts below (todo 54).
+	// 13d-pre. QuotaAllocator construction (todo 53) is hoisted above the
+	//      admin mounts: the accounts write wrapper (13c) captures qa so
+	//      rate_limit changes propagate via SetGlobalLimit. Seeding + Run
+	//      stay in 13d below.
+	qa := quota.NewQuotaAllocator(sb)
+
+	// 13c. Admin API server (todos 18 + 54): auth endpoints, bootstrap admin
+	//      seed, and ALL CP-admin route mounts consolidated here (orchestrator
+	//      D1: handler todos never edit this file). Mounted only when
+	//      admin_api.listen is configured. PG-dependent routes (auth, accounts,
+	//      pin, contents, alerts, account-test, overview) mount only when
+	//      mc != nil; PG-independent routes (nodes, pin-plans, whitelist,
+	//      quota, form-schema) always mount.
 	if cfg.AdminAPI.Listen != "" {
 		adminSrv := adminapi.NewServer([]byte(cfg.AdminAPI.TokenSecret))
+
+		// The audit recorder MUST be installed BEFORE RegisterAuthRoutes:
+		// auth routes capture srv.audit at REGISTRATION time
+		// (auth_handlers.go loginHandler/logoutHandler), so installing the
+		// recorder afterwards would leave auth audits silently disabled
+		// (todo 33's ordering note). auditInserter stays a nil interface
+		// when mc == nil — NewPGAuditRecorder(nil) is a no-op recorder, and
+		// the typed-nil *PGMetadataClient must never enter the interface.
+		var auditInserter adminapi.AdminAuditInserter
+		if mc != nil {
+			auditInserter = mc
+		}
+		auditRec := adminapi.NewPGAuditRecorder(auditInserter)
+		adminSrv.SetAuditRecorder(auditRec)
+
+		// PG-independent mounts (todos 22, 24/31, 32, 53, 58). The node
+		// history reader degrades to a no-op on the PG-less path (the detail
+		// handler does not tolerate a nil interface).
+		var nodeHistory adminapi.NodeHistoryReader = noopNodeHistoryReader{}
+		if mc != nil {
+			nodeHistory = mc
+		}
+		dispatchLog := po.DispatchLog()
+		adminapi.RegisterNodesRoutes(adminSrv, nodeReg, nodeHistory, dispatchLog, slog.Default(), time.Now)
+		adminapi.RegisterPinPlansRoutes(adminSrv, dispatchLog, nodeReg)
+		adminapi.RegisterWhitelistRoutes(adminSrv, wlStore, ps, nodeReg, auditRec)
+		adminapi.RegisterQuotaRoutes(adminSrv, qa, nodeReg)
+		adminapi.RegisterFormSchemaRoutes(adminSrv)
+
 		if mc != nil {
 			if err := adminapi.SeedAdminIfEmpty(ctx, mc); err != nil {
 				slog.Warn("admin bootstrap seed failed", "err", err)
 			}
 			adminapi.RegisterAuthRoutes(adminSrv, mc)
+
+			// Todo 53 linkage: rate_limit writes (POST create / PUT update)
+			// propagate into the quota allocator. The wrapper decorates the
+			// registry without touching handler logic.
+			accountsWriter := quotaAwareAccountsWriter{AdminAccountsWriter: registry, qa: qa}
+			adminapi.RegisterAccountsRoutes(adminSrv, mc, mc, accountsWriter, sb, auditRec)      // todos 20/26/27/37
+			adminapi.RegisterPinRoutes(adminSrv, mc, nodeReg, po, auditRec)                      // todo 29
+			adminapi.RegisterContentsRoutes(adminSrv, struct {                                   // todos 28/30
+				adminapi.ContentsListReader
+				adminapi.ContentsDetailReader
+				adminapi.ContentMetaReader
+			}{mc, mc, mc}, dispatchLog, mc, auditRec)
+			adminapi.RegisterAlertsRoutes(adminSrv, mc, cfg.AdminAPI.AlertWebhookToken)          // todo 51
+			adminapi.RegisterAccountTestRoutes(adminSrv, accounttester.NewTester(registry, adminapi.ValidateAuth, nil)) // todo 57
+			adminapi.RegisterOverviewRoutes(adminSrv, adminapi.OverviewDeps{ // todo 52
+				Prom:     adminapi.NewPromClient(cfg.AdminAPI.PrometheusURL),
+				Metadata: mc,
+				Registry: nodeReg,
+				Dispatch: dispatchLog,
+			})
+			// Todo 34: unified audit view. auditLog (JWT ring, section 4) +
+			// mc (admin_audit table) — mounted only with PG so both source
+			// kinds answer; the PG-less path leaves it unmounted like the
+			// other PG-backed routes.
+			adminapi.RegisterAuditRoutes(adminSrv, auditLog, mc)
 		} else {
-			slog.Warn("admin API enabled without PG: auth endpoints not mounted")
+			slog.Warn("admin API enabled without PG: auth/accounts/pin/contents/alerts/account-test/overview endpoints not mounted")
 		}
 		go func() {
 			slog.Info("admin API listening", "addr", cfg.AdminAPI.Listen)
@@ -231,8 +297,7 @@ func run(configPath string) error {
 	//      #15: nodes do not report per-account load in v1, so every node
 	//      gets the full base share).
 	//      QUOTA: accounts handlers call qa.SetGlobalLimit on rate_limit
-	//      changes (wired in todo 54 consolidation).
-	qa := quota.NewQuotaAllocator(sb)
+	//      changes (wired in 13c via quotaAwareAccountsWriter, todo 54).
 	if mc != nil {
 		accounts, err := mc.ListAccounts(ctx, "", "")
 		if err != nil {
@@ -434,3 +499,42 @@ func parseQuotaRebalanceInterval(s string) time.Duration {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+// quotaAwareAccountsWriter decorates the account registry for the admin
+// accounts handlers (todo 53 linkage): every successful rate_limit write —
+// POST create carrying a non-zero rate_limit, or PUT SetRateLimit — is
+// mirrored into the quota allocator via SetGlobalLimit, so runtime account
+// edits rebroadcast QUOTA_UPDATE without waiting for a restart reseed.
+// Handler logic is untouched; the wrapper lives at the wiring layer.
+type quotaAwareAccountsWriter struct {
+	adminapi.AdminAccountsWriter
+	qa *quota.QuotaAllocator
+}
+
+func (w quotaAwareAccountsWriter) CreateAccount(ctx context.Context, info accountregistry.AccountInfo) error {
+	if err := w.AdminAccountsWriter.CreateAccount(ctx, info); err != nil {
+		return err
+	}
+	if info.RateLimitCfg != (types.RateLimitConfig{}) {
+		w.qa.SetGlobalLimit(string(info.Vendor)+":"+info.AccountID, info.RateLimitCfg)
+	}
+	return nil
+}
+
+func (w quotaAwareAccountsWriter) SetRateLimit(ctx context.Context, vendor types.Vendor, accountID string, cfg types.RateLimitConfig) error {
+	if err := w.AdminAccountsWriter.SetRateLimit(ctx, vendor, accountID, cfg); err != nil {
+		return err
+	}
+	w.qa.SetGlobalLimit(string(vendor)+":"+accountID, cfg)
+	return nil
+}
+
+// noopNodeHistoryReader feeds the node-detail handler on the PG-less
+// degraded path (mc == nil): the handler calls GetNodeStatusHistory
+// unconditionally, so a nil interface would panic. Returning an empty
+// success keeps recent_reports as [] without per-request Warn spam.
+type noopNodeHistoryReader struct{}
+
+func (noopNodeHistoryReader) GetNodeStatusHistory(_ context.Context, _ string, _ int) ([]metadata.NodeStatusHistoryRow, error) {
+	return []metadata.NodeStatusHistoryRow{}, nil
+}
