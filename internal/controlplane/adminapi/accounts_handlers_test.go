@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -11,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/shlande/mediaworker/internal/controlplane/accountregistry"
 	"github.com/shlande/mediaworker/internal/storage/metadata"
 	"github.com/shlande/mediaworker/internal/types"
 )
@@ -61,10 +64,10 @@ func healthView(state string, latency int, errMsg string, banUntil *time.Time, l
 	}
 }
 
-func makeServer(mc AdminAccountsReader) *Server {
+func makeServer(mc AdminAccountsReader, w AdminAccountsWriter) *Server {
 	secret := []byte("test-secret-key-for-admin-tokens")
 	srv := NewServer(secret)
-	RegisterAccountsRoutes(srv, mc)
+	RegisterAccountsRoutes(srv, mc, w)
 	return srv
 }
 
@@ -156,7 +159,7 @@ func TestListAccounts_Happy(t *testing.T) {
 	}
 
 	secret := []byte("test-secret-key-for-admin-tokens")
-	srv := makeServer(mock)
+	srv := makeServer(mock, nil)
 	ts := httptest.NewServer(srv.mux)
 	t.Cleanup(ts.Close)
 	token := signAdminToken(t, secret)
@@ -241,7 +244,7 @@ func TestListAccounts_VendorFilter(t *testing.T) {
 	}
 
 	secret := []byte("test-secret-key-for-admin-tokens")
-	srv := makeServer(mock)
+	srv := makeServer(mock, nil)
 	ts := httptest.NewServer(srv.mux)
 	t.Cleanup(ts.Close)
 	token := signAdminToken(t, secret)
@@ -271,7 +274,7 @@ func TestListAccounts_StateFilter(t *testing.T) {
 	}
 
 	secret := []byte("test-secret-key-for-admin-tokens")
-	srv := makeServer(mock)
+	srv := makeServer(mock, nil)
 	ts := httptest.NewServer(srv.mux)
 	t.Cleanup(ts.Close)
 	token := signAdminToken(t, secret)
@@ -311,7 +314,7 @@ func TestListAccounts_NoCredentialLeak(t *testing.T) {
 	}
 
 	secret := []byte("test-secret-key-for-admin-tokens")
-	srv := makeServer(mock)
+	srv := makeServer(mock, nil)
 	ts := httptest.NewServer(srv.mux)
 	t.Cleanup(ts.Close)
 	token := signAdminToken(t, secret)
@@ -347,7 +350,7 @@ func TestListAccounts_MetadataError(t *testing.T) {
 	}
 
 	secret := []byte("test-secret-key-for-admin-tokens")
-	srv := makeServer(mock)
+	srv := makeServer(mock, nil)
 	ts := httptest.NewServer(srv.mux)
 	t.Cleanup(ts.Close)
 	token := signAdminToken(t, secret)
@@ -372,7 +375,7 @@ func TestListAccounts_NoToken(t *testing.T) {
 		},
 	}
 
-	srv := makeServer(mock)
+	srv := makeServer(mock, nil)
 	ts := httptest.NewServer(srv.mux)
 	t.Cleanup(ts.Close)
 
@@ -390,7 +393,7 @@ func TestListAccounts_Empty(t *testing.T) {
 	}
 
 	secret := []byte("test-secret-key-for-admin-tokens")
-	srv := makeServer(mock)
+	srv := makeServer(mock, nil)
 	ts := httptest.NewServer(srv.mux)
 	t.Cleanup(ts.Close)
 	token := signAdminToken(t, secret)
@@ -428,7 +431,7 @@ func TestListAccounts_BannedAccount(t *testing.T) {
 	}
 
 	secret := []byte("test-secret-key-for-admin-tokens")
-	srv := makeServer(mock)
+	srv := makeServer(mock, nil)
 	ts := httptest.NewServer(srv.mux)
 	t.Cleanup(ts.Close)
 	token := signAdminToken(t, secret)
@@ -454,4 +457,748 @@ func TestListAccounts_BannedAccount(t *testing.T) {
 	if body.Summary.ByState["banned"] != 1 {
 		t.Errorf("summary.by_state.banned = %d, want 1", body.Summary.ByState["banned"])
 	}
+}
+
+// ─── Write side (todo 26, B2 structured CRUD) ─────────────────────────────
+
+// Sentinel secret values: every response body is grepped for these to prove
+// zero secret leakage.
+const (
+	sentinelRefreshToken = "SENTINEL_RT_9f8e7d6c5b"
+	sentinelClientSecret = "SENTINEL_CS_1a2b3c4d5e"
+	sentinelCookieValue  = "SENTINEL_COOKIE_z9y8x7"
+)
+
+// sqlStateError mimics lib/pq.Error's SQLState() for conflict injection.
+type sqlStateError struct{ code, msg string }
+
+func (e sqlStateError) Error() string    { return e.msg }
+func (e sqlStateError) SQLState() string { return e.code }
+
+// fakeAccountRegistry is a stateful in-memory fake AdminAccountsWriter. It
+// also implements AdminAccountsReader so POST→GET full-link tests observe
+// what was actually written.
+type fakeAccountRegistry struct {
+	accounts map[string]accountregistry.AccountInfo
+
+	createErr error // injected CreateAccount failure
+
+	setEnabledCalls       []bool
+	setRateLimitCalls     []types.RateLimitConfig
+	setVendorProfileCalls []types.VendorProfile
+	credentialUpdates     int
+	clientConfigUpdates   int
+	broadcasts            int
+}
+
+func newFakeAccountRegistry() *fakeAccountRegistry {
+	return &fakeAccountRegistry{accounts: map[string]accountregistry.AccountInfo{}}
+}
+
+func fakeKey(vendor types.Vendor, id string) string { return string(vendor) + "/" + id }
+
+func (f *fakeAccountRegistry) CreateAccount(_ context.Context, info accountregistry.AccountInfo) error {
+	if f.createErr != nil {
+		return f.createErr
+	}
+	k := fakeKey(info.Vendor, info.AccountID)
+	if _, exists := f.accounts[k]; exists {
+		return fmt.Errorf("insert account: %w", sqlStateError{code: "23505", msg: "duplicate key value violates unique constraint"})
+	}
+	f.accounts[k] = info
+	return nil
+}
+
+func (f *fakeAccountRegistry) GetAccountSecret(_ context.Context, vendor types.Vendor, accountID string) (types.Credential, types.ClientConfig, error) {
+	info, ok := f.accounts[fakeKey(vendor, accountID)]
+	if !ok {
+		return types.Credential{}, types.ClientConfig{}, fmt.Errorf("%w: %s/%s", accountregistry.ErrAccountNotFound, vendor, accountID)
+	}
+	return info.Credential, info.ClientConfig, nil
+}
+
+func (f *fakeAccountRegistry) UpdateCredential(_ context.Context, vendor types.Vendor, accountID string, cred types.Credential) error {
+	k := fakeKey(vendor, accountID)
+	info, ok := f.accounts[k]
+	if !ok {
+		return fmt.Errorf("%w: %s", accountregistry.ErrAccountNotFound, k)
+	}
+	info.Credential = cred
+	f.accounts[k] = info
+	f.credentialUpdates++
+	return nil
+}
+
+func (f *fakeAccountRegistry) UpdateClientConfig(_ context.Context, vendor types.Vendor, accountID string, cc types.ClientConfig) error {
+	k := fakeKey(vendor, accountID)
+	info, ok := f.accounts[k]
+	if !ok {
+		return fmt.Errorf("%w: %s", accountregistry.ErrAccountNotFound, k)
+	}
+	info.ClientConfig = cc
+	f.accounts[k] = info
+	f.clientConfigUpdates++
+	return nil
+}
+
+func (f *fakeAccountRegistry) OnCredentialChange(_ context.Context, _ types.Vendor, _ string) {
+	f.broadcasts++
+}
+
+func (f *fakeAccountRegistry) SetEnabled(_ context.Context, vendor types.Vendor, accountID string, enabled bool) error {
+	k := fakeKey(vendor, accountID)
+	info, ok := f.accounts[k]
+	if !ok {
+		return fmt.Errorf("%w: %s", accountregistry.ErrAccountNotFound, k)
+	}
+	info.Enabled = enabled
+	f.accounts[k] = info
+	f.setEnabledCalls = append(f.setEnabledCalls, enabled)
+	return nil
+}
+
+func (f *fakeAccountRegistry) SetRateLimit(_ context.Context, vendor types.Vendor, accountID string, cfg types.RateLimitConfig) error {
+	k := fakeKey(vendor, accountID)
+	info, ok := f.accounts[k]
+	if !ok {
+		return fmt.Errorf("%w: %s", accountregistry.ErrAccountNotFound, k)
+	}
+	info.RateLimitCfg = cfg
+	f.accounts[k] = info
+	f.setRateLimitCalls = append(f.setRateLimitCalls, cfg)
+	return nil
+}
+
+func (f *fakeAccountRegistry) SetVendorProfile(_ context.Context, vendor types.Vendor, accountID string, vp types.VendorProfile) error {
+	k := fakeKey(vendor, accountID)
+	info, ok := f.accounts[k]
+	if !ok {
+		return fmt.Errorf("%w: %s", accountregistry.ErrAccountNotFound, k)
+	}
+	info.VendorProfile = vp
+	f.accounts[k] = info
+	f.setVendorProfileCalls = append(f.setVendorProfileCalls, vp)
+	return nil
+}
+
+// ListAccounts adapts the fake to the read surface so tests observe the
+// post-write state end to end.
+func (f *fakeAccountRegistry) ListAccounts(_ context.Context, vendorFilter, _ string) ([]metadata.AdminAccountView, error) {
+	views := []metadata.AdminAccountView{}
+	for _, info := range f.accounts {
+		if vendorFilter != "" && string(info.Vendor) != vendorFilter {
+			continue
+		}
+		cookieKeys := []string{}
+		for k := range info.Credential.Cookies {
+			cookieKeys = append(cookieKeys, k)
+		}
+		sort.Strings(cookieKeys)
+		views = append(views, metadata.AdminAccountView{
+			Vendor:        string(info.Vendor),
+			AccountID:     info.AccountID,
+			Enabled:       info.Enabled,
+			RateLimitCfg:  info.RateLimitCfg,
+			VendorProfile: info.VendorProfile,
+			CredentialMeta: metadata.CredentialMeta{
+				AuthType:        VendorRules[info.Vendor].AuthType,
+				HasClientSecret: info.ClientConfig.ClientSecret != "",
+				HasRefreshToken: info.Credential.RefreshToken != "",
+				Region:          info.ClientConfig.Region,
+				CookieKeys:      cookieKeys,
+			},
+		})
+	}
+	sort.Slice(views, func(i, j int) bool { return views[i].AccountID < views[j].AccountID })
+	return views, nil
+}
+
+func seedAccount(t *testing.T, f *fakeAccountRegistry, info accountregistry.AccountInfo) {
+	t.Helper()
+	if err := f.CreateAccount(context.Background(), info); err != nil {
+		t.Fatalf("seed CreateAccount: %v", err)
+	}
+}
+
+// doRaw performs an HTTP call with an optional pre-encoded body and returns
+// status + raw body for leak grepping.
+func doRaw(t *testing.T, ts *httptest.Server, method, path, token string, rawBody *string) (int, string) {
+	t.Helper()
+	var body io.Reader
+	if rawBody != nil {
+		body = strings.NewReader(*rawBody)
+	}
+	req, err := http.NewRequest(method, ts.URL+path, body)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, path, err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	return resp.StatusCode, string(raw)
+}
+
+func jsonBody(t *testing.T, v any) *string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	s := string(b)
+	return &s
+}
+
+func assertNoSecretLeak(t *testing.T, body string) {
+	t.Helper()
+	for _, s := range []string{sentinelRefreshToken, sentinelClientSecret, sentinelCookieValue} {
+		if strings.Contains(body, s) {
+			t.Errorf("response body leaks sentinel secret %q: %s", s, body)
+		}
+	}
+	if strings.Contains(body, `"credential"`) {
+		t.Errorf("response body contains \"credential\" key: %s", body)
+	}
+}
+
+func decodeFieldErrors(t *testing.T, body string) map[string]string {
+	t.Helper()
+	var parsed struct {
+		Error       string            `json:"error"`
+		FieldErrors map[string]string `json:"field_errors"`
+	}
+	if err := json.Unmarshal([]byte(body), &parsed); err != nil {
+		t.Fatalf("decode error body: %v (body=%s)", err, body)
+	}
+	if parsed.Error != "validation failed" {
+		t.Errorf("error = %q, want validation failed (body=%s)", parsed.Error, body)
+	}
+	return parsed.FieldErrors
+}
+
+func makeWriteServer(t *testing.T) (*fakeAccountRegistry, *httptest.Server, string) {
+	t.Helper()
+	reg := newFakeAccountRegistry()
+	secret := []byte("test-secret-key-for-admin-tokens")
+	srv := NewServer(secret)
+	RegisterAccountsRoutes(srv, reg, reg)
+	ts := httptest.NewServer(srv.mux)
+	t.Cleanup(ts.Close)
+	return reg, ts, signAdminToken(t, secret)
+}
+
+// Given valid baidu input, when POST then GET, then 201 and the read model
+// shows credential_meta.has_refresh_token=true (full link through the fake).
+func TestAccountsWrite_PostThenGetShowsCredentialMeta(t *testing.T) {
+	reg, ts, token := makeWriteServer(t)
+
+	status, body := doRaw(t, ts, http.MethodPost, "/v1/admin/accounts", token, jsonBody(t, map[string]any{
+		"vendor":     "baidu",
+		"account_id": "mw_bak_01",
+		"auth": map[string]any{
+			"client_id":     "appkey-1",
+			"client_secret": sentinelClientSecret,
+			"refresh_token": sentinelRefreshToken,
+			"redirect_uri":  "https://example.com/callback",
+		},
+	}))
+	if status != http.StatusCreated {
+		t.Fatalf("POST status = %d, want 201 (body=%s)", status, body)
+	}
+	assertNoSecretLeak(t, body)
+	var created createAccountResponse
+	if err := json.Unmarshal([]byte(body), &created); err != nil {
+		t.Fatalf("decode 201 body: %v", err)
+	}
+	if created.Vendor != "baidu" || created.AccountID != "mw_bak_01" {
+		t.Errorf("201 body = %+v, want baidu/mw_bak_01", created)
+	}
+
+	// Stored material carries BOTH credential + client_config (B1 split).
+	stored := reg.accounts["baidu/mw_bak_01"]
+	if stored.Credential.RefreshToken != sentinelRefreshToken {
+		t.Errorf("stored credential.refresh_token missing")
+	}
+	if stored.ClientConfig.ClientID != "appkey-1" || stored.ClientConfig.ClientSecret != sentinelClientSecret {
+		t.Errorf("stored client_config = %+v, want appkey-1/<sentinel>", stored.ClientConfig)
+	}
+	// Default rate limit from the vendor rule table (baidu 2/4/8).
+	if stored.RateLimitCfg != (types.RateLimitConfig{QPS: 2, Burst: 4, ConcurrentLimit: 8}) {
+		t.Errorf("stored rate_limit = %+v, want baidu default 2/4/8", stored.RateLimitCfg)
+	}
+
+	resp, list := getAccounts(t, ts, token, "")
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET status = %d, want 200", resp.StatusCode)
+	}
+	if len(list.Accounts) != 1 {
+		t.Fatalf("GET accounts = %d, want 1", len(list.Accounts))
+	}
+	meta := list.Accounts[0].CredentialMeta
+	if !meta.HasRefreshToken {
+		t.Error("credential_meta.has_refresh_token = false, want true")
+	}
+	if !meta.HasClientSecret {
+		t.Error("credential_meta.has_client_secret = false, want true")
+	}
+	if meta.AuthType != "oauth2" {
+		t.Errorf("credential_meta.auth_type = %q, want oauth2", meta.AuthType)
+	}
+}
+
+// Given B4 violations, when POST /v1/admin/accounts, then 400 with the
+// documented field_errors entry.
+func TestAccountsWrite_PostValidationErrors(t *testing.T) {
+	_, ts, token := makeWriteServer(t)
+	cases := []struct {
+		name      string
+		payload   map[string]any
+		wantField string
+		wantMsg   string
+	}{
+		{
+			name: "baidu missing refresh_token",
+			payload: map[string]any{
+				"vendor": "baidu", "account_id": "mw_01",
+				"auth": map[string]any{"client_id": "x", "client_secret": "y"},
+			},
+			wantField: "refresh_token",
+			wantMsg:   "required",
+		},
+		{
+			name: "onedrive missing region gets enum hint",
+			payload: map[string]any{
+				"vendor": "onedrive", "account_id": "mw_02",
+				"auth": map[string]any{
+					"client_id": "x", "client_secret": "y", "refresh_token": "z",
+					"redirect_uri": "https://example.com/cb",
+				},
+			},
+			wantField: "region",
+			wantMsg:   "must be one of global|cn|us|de",
+		},
+		{
+			name: "bad redirect_uri URL",
+			payload: map[string]any{
+				"vendor": "baidu", "account_id": "mw_03",
+				"auth": map[string]any{
+					"client_id": "x", "client_secret": "y", "refresh_token": "z",
+					"redirect_uri": "not-a-url",
+				},
+			},
+			wantField: "redirect_uri",
+			wantMsg:   "must be a valid URL",
+		},
+		{
+			name: "bad cookie key name",
+			payload: map[string]any{
+				"vendor": "quark", "account_id": "mw_04",
+				"auth": map[string]any{"cookies": map[string]any{"token-x": "v"}},
+			},
+			wantField: "cookies",
+			wantMsg:   "invalid cookie key",
+		},
+		{
+			name: "bad account_id",
+			payload: map[string]any{
+				"vendor": "baidu", "account_id": "x",
+				"auth": map[string]any{"client_id": "x", "client_secret": "y", "refresh_token": "z"},
+			},
+			wantField: "account_id",
+			wantMsg:   "must match",
+		},
+		{
+			name: "qps out of range",
+			payload: map[string]any{
+				"vendor": "baidu", "account_id": "mw_05",
+				"rate_limit": map[string]any{"qps": 200, "burst": 4, "concurrent_limit": 8},
+				"auth":       map[string]any{"client_id": "x", "client_secret": "y", "refresh_token": "z"},
+			},
+			wantField: "rate_limit.qps",
+			wantMsg:   "between 0.1 and 100",
+		},
+		{
+			name: "unknown vendor",
+			payload: map[string]any{
+				"vendor": "gdrive", "account_id": "mw_06",
+				"auth": map[string]any{"refresh_token": "z"},
+			},
+			wantField: "vendor",
+			wantMsg:   "must be one of",
+		},
+		{
+			name: "missing auth",
+			payload: map[string]any{
+				"vendor": "baidu", "account_id": "mw_07",
+			},
+			wantField: "auth",
+			wantMsg:   "required",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			status, body := doRaw(t, ts, http.MethodPost, "/v1/admin/accounts", token, jsonBody(t, tc.payload))
+			if status != http.StatusBadRequest {
+				t.Fatalf("status = %d, want 400 (body=%s)", status, body)
+			}
+			assertNoSecretLeak(t, body)
+			fe := decodeFieldErrors(t, body)
+			msg, ok := fe[tc.wantField]
+			if !ok {
+				t.Fatalf("field_errors = %v, want key %q", fe, tc.wantField)
+			}
+			if !strings.Contains(msg, tc.wantMsg) {
+				t.Errorf("field_errors[%q] = %q, want substring %q", tc.wantField, msg, tc.wantMsg)
+			}
+		})
+	}
+}
+
+// Given an existing account, when POST repeats (vendor, account_id), then
+// 409 {"error":"account exists"}.
+func TestAccountsWrite_PostConflict(t *testing.T) {
+	reg, ts, token := makeWriteServer(t)
+	seedAccount(t, reg, accountregistry.AccountInfo{
+		Vendor:    types.VendorBaidu,
+		AccountID: "mw_bak_01",
+		Enabled:   true,
+	})
+	payload := jsonBody(t, map[string]any{
+		"vendor": "baidu", "account_id": "mw_bak_01",
+		"auth": map[string]any{"client_id": "x", "client_secret": "y", "refresh_token": "z"},
+	})
+	status, body := doRaw(t, ts, http.MethodPost, "/v1/admin/accounts", token, payload)
+	if status != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (body=%s)", status, body)
+	}
+	assertNoSecretLeak(t, body)
+	if !strings.Contains(body, `"account exists"`) {
+		t.Errorf("body = %s, want error account exists", body)
+	}
+}
+
+// Given a stored account, when PUT carries only {enabled:false}, then
+// credentials stay byte-identical and SetEnabled is called — no broadcast.
+func TestAccountsWrite_PutEnabledOnlyCredentialsUntouched(t *testing.T) {
+	reg, ts, token := makeWriteServer(t)
+	seedAccount(t, reg, accountregistry.AccountInfo{
+		Vendor:       types.VendorBaidu,
+		AccountID:    "mw_bak_01",
+		Credential:   types.Credential{RefreshToken: sentinelRefreshToken},
+		ClientConfig: types.ClientConfig{ClientID: "cid", ClientSecret: sentinelClientSecret},
+		Enabled:      true,
+	})
+	beforeCred, beforeCC, err := reg.GetAccountSecret(context.Background(), types.VendorBaidu, "mw_bak_01")
+	if err != nil {
+		t.Fatalf("GetAccountSecret: %v", err)
+	}
+
+	status, body := doRaw(t, ts, http.MethodPut, "/v1/admin/accounts/baidu/mw_bak_01", token,
+		jsonBody(t, map[string]any{"enabled": false}))
+	if status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 (body=%s)", status, body)
+	}
+	assertNoSecretLeak(t, body)
+	if !strings.Contains(body, `"effective":"propagating"`) {
+		t.Errorf("body = %s, want effective propagating", body)
+	}
+
+	afterCred, afterCC, err := reg.GetAccountSecret(context.Background(), types.VendorBaidu, "mw_bak_01")
+	if err != nil {
+		t.Fatalf("GetAccountSecret after: %v", err)
+	}
+	if afterCred.RefreshToken != beforeCred.RefreshToken || afterCC != beforeCC {
+		t.Errorf("credentials changed: before %q/%+v after %q/%+v", beforeCred.RefreshToken, beforeCC, afterCred.RefreshToken, afterCC)
+	}
+	if len(reg.setEnabledCalls) != 1 || reg.setEnabledCalls[0] != false {
+		t.Errorf("setEnabledCalls = %v, want [false]", reg.setEnabledCalls)
+	}
+	if reg.broadcasts != 0 {
+		t.Errorf("broadcasts = %d, want 0 (no auth-material change)", reg.broadcasts)
+	}
+}
+
+// Given a stored baidu account, when PUT auth carries only a new
+// refresh_token, then the credential rotates, client_secret stays, and ONE
+// CREDENTIAL_UPDATE broadcast fires.
+func TestAccountsWrite_PutAuthRotatesRefreshTokenOnly(t *testing.T) {
+	reg, ts, token := makeWriteServer(t)
+	seedAccount(t, reg, accountregistry.AccountInfo{
+		Vendor:       types.VendorBaidu,
+		AccountID:    "mw_bak_01",
+		Credential:   types.Credential{RefreshToken: "old-rt"},
+		ClientConfig: types.ClientConfig{ClientID: "cid", ClientSecret: sentinelClientSecret},
+		Enabled:      true,
+	})
+
+	status, body := doRaw(t, ts, http.MethodPut, "/v1/admin/accounts/baidu/mw_bak_01", token,
+		jsonBody(t, map[string]any{"auth": map[string]any{"refresh_token": sentinelRefreshToken}}))
+	if status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 (body=%s)", status, body)
+	}
+	assertNoSecretLeak(t, body)
+
+	cred, cc, err := reg.GetAccountSecret(context.Background(), types.VendorBaidu, "mw_bak_01")
+	if err != nil {
+		t.Fatalf("GetAccountSecret: %v", err)
+	}
+	if cred.RefreshToken != sentinelRefreshToken {
+		t.Errorf("refresh_token not rotated, got %q", cred.RefreshToken)
+	}
+	if cc.ClientSecret != sentinelClientSecret || cc.ClientID != "cid" {
+		t.Errorf("client_config = %+v, want unchanged cid/<sentinel>", cc)
+	}
+	if reg.credentialUpdates != 1 {
+		t.Errorf("credentialUpdates = %d, want 1", reg.credentialUpdates)
+	}
+	if reg.clientConfigUpdates != 0 {
+		t.Errorf("clientConfigUpdates = %d, want 0 (no client_config change)", reg.clientConfigUpdates)
+	}
+	if reg.broadcasts != 1 {
+		t.Errorf("broadcasts = %d, want exactly 1 (caller-fires-once)", reg.broadcasts)
+	}
+}
+
+// Given a stored 115 account, when PUT auth carries cookies, then the cookie
+// map is replaced wholesale (old keys gone) with one broadcast.
+func TestAccountsWrite_PutCookiesWholesaleReplacement(t *testing.T) {
+	reg, ts, token := makeWriteServer(t)
+	seedAccount(t, reg, accountregistry.AccountInfo{
+		Vendor:    types.Vendor115,
+		AccountID: "mw_115_01",
+		Credential: types.Credential{Cookies: map[string]string{
+			"UID": "old-uid", "CID": "old-cid", "SEID": "old-seid",
+		}},
+		Enabled: true,
+	})
+
+	status, body := doRaw(t, ts, http.MethodPut, "/v1/admin/accounts/115/mw_115_01", token,
+		jsonBody(t, map[string]any{"auth": map[string]any{
+			"cookies": map[string]any{"UID": sentinelCookieValue},
+		}}))
+	if status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 (body=%s)", status, body)
+	}
+	assertNoSecretLeak(t, body)
+	if !strings.Contains(body, "CID") || !strings.Contains(body, "SEID") {
+		t.Errorf("body = %s, want warning naming missing CID/SEID", body)
+	}
+
+	cred, _, err := reg.GetAccountSecret(context.Background(), types.Vendor115, "mw_115_01")
+	if err != nil {
+		t.Fatalf("GetAccountSecret: %v", err)
+	}
+	if len(cred.Cookies) != 1 || cred.Cookies["UID"] != sentinelCookieValue {
+		t.Errorf("cookies = %v, want wholesale {UID:<sentinel>}", cred.Cookies)
+	}
+	if _, ok := cred.Cookies["CID"]; ok {
+		t.Error("old CID key survived wholesale replacement")
+	}
+	if _, ok := cred.Cookies["SEID"]; ok {
+		t.Error("old SEID key survived wholesale replacement")
+	}
+	if reg.broadcasts != 1 {
+		t.Errorf("broadcasts = %d, want 1", reg.broadcasts)
+	}
+}
+
+// Given PUT misuse, when the body is empty/absent or the path is bad or the
+// account is missing, then the documented 400/404 results hold.
+func TestAccountsWrite_PutEdgeCases(t *testing.T) {
+	reg, ts, token := makeWriteServer(t)
+	seedAccount(t, reg, accountregistry.AccountInfo{
+		Vendor:     types.VendorBaidu,
+		AccountID:  "mw_bak_01",
+		Credential: types.Credential{RefreshToken: sentinelRefreshToken},
+		ClientConfig: types.ClientConfig{
+			ClientID: "cid", ClientSecret: sentinelClientSecret,
+		},
+		Enabled: true,
+	})
+
+	t.Run("empty JSON object", func(t *testing.T) {
+		status, body := doRaw(t, ts, http.MethodPut, "/v1/admin/accounts/baidu/mw_bak_01", token, jsonBody(t, map[string]any{}))
+		if status != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400 (body=%s)", status, body)
+		}
+		if !strings.Contains(body, "no fields to update") {
+			t.Errorf("body = %s, want no fields to update", body)
+		}
+	})
+	t.Run("no body at all", func(t *testing.T) {
+		status, _ := doRaw(t, ts, http.MethodPut, "/v1/admin/accounts/baidu/mw_bak_01", token, nil)
+		if status != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", status)
+		}
+	})
+	t.Run("invalid JSON", func(t *testing.T) {
+		raw := "{not json"
+		status, _ := doRaw(t, ts, http.MethodPut, "/v1/admin/accounts/baidu/mw_bak_01", token, &raw)
+		if status != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", status)
+		}
+	})
+	t.Run("primary key mismatch in body", func(t *testing.T) {
+		status, body := doRaw(t, ts, http.MethodPut, "/v1/admin/accounts/baidu/mw_bak_01", token,
+			jsonBody(t, map[string]any{"vendor": "onedrive", "enabled": false}))
+		if status != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400 (body=%s)", status, body)
+		}
+	})
+	t.Run("missing account via enabled", func(t *testing.T) {
+		status, _ := doRaw(t, ts, http.MethodPut, "/v1/admin/accounts/baidu/ghost_01", token,
+			jsonBody(t, map[string]any{"enabled": true}))
+		if status != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", status)
+		}
+	})
+	t.Run("missing account via auth", func(t *testing.T) {
+		status, _ := doRaw(t, ts, http.MethodPut, "/v1/admin/accounts/baidu/ghost_01", token,
+			jsonBody(t, map[string]any{"auth": map[string]any{"refresh_token": "x"}}))
+		if status != http.StatusNotFound {
+			t.Fatalf("status = %d, want 404", status)
+		}
+	})
+	t.Run("bad path vendor", func(t *testing.T) {
+		status, _ := doRaw(t, ts, http.MethodPut, "/v1/admin/accounts/gdrive/mw_01", token,
+			jsonBody(t, map[string]any{"enabled": true}))
+		if status != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", status)
+		}
+	})
+	t.Run("bad path account_id", func(t *testing.T) {
+		status, _ := doRaw(t, ts, http.MethodPut, "/v1/admin/accounts/baidu/x", token,
+			jsonBody(t, map[string]any{"enabled": true}))
+		if status != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", status)
+		}
+	})
+	t.Run("sensitive empty string leaves material unchanged", func(t *testing.T) {
+		status, body := doRaw(t, ts, http.MethodPut, "/v1/admin/accounts/baidu/mw_bak_01", token,
+			jsonBody(t, map[string]any{"auth": map[string]any{"client_secret": ""}}))
+		if status != http.StatusAccepted {
+			t.Fatalf("status = %d, want 202 (body=%s)", status, body)
+		}
+		_, cc, err := reg.GetAccountSecret(context.Background(), types.VendorBaidu, "mw_bak_01")
+		if err != nil {
+			t.Fatalf("GetAccountSecret: %v", err)
+		}
+		if cc.ClientSecret != sentinelClientSecret {
+			t.Errorf("client_secret = %q, want unchanged sentinel", cc.ClientSecret)
+		}
+		if reg.broadcasts != 0 {
+			t.Errorf("broadcasts = %d, want 0 (no effective change)", reg.broadcasts)
+		}
+	})
+}
+
+// Given a stored account, when PUT carries vendor_profile, then the PG-record
+// value is written (Vendor pinned) and the response keeps the B2 note.
+func TestAccountsWrite_PutVendorProfileWritesRecordWithNote(t *testing.T) {
+	reg, ts, token := makeWriteServer(t)
+	seedAccount(t, reg, accountregistry.AccountInfo{
+		Vendor:    types.VendorBaidu,
+		AccountID: "mw_bak_01",
+		Enabled:   true,
+	})
+	status, body := doRaw(t, ts, http.MethodPut, "/v1/admin/accounts/baidu/mw_bak_01", token,
+		jsonBody(t, map[string]any{"vendor_profile": map[string]any{
+			"weight": 3.0, "base_latency_ms": 150, "bandwidth_mbps": 90,
+		}}))
+	if status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 (body=%s)", status, body)
+	}
+	assertNoSecretLeak(t, body)
+	if !strings.Contains(body, "节点以本地 YAML 为准") {
+		t.Errorf("body = %s, want note 节点以本地 YAML 为准", body)
+	}
+	if len(reg.setVendorProfileCalls) != 1 {
+		t.Fatalf("setVendorProfileCalls = %v, want 1 call", reg.setVendorProfileCalls)
+	}
+	vp := reg.setVendorProfileCalls[0]
+	if vp.Vendor != types.VendorBaidu || vp.Weight != 3.0 || vp.BaseLatencyMs != 150 || vp.BandwidthMbps != 90 {
+		t.Errorf("SetVendorProfile arg = %+v, want baidu/3.0/150/90", vp)
+	}
+}
+
+// Given no bearer token, when POST or PUT is attempted, then 401.
+func TestAccountsWrite_NoToken(t *testing.T) {
+	_, ts, _ := makeWriteServer(t)
+	status, _ := doRaw(t, ts, http.MethodPost, "/v1/admin/accounts", "", jsonBody(t, map[string]any{}))
+	if status != http.StatusUnauthorized {
+		t.Errorf("POST status = %d, want 401", status)
+	}
+	status, _ = doRaw(t, ts, http.MethodPut, "/v1/admin/accounts/baidu/mw_01", "", jsonBody(t, map[string]any{"enabled": true}))
+	if status != http.StatusUnauthorized {
+		t.Errorf("PUT status = %d, want 401", status)
+	}
+}
+
+// Given the full CRUD journey, when every response body is grepped, then no
+// sentinel secret value appears anywhere.
+func TestAccountsWrite_ZeroSecretLeakAcrossResponses(t *testing.T) {
+	reg, ts, token := makeWriteServer(t)
+	var bodies []string
+	collect := func(status int, body string) int {
+		bodies = append(bodies, body)
+		return status
+	}
+
+	// 201 happy
+	collect(doRaw(t, ts, http.MethodPost, "/v1/admin/accounts", token, jsonBody(t, map[string]any{
+		"vendor": "onedrive", "account_id": "mw_od_01",
+		"auth": map[string]any{
+			"client_id": "cid", "client_secret": sentinelClientSecret,
+			"refresh_token": sentinelRefreshToken,
+			"redirect_uri":  "https://example.com/cb", "region": "cn",
+		},
+	})))
+	// 400 validation
+	collect(doRaw(t, ts, http.MethodPost, "/v1/admin/accounts", token, jsonBody(t, map[string]any{
+		"vendor": "baidu", "account_id": "mw_02",
+		"auth": map[string]any{"client_id": "x", "client_secret": sentinelClientSecret},
+	})))
+	// 409 conflict
+	collect(doRaw(t, ts, http.MethodPost, "/v1/admin/accounts", token, jsonBody(t, map[string]any{
+		"vendor": "onedrive", "account_id": "mw_od_01",
+		"auth": map[string]any{
+			"client_id": "cid", "client_secret": sentinelClientSecret,
+			"refresh_token": sentinelRefreshToken,
+			"redirect_uri":  "https://example.com/cb", "region": "cn",
+		},
+	})))
+	// 202 auth rotate
+	collect(doRaw(t, ts, http.MethodPut, "/v1/admin/accounts/onedrive/mw_od_01", token,
+		jsonBody(t, map[string]any{"auth": map[string]any{"refresh_token": "rotated-" + sentinelRefreshToken}})))
+	// 400 put validation
+	collect(doRaw(t, ts, http.MethodPut, "/v1/admin/accounts/onedrive/mw_od_01", token,
+		jsonBody(t, map[string]any{"rate_limit": map[string]any{"qps": 0, "burst": 1, "concurrent_limit": 1}})))
+	// 404 put missing
+	collect(doRaw(t, ts, http.MethodPut, "/v1/admin/accounts/onedrive/ghost_01", token,
+		jsonBody(t, map[string]any{"auth": map[string]any{"refresh_token": sentinelRefreshToken}})))
+	// 200 list read
+	status, listBody := doRaw(t, ts, http.MethodGet, "/v1/admin/accounts", token, nil)
+	if status != http.StatusOK {
+		t.Fatalf("GET status = %d, want 200", status)
+	}
+	bodies = append(bodies, listBody)
+
+	if len(bodies) != 7 {
+		t.Fatalf("collected %d bodies, want 7", len(bodies))
+	}
+	for i, body := range bodies {
+		assertNoSecretLeak(t, body)
+		if strings.Contains(body, "rotated-") {
+			t.Errorf("body[%d] leaks rotated refresh token: %s", i, body)
+		}
+	}
+	_ = reg
 }
