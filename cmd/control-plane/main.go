@@ -25,6 +25,7 @@ import (
 	"github.com/shlande/mediaworker/internal/controlplane/syncbroadcaster"
 	"github.com/shlande/mediaworker/internal/shared/identity"
 	"github.com/shlande/mediaworker/internal/storage/metadata"
+	"github.com/shlande/mediaworker/internal/storage/quota"
 	"github.com/shlande/mediaworker/internal/types"
 )
 
@@ -222,6 +223,35 @@ func run(configPath string) error {
 		}()
 	}
 
+	// 13d. QuotaAllocator (todo 53): distributes per-account QPS across nodes
+	//      and rebroadcasts QUOTA_UPDATE on every rebalance. Seeded from the
+	//      account table (zero-value rate limits skipped); nodes register
+	//      per account on each NODE_STATUS_REPORT (idempotent — allocator
+	//      dedupes). Node load input is deliberately NOT wired (Metis gap
+	//      #15: nodes do not report per-account load in v1, so every node
+	//      gets the full base share).
+	//      QUOTA: accounts handlers call qa.SetGlobalLimit on rate_limit
+	//      changes (wired in todo 54 consolidation).
+	qa := quota.NewQuotaAllocator(sb)
+	if mc != nil {
+		accounts, err := mc.ListAccounts(ctx, "", "")
+		if err != nil {
+			slog.Warn("quota seed: list accounts failed", "err", err)
+		} else {
+			for _, a := range accounts {
+				if a.RateLimitCfg == (types.RateLimitConfig{}) {
+					continue
+				}
+				qa.SetGlobalLimit(a.Vendor+":"+a.AccountID, a.RateLimitCfg)
+			}
+			slog.Info("quota allocator seeded", "accounts", len(qa.AccountKeys()))
+		}
+	} else {
+		slog.Warn("quota allocator seed skipped: PG metadata client unavailable")
+	}
+	quotaInterval := parseQuotaRebalanceInterval(cfg.AdminAPI.QuotaRebalanceInterval)
+	go qa.Run(ctx, quotaInterval)
+
 	// 14. Subscribe to reverse channels.
 	// histWriter is nil on the PG-unavailable startup path (section 10);
 	// handleNodeStatusReport then skips history writes entirely.
@@ -240,6 +270,9 @@ func run(configPath string) error {
 			}
 			po.OnNodeStatusReport(report)
 			handleNodeStatusReport(ctx, report, nodeReg, histWriter, reportCounts)
+			for _, key := range qa.AccountKeys() {
+				qa.RegisterNode(key, report.NodeID)
+			}
 		}
 	}()
 
@@ -376,6 +409,28 @@ func nodeStatusHistoryRowFromReport(report types.NodeStatusReport) metadata.Node
 		row.Version = ptr(report.Version)
 	}
 	return row
+}
+
+// defaultQuotaRebalanceInterval backs the quota allocator when the
+// configured interval is missing or unparseable.
+const defaultQuotaRebalanceInterval = 60 * time.Second
+
+// parseQuotaRebalanceInterval resolves admin_api.quota_rebalance_interval.
+// LOCKED behaviour: an empty or invalid value does NOT abort startup — the
+// allocator is a background optimization independent of the admin API, so a
+// bad interval degrades to 60s with a Warn naming the field (unlike
+// parseJWTHTTPDuration, which gates the request-serving JWT server).
+func parseQuotaRebalanceInterval(s string) time.Duration {
+	if s == "" {
+		return defaultQuotaRebalanceInterval
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		slog.Warn("invalid admin_api.quota_rebalance_interval, using default",
+			"value", s, "default", defaultQuotaRebalanceInterval, "err", err)
+		return defaultQuotaRebalanceInterval
+	}
+	return d
 }
 
 func ptr[T any](v T) *T { return &v }

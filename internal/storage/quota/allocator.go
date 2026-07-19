@@ -199,6 +199,49 @@ func (qa *QuotaAllocator) ReportActualUsage(accountKey string, usage float64) {
 	qa.actualUsage[accountKey] = usage
 }
 
+// ─── Read-only accessors (admin quota view, ui-admin-apis todo 53) ─────────
+
+// GlobalQPS returns the sum of configured QPS limits across all accounts.
+func (qa *QuotaAllocator) GlobalQPS() float64 {
+	qa.mu.RLock()
+	defer qa.mu.RUnlock()
+	var total float64
+	for _, cfg := range qa.globalLimit {
+		total += cfg.QPS
+	}
+	return total
+}
+
+// Allocations returns a deep copy of the current [account][nodeID] = qps_share
+// map. Mutating the result never leaks into the allocator.
+func (qa *QuotaAllocator) Allocations() map[string]map[string]float64 {
+	qa.mu.RLock()
+	defer qa.mu.RUnlock()
+	out := make(map[string]map[string]float64, len(qa.allocation))
+	for account, nodes := range qa.allocation {
+		shares := make(map[string]float64, len(nodes))
+		for nodeID, share := range nodes {
+			shares[nodeID] = share
+		}
+		out[account] = shares
+	}
+	return out
+}
+
+// AccountKeys returns a copy of the configured global-limit account keys
+// ("vendor:account_id"). Callers registering nodes per account (the CP
+// subscribe loop) iterate this instead of tracking keys separately, so
+// runtime SetGlobalLimit additions are picked up automatically.
+func (qa *QuotaAllocator) AccountKeys() []string {
+	qa.mu.RLock()
+	defer qa.mu.RUnlock()
+	keys := make([]string, 0, len(qa.globalLimit))
+	for k := range qa.globalLimit {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 // Run starts a background ticker that calls Rebalance at the given interval.
 // It blocks until ctx is cancelled.
 func (qa *QuotaAllocator) Run(ctx context.Context, interval time.Duration) {

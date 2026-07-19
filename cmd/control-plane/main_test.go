@@ -135,6 +135,31 @@ func TestHandleNodeStatusReport_NilWriterSkipsHistory(t *testing.T) {
 	}
 }
 
+// Given various quota_rebalance_interval values, when parsing, then valid
+// durations pass through and empty/invalid/negative values degrade to the
+// 60s default (never abort startup, never return non-positive).
+func TestParseQuotaRebalanceInterval(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want time.Duration
+	}{
+		{"empty falls back to default", "", defaultQuotaRebalanceInterval},
+		{"valid duration passes through", "30s", 30 * time.Second},
+		{"valid minutes pass through", "5m", 5 * time.Minute},
+		{"garbage falls back to default", "not-a-duration", defaultQuotaRebalanceInterval},
+		{"negative falls back to default", "-10s", defaultQuotaRebalanceInterval},
+		{"zero falls back to default", "0s", defaultQuotaRebalanceInterval},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := parseQuotaRebalanceInterval(tc.in); got != tc.want {
+				t.Errorf("parseQuotaRebalanceInterval(%q) = %v, want %v", tc.in, got, tc.want)
+			}
+		})
+	}
+}
+
 // Given a full report, when converted to a history row, then all mapped
 // columns carry the report values.
 func TestNodeStatusHistoryRowFromReport_Mapping(t *testing.T) {
