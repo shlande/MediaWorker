@@ -24,6 +24,8 @@ type AuditEntry struct {
 	L4Whitelisted  bool         `json:"l4_whitelisted"`
 	BandwidthQuota int64        `json:"bandwidth_quota"`
 	Exp            int64        `json:"exp"`
+	Result         string       `json:"result"`
+	Reason         string       `json:"reason,omitempty"`
 	Timestamp      time.Time    `json:"timestamp"`
 }
 
@@ -38,7 +40,7 @@ func NewAuditLog(w io.Writer) *AuditLog {
 }
 
 // Log records a JWT issuance event as a JSON line.
-func (a *AuditLog) Log(peerID types.PeerId, remoteIP string, l4Whitelisted bool, bandwidthQuota int64, exp int64) {
+func (a *AuditLog) Log(peerID types.PeerId, remoteIP string, l4Whitelisted bool, bandwidthQuota int64, exp int64, result string, reason string) {
 	entry := AuditEntry{
 		Event:          "jwt_issue",
 		PeerID:         peerID,
@@ -46,6 +48,8 @@ func (a *AuditLog) Log(peerID types.PeerId, remoteIP string, l4Whitelisted bool,
 		L4Whitelisted:  l4Whitelisted,
 		BandwidthQuota: bandwidthQuota,
 		Exp:            exp,
+		Result:         result,
+		Reason:         reason,
 		Timestamp:      time.Now(),
 	}
 	b, _ := json.Marshal(entry)

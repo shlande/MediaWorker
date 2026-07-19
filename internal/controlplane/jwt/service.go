@@ -89,16 +89,19 @@ func (s *JWTService) HandleJWTRequest(req types.JWTRequest, remoteIP string) (*t
 	// 1. Extract public key from PeerID
 	nodePubKey, err := sjwt.ExtractEd25519PubKey(req.PeerID)
 	if err != nil {
+		s.auditLog.Log(req.PeerID, remoteIP, false, 0, 0, "fail", "invalid_peer_id")
 		return nil, fmt.Errorf("%w: %w", sjwt.ErrInvalidPeerID, err)
 	}
 
 	// 2. Verify the node signed its own PeerID
 	if !ed25519.Verify(nodePubKey, []byte(req.PeerID), req.SignedPeerID) {
+		s.auditLog.Log(req.PeerID, remoteIP, false, 0, 0, "fail", "invalid_signature")
 		return nil, sjwt.ErrInvalidSignature
 	}
 
 	// 3. Rate limit
 	if !s.rateLimiter.Allow(remoteIP) {
+		s.auditLog.Log(req.PeerID, remoteIP, false, 0, 0, "fail", "rate_limited")
 		return nil, sjwt.ErrRateLimited
 	}
 
@@ -135,11 +138,12 @@ func (s *JWTService) HandleJWTRequest(req types.JWTRequest, remoteIP string) (*t
 	// 7. Sign
 	jwtStr, err := sjwt.SignJWT(payload, s.privKey)
 	if err != nil {
+		s.auditLog.Log(req.PeerID, remoteIP, false, 0, 0, "fail", "internal_error")
 		return nil, fmt.Errorf("jwt: sign: %w", err)
 	}
 
 	// 8. Audit
-	s.auditLog.Log(req.PeerID, remoteIP, isL4, payload.BandwidthQuota, payload.Exp)
+	s.auditLog.Log(req.PeerID, remoteIP, isL4, payload.BandwidthQuota, payload.Exp, "ok", "")
 
 	return &types.JWTResponse{
 		JWT:           jwtStr,
