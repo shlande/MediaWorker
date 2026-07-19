@@ -493,3 +493,11 @@ auditlog failure path audit: Added Result/Reason to AuditEntry, extended Log(pee
 - RegisterAuditRoutes(srv, auditLog, mc) landed mid-task (todo 34, commit 565b435) — kind=jwt reads the cpjwt.AuditLog ring, kind=admin/<kind> reads ListAdminAudit; mount inside `if mc != nil` so both sources answer.
 - PG-less degraded smoke verified: PG-independent mounts answer 401 (mounted+auth), PG-dependent 404 (unmounted); Warn lines name the skipped groups; shutdown clean.
 - main.go now 365 pure LOC (306 pre-existing at HEAD) — D1-mandated wiring block; split deferred to a dedicated refactor, documented in task-54 evidence.
+
+## [2026-07-20T21:00Z] Task: todo-35
+- audit export handler: GET /v1/admin/audit/export added to audit_handlers.go with streaming JSON-lines (application/x-ndjson). Same kind-source-route logic as todo 34 query with page_size cap at 10000 (exportMaxPageSize). Both sources fetch DESC internally; export reverses in-memory for ASC contract. Per-line encode+flush via http.Flusher.
+- RegisterAuditRoutes signature unchanged (3 params: srv, auditLog, mc) → main.go L280 mount line unchanged. Go 1.22+ pattern "GET /v1/admin/audit/export" is distinct from "GET /v1/admin/audit" — no route collision.
+- AuditLog.Query accepts AuditFilter.Limit to cap at 10000; AuditLog ring capacity is already 10000 so no data loss.
+- Admin source: ListAdminAudit at PageSize=10000 fetches full result; reversal in memory bounded to 10000 rows.
+- 10 export tests green (headers, parseable, line count, empty 200, ts ASC, no token 401, q filter, nil log 500, bad time 400, unknown kind 400). Full audit suite 37/37 green (0.339s).
+- Gotcha: fakeAdminAuditLister returns rows as-listed (no PG ORDER BY); test rows must be in DESC order to match real ListAdminAudit behavior, else export reverse yields wrong ASC.

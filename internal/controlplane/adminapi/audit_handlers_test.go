@@ -1,6 +1,7 @@
 package adminapi
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -289,5 +291,203 @@ func TestAuditQuery_NilJWTLog_500(t *testing.T) {
 	ts := newAuditServer(t, nil, &fakeAdminAuditLister{})
 	if status, _ := auditGet(t, ts, url.Values{}, true); status != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500", status)
+	}
+}
+
+// ─── export helpers ─────────────────────────────────────────────────────────
+
+type exportHarness struct {
+	status  int
+	headers http.Header
+	lines   []auditEntryResponse
+}
+
+func auditExportGet(t *testing.T, ts *httptest.Server, params url.Values, withToken bool) exportHarness {
+	t.Helper()
+	u := ts.URL + "/v1/admin/audit/export"
+	if len(params) > 0 {
+		u += "?" + params.Encode()
+	}
+	req, err := http.NewRequest(http.MethodGet, u, nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	if withToken {
+		req.Header.Set("Authorization", "Bearer "+signedToken(t, testSecret(), []string{"admin"}))
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s: %v", u, err)
+	}
+	defer resp.Body.Close()
+
+	sc := bufio.NewScanner(resp.Body)
+	var lines []auditEntryResponse
+	for sc.Scan() {
+		line := sc.Bytes()
+		if len(line) == 0 {
+			continue
+		}
+		var e auditEntryResponse
+		if err := json.Unmarshal(line, &e); err != nil {
+			t.Errorf("line not valid JSON: %s: %v", string(line), err)
+			continue
+		}
+		lines = append(lines, e)
+	}
+	if err := sc.Err(); err != nil {
+		t.Errorf("scan body: %v", err)
+	}
+	return exportHarness{status: resp.StatusCode, headers: resp.Header, lines: lines}
+}
+
+// ─── export tests ───────────────────────────────────────────────────────────
+
+// Given a seeded jwt ring, when exporting, then Content-Type is
+// application/x-ndjson and Content-Disposition has attachment filename.
+func TestAuditExport_Headers(t *testing.T) {
+	ts := newAuditServer(t, seededJWTLog(), nil)
+	h := auditExportGet(t, ts, url.Values{}, true)
+	if h.status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", h.status)
+	}
+	if ct := h.headers.Get("Content-Type"); ct != "application/x-ndjson" {
+		t.Errorf("Content-Type = %q, want application/x-ndjson", ct)
+	}
+	cd := h.headers.Get("Content-Disposition")
+	if !strings.HasPrefix(cd, `attachment; filename="audit-`) || !strings.HasSuffix(cd, `.jsonl"`) {
+		t.Errorf("Content-Disposition = %q, want attachment; filename=\"audit-<ts>.jsonl\"", cd)
+	}
+}
+
+// Given a seeded jwt ring, when exporting, then every line parses as a valid
+// auditEntryResponse.
+func TestAuditExport_LinesParseable(t *testing.T) {
+	ts := newAuditServer(t, seededJWTLog(), nil)
+	h := auditExportGet(t, ts, url.Values{}, true)
+	if h.status != http.StatusOK {
+		t.Fatalf("status = %d", h.status)
+	}
+	if len(h.lines) != 3 {
+		t.Fatalf("line count = %d, want 3", len(h.lines))
+	}
+}
+
+// Given a seeded jwt ring, when exporting, then line count matches total.
+func TestAuditExport_LineCountMatchesTotal(t *testing.T) {
+	ts := newAuditServer(t, seededJWTLog(), nil)
+	h := auditExportGet(t, ts, url.Values{}, true)
+	if h.status != http.StatusOK {
+		t.Fatalf("status = %d", h.status)
+	}
+
+	// Query the same source to get the total independently.
+	_, body := auditGet(t, ts, url.Values{}, true)
+	if len(h.lines) != body.Total {
+		t.Errorf("export lines = %d, query total = %d", len(h.lines), body.Total)
+	}
+}
+
+// Given an empty admin_audit table, when exporting, then 200 with empty body
+// (not 500).
+func TestAuditExport_EmptyTable_200(t *testing.T) {
+	mc := &fakeAdminAuditLister{rows: nil, total: 0}
+	ts := newAuditServer(t, nil, mc)
+	h := auditExportGet(t, ts, url.Values{"kind": {"admin"}}, true)
+	if h.status != http.StatusOK {
+		t.Fatalf("status = %d, want 200", h.status)
+	}
+	if len(h.lines) != 0 {
+		t.Errorf("lines = %d, want 0", len(h.lines))
+	}
+}
+
+// Given a seeded jwt ring, when exporting, then entries are in ts ASC order
+// (forced by the export contract).
+func TestAuditExport_TSAscOrder(t *testing.T) {
+	ts := newAuditServer(t, seededJWTLog(), nil)
+	h := auditExportGet(t, ts, url.Values{}, true)
+	if h.status != http.StatusOK {
+		t.Fatalf("status = %d", h.status)
+	}
+	if len(h.lines) < 2 {
+		t.Skip("need at least 2 entries for order check")
+	}
+	for i := 1; i < len(h.lines); i++ {
+		if h.lines[i-1].TS > h.lines[i].TS {
+			t.Errorf("ts not ASC at index %d: %s > %s", i, h.lines[i-1].TS, h.lines[i].TS)
+		}
+	}
+}
+
+// Given no bearer token, when exporting, then 401.
+func TestAuditExport_NoToken_401(t *testing.T) {
+	ts := newAuditServer(t, seededJWTLog(), &fakeAdminAuditLister{})
+	h := auditExportGet(t, ts, url.Values{}, false)
+	if h.status != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", h.status)
+	}
+}
+
+// Given admin_audit rows with q filter, when exporting, then filter is applied.
+func TestAuditExport_AdminSourceQFilter(t *testing.T) {
+	target, ip := "baidu:acct-zz", "10.1.1.1"
+	// Real ListAdminAudit orders ts DESC, id DESC. The fake returns
+	// rows in the order listed — so list the newer row first.
+	mc := &fakeAdminAuditLister{
+		rows: []metadata.AdminAuditRow{{
+			ID: 2, TS: time.Date(2026, 7, 2, 0, 0, 0, 0, time.UTC),
+			Kind: "account", Actor: "admin1", Action: "unban",
+			Target: &target, IP: &ip, Result: "ok",
+		}, {
+			ID: 1, TS: time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC),
+			Kind: "account", Actor: "admin1", Action: "ban",
+			Target: &target, IP: &ip, Result: "ok",
+		}},
+		total: 2,
+	}
+	ts := newAuditServer(t, nil, mc)
+	h := auditExportGet(t, ts, url.Values{"kind": {"account"}, "q": {"acct"}}, true)
+	if h.status != http.StatusOK {
+		t.Fatalf("status = %d", h.status)
+	}
+	if mc.lastQuery.Q != "acct" {
+		t.Errorf("Q = %q, want acct", mc.lastQuery.Q)
+	}
+	if len(h.lines) != 2 {
+		t.Errorf("line count = %d, want 2", len(h.lines))
+	}
+	// Export forces ts ASC by reversing the DESC output: earlier
+	// first (ban before unban).
+	if h.lines[0].Action != "ban" || h.lines[1].Action != "unban" {
+		t.Errorf("order = %s/%s, want ban/unban", h.lines[0].Action, h.lines[1].Action)
+	}
+}
+
+// Given a source with nil dependencies, when exporting, then 500 (wiring bug
+// surfaces loudly).
+func TestAuditExport_NilJWTLog_500(t *testing.T) {
+	ts := newAuditServer(t, nil, &fakeAdminAuditLister{})
+	h := auditExportGet(t, ts, url.Values{}, true)
+	if h.status != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500", h.status)
+	}
+}
+
+// Given a bad from/to on export, when requested, then 400.
+func TestAuditExport_BadTimeFormat_400(t *testing.T) {
+	ts := newAuditServer(t, seededJWTLog(), &fakeAdminAuditLister{})
+	h := auditExportGet(t, ts, url.Values{"from": {"yesterday"}}, true)
+	if h.status != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", h.status)
+	}
+}
+
+// Given an unknown kind on export, when requested, then 400.
+func TestAuditExport_UnknownKind_400(t *testing.T) {
+	ts := newAuditServer(t, seededJWTLog(), &fakeAdminAuditLister{})
+	h := auditExportGet(t, ts, url.Values{"kind": {"bogus"}}, true)
+	if h.status != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", h.status)
 	}
 }
