@@ -60,6 +60,29 @@ func TestContentMeta_roundtrip(t *testing.T) {
 	})
 }
 
+func TestContentMeta_withTitleAndDeletedAt_roundtrip(t *testing.T) {
+	deletedAt := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	roundtrip(t, ContentMeta{
+		ContentID:    "cont_001b",
+		ContentType:  "dash_video",
+		TypeMetadata: []byte(`{"width":1920,"height":1080}`),
+		Title:        "赛博朋克实况",
+		DeletedAt:    &deletedAt,
+	})
+}
+
+// Given a live ContentMeta (no title, not deleted), When marshalled, Then
+// title/deleted_at are omitted from the JSON.
+func TestContentMeta_omitsEmptyTitleAndNilDeletedAt(t *testing.T) {
+	data, err := json.Marshal(ContentMeta{ContentID: "c1", ContentType: "video"})
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+	if strings.Contains(string(data), "title") || strings.Contains(string(data), "deleted_at") {
+		t.Errorf("live ContentMeta must omit title/deleted_at, got %s", data)
+	}
+}
+
 func TestContentIngestedEvent_roundtrip(t *testing.T) {
 	roundtrip(t, ContentIngestedEvent{
 		ContentID:   "cont_002",

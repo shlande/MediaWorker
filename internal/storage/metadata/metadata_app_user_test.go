@@ -11,7 +11,7 @@ import (
 )
 
 // expectAllMigrations registers sqlmock expectations for every embedded
-// migration file in sorted order (001-015). Called once per MigrateAll run.
+// migration file in sorted order (001-019, 018 pending). Called once per MigrateAll run.
 func expectAllMigrations(mock sqlmock.Sqlmock) {
 	for _, pattern := range []string{
 		`CREATE TABLE IF NOT EXISTS content`,
@@ -30,6 +30,7 @@ func expectAllMigrations(mock sqlmock.Sqlmock) {
 		`ALTER TABLE blob ADD COLUMN IF NOT EXISTS deleted_at`,
 		`CREATE TABLE IF NOT EXISTS app_user`,
 		`CREATE TABLE IF NOT EXISTS node_status_history`,
+		`ALTER TABLE content ADD COLUMN IF NOT EXISTS title`,
 		`CREATE TABLE IF NOT EXISTS alert_events`,
 	} {
 		mock.ExpectExec(pattern).WillReturnResult(sqlmock.NewResult(0, 0))

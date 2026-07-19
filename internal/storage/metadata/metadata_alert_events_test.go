@@ -216,6 +216,7 @@ func TestAlertEvents_MigrateAllTwiceIdempotent(t *testing.T) {
 		mock.ExpectExec(`ALTER TABLE blob ADD COLUMN IF NOT EXISTS deleted_at`).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectExec(`CREATE TABLE IF NOT EXISTS app_user`).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectExec(`CREATE TABLE IF NOT EXISTS node_status_history`).WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec(`ALTER TABLE content ADD COLUMN IF NOT EXISTS title`).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectExec(`CREATE TABLE IF NOT EXISTS alert_events`).WillReturnResult(sqlmock.NewResult(0, 0))
 	}
 	expectMigrationPass()

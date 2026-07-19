@@ -214,10 +214,14 @@ type BlobRole struct {
 }
 
 // ContentMeta is content metadata (produced by ingest, consumed by distribution).
+// Title is the admin-UI display name (ingest passthrough, may be empty);
+// DeletedAt marks a soft-deleted content (nil = live).
 type ContentMeta struct {
-	ContentID    string `json:"content_id"`
-	ContentType  string `json:"content_type"`
-	TypeMetadata []byte `json:"type_metadata"`
+	ContentID    string     `json:"content_id"`
+	ContentType  string     `json:"content_type"`
+	TypeMetadata []byte     `json:"type_metadata"`
+	Title        string     `json:"title,omitempty"`
+	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
 }
 
 // ContentIngestedEvent is the ingestion event (published by ingest, subscribed by distribution).

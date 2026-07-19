@@ -59,10 +59,12 @@ type ProcessResult struct {
 // interface mirrors the shape of
 // storage/metadata.PGMetadataClient.WriteIngestTransaction but lives in
 // the ingest package to break the import cycle.
+// title is the admin-UI display name for the content; empty string stores NULL.
 type BlobStoreWriter interface {
 	WriteIngestTransaction(
 		ctx context.Context,
 		content types.ContentMeta,
+		title string,
 		blobs []types.BlobDescriptor,
 		roles []types.BlobRole,
 		locations []types.BlobLocation,

@@ -62,7 +62,7 @@ type PopularityClient interface {
 // MetadataWriter is the interface for persisting content metadata and health
 // states to the metadata service. Implemented by PGMetadataClient.
 type MetadataWriter interface {
-	WriteIngestTransaction(ctx context.Context, content types.ContentMeta, blobs []types.BlobDescriptor, roles []types.BlobRole, locations []types.BlobLocation) error
+	WriteIngestTransaction(ctx context.Context, content types.ContentMeta, title string, blobs []types.BlobDescriptor, roles []types.BlobRole, locations []types.BlobLocation) error
 	ReportAccountHealth(ctx context.Context, vendor types.Vendor, accountID string, state types.HealthState) error
 	GetAccountHealths(ctx context.Context, vendor types.Vendor) ([]AccountHealth, error)
 }
@@ -141,12 +141,21 @@ func (c *PGMetadataClient) DB() *sql.DB {
 // Returns a wrapped sql.ErrNoRows when the row is not found.
 func (c *PGMetadataClient) GetContentMeta(ctx context.Context, contentID string) (*types.ContentMeta, error) {
 	row := c.db.QueryRowContext(ctx,
-		`SELECT content_id, content_type, type_metadata FROM content WHERE content_id = $1`,
+		`SELECT content_id, content_type, type_metadata, title, deleted_at FROM content WHERE content_id = $1`,
 		contentID,
 	)
-	var cm types.ContentMeta
-	if err := row.Scan(&cm.ContentID, &cm.ContentType, &cm.TypeMetadata); err != nil {
+	var (
+		cm        types.ContentMeta
+		title     sql.NullString
+		deletedAt sql.NullTime
+	)
+	if err := row.Scan(&cm.ContentID, &cm.ContentType, &cm.TypeMetadata, &title, &deletedAt); err != nil {
 		return nil, fmt.Errorf("metadata: get content meta %q: %w", contentID, err)
+	}
+	cm.Title = title.String
+	if deletedAt.Valid {
+		t := deletedAt.Time
+		cm.DeletedAt = &t
 	}
 	return &cm, nil
 }
@@ -199,10 +208,15 @@ func (c *PGMetadataClient) GetContentBlobs(ctx context.Context, contentID string
 
 // WriteContentMeta inserts content and content_blob rows within an existing
 // transaction. The tx parameter is managed by WriteIngestTransaction.
+// content.Title is persisted to content.title; an empty title stores SQL NULL.
 func (c *PGMetadataClient) WriteContentMeta(ctx context.Context, tx *sql.Tx, content types.ContentMeta, blobs []types.BlobDescriptor, roles []types.BlobRole) error {
+	var titleArg any
+	if content.Title != "" {
+		titleArg = content.Title
+	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO content (content_id, content_type, type_metadata) VALUES ($1, $2, $3)`,
-		content.ContentID, content.ContentType, content.TypeMetadata,
+		`INSERT INTO content (content_id, content_type, type_metadata, title) VALUES ($1, $2, $3, $4)`,
+		content.ContentID, content.ContentType, content.TypeMetadata, titleArg,
 	); err != nil {
 		return fmt.Errorf("metadata: insert content: %w", err)
 	}
@@ -338,9 +352,11 @@ func (c *PGMetadataClient) WriteBlobLocations(ctx context.Context, tx *sql.Tx, l
 // WriteIngestTransaction executes a single PG transaction spanning all 4 ingest tables:
 // blob (content-addressed) → blob_location (K redundancy) → content → content_blob (arrangement).
 // Any step failure triggers ROLLBACK; full success COMMITs.
+// title is the admin-UI display name for the content; empty string stores SQL NULL.
 func (c *PGMetadataClient) WriteIngestTransaction(
 	ctx context.Context,
 	content types.ContentMeta,
+	title string,
 	blobs []types.BlobDescriptor,
 	roles []types.BlobRole,
 	locations []types.BlobLocation,
@@ -366,6 +382,7 @@ func (c *PGMetadataClient) WriteIngestTransaction(
 	}
 
 	// 3. content + content_blob (orchestration layer)
+	content.Title = title
 	if err = c.WriteContentMeta(ctx, tx, content, blobs, roles); err != nil {
 		return fmt.Errorf("metadata: write content meta: %w", err)
 	}

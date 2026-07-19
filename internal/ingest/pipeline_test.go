@@ -19,6 +19,7 @@ import (
 type mockBlobStoreWriter struct {
 	mu      sync.Mutex
 	content *types.ContentMeta
+	title   string
 	blobs   []types.BlobDescriptor
 	roles   []types.BlobRole
 	locs    []types.BlobLocation
@@ -28,6 +29,7 @@ type mockBlobStoreWriter struct {
 func (m *mockBlobStoreWriter) WriteIngestTransaction(
 	_ context.Context,
 	content types.ContentMeta,
+	title string,
 	blobs []types.BlobDescriptor,
 	roles []types.BlobRole,
 	locations []types.BlobLocation,
@@ -35,6 +37,7 @@ func (m *mockBlobStoreWriter) WriteIngestTransaction(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.content = &content
+	m.title = title
 	m.blobs = blobs
 	m.roles = roles
 	m.locs = locations
@@ -524,4 +527,46 @@ func TestIngest_WorkDirDeletedOnUploadFailure(t *testing.T) {
 	if _, err := os.Stat(workDir); !os.IsNotExist(err) {
 		t.Fatalf("WorkDir %s should have been deleted after upload failure; stat err = %v", workDir, err)
 	}
+}
+
+// Given opts.Metadata carrying a title, When Ingest writes the transaction,
+// Then the title is passed through to WriteIngestTransaction; absent metadata
+// yields an empty title (stored as NULL downstream).
+func TestIngest_TitlePassthrough(t *testing.T) {
+	tmpDir := t.TempDir()
+	fileA := mustCreateFile(t, tmpDir, "blob_a.m4s", []byte("mock init segment"))
+
+	result := &ProcessResult{
+		ContentID:   "cid-title",
+		ContentType: "dash_video",
+		Blobs:       []types.BlobDescriptor{simpleBlob("sha256:aaa", "mp4_init_segment", 100)},
+		Roles:       []types.BlobRole{{BlobHash: "sha256:aaa", Role: "init", SortOrder: 0}},
+		BlobFiles:   map[string]string{"sha256:aaa": fileA},
+	}
+	backends := []*mockBackendUploader{{backendID: "115:acct_01"}}
+	eventBus := &mockEventPublisher{}
+
+	p := buildPipeline(t, "dash_video", result, nil, backends, nil, nil, eventBus, 1)
+	if _, err := p.Ingest(context.Background(), "dash_video", strings.NewReader("x"), ProcessOptions{
+		Metadata: map[string]string{"title": "赛博朋克 2077 实况"},
+	}); err != nil {
+		t.Fatalf("Ingest with title failed: %v", err)
+	}
+	store := p.blobStore.(*mockBlobStoreWriter)
+	store.mu.Lock()
+	if store.title != "赛博朋克 2077 实况" {
+		t.Errorf("title = %q, want %q", store.title, "赛博朋克 2077 实况")
+	}
+	store.mu.Unlock()
+
+	p2 := buildPipeline(t, "dash_video", result, nil, backends, nil, nil, eventBus, 1)
+	if _, err := p2.Ingest(context.Background(), "dash_video", strings.NewReader("x"), ProcessOptions{}); err != nil {
+		t.Fatalf("Ingest without metadata failed: %v", err)
+	}
+	store2 := p2.blobStore.(*mockBlobStoreWriter)
+	store2.mu.Lock()
+	if store2.title != "" {
+		t.Errorf("title = %q, want empty (nil Metadata map indexes to zero value)", store2.title)
+	}
+	store2.mu.Unlock()
 }

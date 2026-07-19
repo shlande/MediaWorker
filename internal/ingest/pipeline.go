@@ -81,7 +81,7 @@ func (p *IngestPipeline) Ingest(
 		ContentType:  result.ContentType,
 		TypeMetadata: result.TypeMetadata,
 	}
-	if err := p.blobStore.WriteIngestTransaction(ctx, content, result.Blobs, result.Roles, locations); err != nil {
+	if err := p.blobStore.WriteIngestTransaction(ctx, content, opts.Metadata["title"], result.Blobs, result.Roles, locations); err != nil {
 		return "", err
 	}
 

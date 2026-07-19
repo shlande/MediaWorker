@@ -49,9 +49,9 @@ func TestGetContentMeta_ReturnsContentMeta(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	client := newPGMetadataClientWithDB(db)
 
-	rows := sqlmock.NewRows([]string{"content_id", "content_type", "type_metadata"}).
-		AddRow("vid-001", "video", []byte(`{"codec":"h264"}`))
-	mock.ExpectQuery(`SELECT content_id, content_type, type_metadata FROM content WHERE content_id = \$1`).
+	rows := sqlmock.NewRows([]string{"content_id", "content_type", "type_metadata", "title", "deleted_at"}).
+		AddRow("vid-001", "video", []byte(`{"codec":"h264"}`), "Sample Title", nil)
+	mock.ExpectQuery(`SELECT content_id, content_type, type_metadata, title, deleted_at FROM content WHERE content_id = \$1`).
 		WithArgs("vid-001").
 		WillReturnRows(rows)
 
@@ -68,6 +68,12 @@ func TestGetContentMeta_ReturnsContentMeta(t *testing.T) {
 	if string(got.TypeMetadata) != `{"codec":"h264"}` {
 		t.Errorf("TypeMetadata = %q, want %q", got.TypeMetadata, `{"codec":"h264"}`)
 	}
+	if got.Title != "Sample Title" {
+		t.Errorf("Title = %q, want %q", got.Title, "Sample Title")
+	}
+	if got.DeletedAt != nil {
+		t.Errorf("DeletedAt = %v, want nil (live content)", got.DeletedAt)
+	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet expectations: %v", err)
 	}
@@ -81,7 +87,7 @@ func TestGetContentMeta_NotFoundWrapsErrNoRows(t *testing.T) {
 	defer func() { _ = db.Close() }()
 	client := newPGMetadataClientWithDB(db)
 
-	mock.ExpectQuery(`SELECT content_id, content_type, type_metadata FROM content WHERE content_id = \$1`).
+	mock.ExpectQuery(`SELECT content_id, content_type, type_metadata, title, deleted_at FROM content WHERE content_id = \$1`).
 		WithArgs("missing-id").
 		WillReturnError(sql.ErrNoRows)
 
@@ -431,8 +437,8 @@ func TestWriteIngestTransaction_Success(t *testing.T) {
 
 	// Step 3: WriteContentMeta — content insert + 2 content_blob inserts
 	// content insert
-	mock.ExpectExec(`INSERT INTO content \(content_id, content_type, type_metadata\) VALUES \(\$1, \$2, \$3\)`).
-		WithArgs("abc-123", "dash_video", []byte(`{"codec":"h264"}`)).
+	mock.ExpectExec(`INSERT INTO content \(content_id, content_type, type_metadata, title\) VALUES \(\$1, \$2, \$3, \$4\)`).
+		WithArgs("abc-123", "dash_video", []byte(`{"codec":"h264"}`), "Test Title").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	// content_blob for init_720p
@@ -449,7 +455,7 @@ func TestWriteIngestTransaction_Success(t *testing.T) {
 
 	mock.ExpectCommit()
 
-	err = client.WriteIngestTransaction(context.Background(), content, blobs, roles, locations)
+	err = client.WriteIngestTransaction(context.Background(), content, "Test Title", blobs, roles, locations)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -482,7 +488,7 @@ func TestWriteIngestTransaction_RollbackOnBlobError(t *testing.T) {
 		WillReturnError(fmt.Errorf("duplicate key value"))
 	mock.ExpectRollback()
 
-	err = client.WriteIngestTransaction(context.Background(), content, blobs, roles, locations)
+	err = client.WriteIngestTransaction(context.Background(), content, "Test Title", blobs, roles, locations)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -519,7 +525,7 @@ func TestWriteIngestTransaction_RollbackOnLocationError(t *testing.T) {
 		WillReturnError(fmt.Errorf("duplicate key value"))
 	mock.ExpectRollback()
 
-	err = client.WriteIngestTransaction(context.Background(), content, blobs, roles, locations)
+	err = client.WriteIngestTransaction(context.Background(), content, "Test Title", blobs, roles, locations)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -559,7 +565,7 @@ func TestWriteIngestTransaction_RollbackOnContentError(t *testing.T) {
 		WillReturnError(fmt.Errorf("duplicate key"))
 	mock.ExpectRollback()
 
-	err = client.WriteIngestTransaction(context.Background(), content, blobs, roles, locations)
+	err = client.WriteIngestTransaction(context.Background(), content, "Test Title", blobs, roles, locations)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -687,6 +693,76 @@ func TestGetAccountHealths_EmptyWhenNoRows(t *testing.T) {
 	}
 	if len(got) != 0 {
 		t.Errorf("len = %d, want 0", len(got))
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
+	}
+}
+
+// Given a soft-deleted content row, When GetContentMeta reads it, Then
+// DeletedAt is populated and Title decodes from NULL to empty string.
+func TestGetContentMeta_DeletedContent(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("create sqlmock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	client := newPGMetadataClientWithDB(db)
+
+	deletedAt := time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	rows := sqlmock.NewRows([]string{"content_id", "content_type", "type_metadata", "title", "deleted_at"}).
+		AddRow("vid-del", "video", []byte(`{"codec":"h264"}`), nil, deletedAt)
+	mock.ExpectQuery(`SELECT content_id, content_type, type_metadata, title, deleted_at FROM content WHERE content_id = \$1`).
+		WithArgs("vid-del").
+		WillReturnRows(rows)
+
+	got, err := client.GetContentMeta(context.Background(), "vid-del")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.Title != "" {
+		t.Errorf("Title = %q, want empty for NULL column", got.Title)
+	}
+	if got.DeletedAt == nil || !got.DeletedAt.Equal(deletedAt) {
+		t.Errorf("DeletedAt = %v, want %v", got.DeletedAt, deletedAt)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
+	}
+}
+
+// Given an empty title, When WriteIngestTransaction inserts the content row,
+// Then the title column is bound as SQL NULL (not an empty string).
+func TestWriteIngestTransaction_EmptyTitleStoresNULL(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("create sqlmock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	client := newPGMetadataClientWithDB(db)
+
+	content := types.ContentMeta{ContentID: "abc-null", ContentType: "video", TypeMetadata: []byte(`{}`)}
+	blobs := []types.BlobDescriptor{{BlobHash: "seg_1", BlobType: "m4s_media_segment", Size: 512}}
+	roles := []types.BlobRole{{BlobHash: "seg_1", Role: "media", SortOrder: 0}}
+	locations := []types.BlobLocation{{BlobHash: "seg_1", BackendID: "115:acct-1", FileID: "fid_1"}}
+
+	mock.ExpectBegin()
+	mock.ExpectExec(`INSERT INTO blob `).
+		WithArgs("seg_1", "m4s_media_segment", int64(512)).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`INSERT INTO blob_location `).
+		WithArgs("seg_1", "115:acct-1", "fid_1").
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`INSERT INTO content \(content_id, content_type, type_metadata, title\) VALUES \(\$1, \$2, \$3, \$4\)`).
+		WithArgs("abc-null", "video", []byte(`{}`), nil).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectExec(`INSERT INTO content_blob `).
+		WithArgs("abc-null", "seg_1", "media", 0, []byte(`null`)).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit()
+
+	if err := client.WriteIngestTransaction(context.Background(), content, "", blobs, roles, locations); err != nil {
+		t.Fatalf("unexpected error: %v", err)
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Errorf("unmet expectations: %v", err)
