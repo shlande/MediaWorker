@@ -315,7 +315,7 @@ func (a *ingestAccountPoolAdapter) SelectKForUpload(ctx context.Context, k int) 
 		out[i] = &ingest.UploadableAccount{
 			BackendID: backendID,
 			PutFunc: func(ctx context.Context, blobHash string, reader io.Reader, size int64) (string, error) {
-				fi, err := drv.Put(ctx, blobHash, blobHash+".bin", reader, size)
+				fi, err := drv.Put(ctx, "root:/mediaworker", blobHash+".bin", reader, size)
 				if err != nil {
 					return "", fmt.Errorf("driver put: %w", err)
 				}
