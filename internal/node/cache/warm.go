@@ -1,9 +1,11 @@
 package cache
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -28,6 +30,10 @@ type WarmCache struct {
 	popSource       PopSource
 	evictMu         sync.Mutex
 	evictTimestamps []time.Time
+
+	// flushing is set true during Flush. When true, Put returns
+	// ErrCacheFlushing and the caller should retry or 503 upstream.
+	flushing bool
 }
 
 // NewWarmCache creates a WarmCache rooted at the given path. The root directory
@@ -153,6 +159,13 @@ func (wc *WarmCache) Evictions1h() int {
 // Put writes data to disk and creates an index entry. If the cache is full,
 // it triggers Evict first to make room.
 func (wc *WarmCache) Put(blobHash string, data []byte, bitrate int) error {
+	wc.mu.RLock()
+	flushing := wc.flushing
+	wc.mu.RUnlock()
+	if flushing {
+		return ErrCacheFlushing
+	}
+
 	size := int64(len(data))
 
 	// Make room via content-aware eviction if needed.
@@ -219,4 +232,82 @@ func (wc *WarmCache) Has(blobHash string) bool {
 		return false
 	}
 	return entry.Location == "warm"
+}
+
+// ErrCacheFlushing is returned by Put when the cache is being flushed.
+var ErrCacheFlushing = fmt.Errorf("warm cache: flush in progress")
+
+// Flush stops accepting new Put, removes all warm entries from the index and
+// their on-disk files, recomputes usedSize by walking the cache directory, then
+// resumes Put acceptance. Errors from individual os.Remove calls are collected
+// and returned as a multi-error; the flush continues past individual file
+// removal failures.
+//
+// Get calls during flush will miss (index entries are deleted first) — this is
+// acceptable because flush is an admin-triggered maintenance operation.
+func (wc *WarmCache) Flush(ctx context.Context) error {
+	wc.mu.Lock()
+	if wc.flushing {
+		wc.mu.Unlock()
+		return fmt.Errorf("warm cache: flush already in progress")
+	}
+	wc.flushing = true
+	wc.mu.Unlock()
+
+	defer func() {
+		wc.mu.Lock()
+		wc.flushing = false
+		wc.mu.Unlock()
+	}()
+
+	// Collect all warm entries while holding the index lock.
+	snapshot := wc.index.All()
+	var toDelete []string
+	for hash, entry := range snapshot {
+		if entry.Location != "warm" {
+			continue
+		}
+		toDelete = append(toDelete, hash)
+	}
+
+	// Delete from index first so Get returns false during flush.
+	var errs []string
+	for _, hash := range toDelete {
+		wc.index.Delete(hash)
+		path := wc.blobPath(hash)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			errs = append(errs, fmt.Sprintf("remove %s: %v", hash, err))
+		}
+	}
+
+	// Recompute usedSize by walking the cache directory. This is more
+	// trustworthy than relying on per-Put/eviction decrements, especially
+	// after a bulk delete where accounting drift is possible.
+	usedSize := recalcUsedSize(wc.rootPath)
+	wc.usedSize = usedSize
+
+	if len(errs) > 0 {
+		return fmt.Errorf("warm cache flush: %s", strings.Join(errs, "; "))
+	}
+	return nil
+}
+
+// recalcUsedSize walks rootPath and sums the size of all regular files.
+func recalcUsedSize(rootPath string) int64 {
+	var total int64
+	entries, err := os.ReadDir(rootPath)
+	if err != nil {
+		return 0
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		total += info.Size()
+	}
+	return total
 }
