@@ -223,7 +223,8 @@ func (c *PGMetadataClient) WriteContentMeta(ctx context.Context, tx *sql.Tx, con
 			return fmt.Errorf("metadata: marshal business_meta for blob %q: %w", b.BlobHash, err)
 		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO content_blob (content_id, blob_hash, role, sort_order, business_meta) VALUES ($1, $2, $3, $4, $5)`,
+			`INSERT INTO content_blob (content_id, blob_hash, role, sort_order, business_meta) VALUES ($1, $2, $3, $4, $5)
+			 ON CONFLICT (content_id, blob_hash) DO NOTHING`,
 			content.ContentID, b.BlobHash, role.Role, role.SortOrder, metaJSON,
 		); err != nil {
 			return fmt.Errorf("metadata: insert content_blob %q: %w", b.BlobHash, err)
