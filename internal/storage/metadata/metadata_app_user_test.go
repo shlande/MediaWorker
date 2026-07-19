@@ -30,6 +30,7 @@ func expectAllMigrations(mock sqlmock.Sqlmock) {
 		`ALTER TABLE blob ADD COLUMN IF NOT EXISTS deleted_at`,
 		`CREATE TABLE IF NOT EXISTS app_user`,
 		`CREATE TABLE IF NOT EXISTS node_status_history`,
+		`CREATE TABLE IF NOT EXISTS alert_events`,
 	} {
 		mock.ExpectExec(pattern).WillReturnResult(sqlmock.NewResult(0, 0))
 	}

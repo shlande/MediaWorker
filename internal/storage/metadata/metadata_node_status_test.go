@@ -176,7 +176,7 @@ func TestNodeStatusHistory_MigrateAllTwiceIdempotent(t *testing.T) {
 	}
 	defer func() { _ = db.Close() }()
 
-	// One full pass of all 16 embedded migrations in lexical order.
+	// One full pass of all 17 embedded migrations in lexical order.
 	expectMigrationPass := func() {
 		mock.ExpectExec(`CREATE TABLE IF NOT EXISTS content`).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectExec(`CREATE TABLE IF NOT EXISTS blob_index`).WillReturnResult(sqlmock.NewResult(0, 0))
@@ -194,6 +194,7 @@ func TestNodeStatusHistory_MigrateAllTwiceIdempotent(t *testing.T) {
 		mock.ExpectExec(`ALTER TABLE blob ADD COLUMN IF NOT EXISTS deleted_at`).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectExec(`CREATE TABLE IF NOT EXISTS app_user`).WillReturnResult(sqlmock.NewResult(0, 0))
 		mock.ExpectExec(`CREATE TABLE IF NOT EXISTS node_status_history`).WillReturnResult(sqlmock.NewResult(0, 0))
+		mock.ExpectExec(`CREATE TABLE IF NOT EXISTS alert_events`).WillReturnResult(sqlmock.NewResult(0, 0))
 	}
 	expectMigrationPass()
 	expectMigrationPass()
