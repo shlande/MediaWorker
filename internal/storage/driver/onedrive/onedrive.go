@@ -284,7 +284,7 @@ func (d *OneDriveDriver) Put(ctx context.Context, dirID string, name string, rea
 }
 
 func (d *OneDriveDriver) putSmall(ctx context.Context, dirID, name string, reader io.Reader) (*types.FileInfo, error) {
-	urlStr := fmt.Sprintf("%s/items/%s:/%s:/content", d.baseURL(), dirID, url.PathEscape(name))
+	urlStr := fmt.Sprintf("%s/items/%s/%s:/content", d.baseURL(), dirID, url.PathEscape(name))
 	req, err := d.newRequest(ctx, http.MethodPut, urlStr, reader)
 	if err != nil {
 		return nil, err
