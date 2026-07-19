@@ -170,6 +170,16 @@ func (b *BootstrapHost) Host() host.Host {
 	return b.host
 }
 
+// RoutingTableSize returns the number of peers in the DHT routing table.
+// It is safe to call only after Start has succeeded; before Start it
+// returns 0. Exposed for observability and convergence tests.
+func (b *BootstrapHost) RoutingTableSize() int {
+	if b.dht == nil {
+		return 0
+	}
+	return b.dht.RoutingTable().Size()
+}
+
 // Close shuts down the DHT and the underlying libp2p host.
 func (b *BootstrapHost) Close() error {
 	if b.dht != nil {
