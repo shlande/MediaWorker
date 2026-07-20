@@ -5,10 +5,18 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"regexp"
 
 	"github.com/shlande/mediaworker/internal/storage/metadata"
 	"github.com/shlande/mediaworker/internal/types"
 )
+
+// uuidRegex matches the standard 8-4-4-4-12 hex UUID format (case-insensitive).
+// content_id is UUID PRIMARY KEY in the content table; PostgreSQL rejects
+// non-UUID strings with SQLSTATE 22P02 (invalid_input_syntax), which is
+// neither ErrContentNotFound nor sql.ErrNoRows. The handler validates the
+// format before calling the storage layer so malformed IDs get 404, not 500.
+var uuidRegex = regexp.MustCompile(`^[[:xdigit:]]{8}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{4}-[[:xdigit:]]{12}$`)
 
 // ─── Admin contents read-model (ui-admin-apis todo 28) ────────────────────
 //
@@ -198,11 +206,9 @@ type contentDetailResponse struct {
 	Locations []contentDetailLocationResponse `json:"locations"`
 }
 
-const contentIDMinLen = 4
-
 func getContentDetail(w http.ResponseWriter, r *http.Request, mc ContentsDetailReader) {
 	id := r.PathValue("id")
-	if len(id) < contentIDMinLen {
+	if !uuidRegex.MatchString(id) {
 		WriteError(w, http.StatusNotFound, "content not found")
 		return
 	}
@@ -280,7 +286,7 @@ const deleteNoteAlreadyDeleted = "already_deleted"
 
 func deleteContent(w http.ResponseWriter, r *http.Request, metaReader ContentMetaReader, deleter ContentDeleter, audit AuditRecorder) {
 	id := r.PathValue("id")
-	if len(id) < contentIDMinLen {
+	if !uuidRegex.MatchString(id) {
 		recordWriteAudit(r, audit, "content", "delete", id, "fail", nil)
 		WriteError(w, http.StatusNotFound, "content not found")
 		return

@@ -444,7 +444,7 @@ func TestContentsDetail_HappyPath(t *testing.T) {
 		ContentsDetailReader: &mockContentsDetailReader{
 			detail: &metadata.AdminContentDetail{
 				Meta: &types.ContentMeta{
-					ContentID:    "detail-abc",
+					ContentID:    "11111111-1111-1111-1111-111111111111",
 					ContentType:  "dash",
 					TypeMetadata: []byte(`{"resolution":"1080p"}`),
 					Title:        "Detail Video",
@@ -463,7 +463,7 @@ func TestContentsDetail_HappyPath(t *testing.T) {
 
 	dlog := &mockPinCountReader{}
 	srv := makeContentsServer(mc, dlog, nil)
-	resp := contentsGet(t, srv, "/v1/admin/contents/detail-abc", contentsAuthToken(t))
+	resp := contentsGet(t, srv, "/v1/admin/contents/11111111-1111-1111-1111-111111111111", contentsAuthToken(t))
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
@@ -471,7 +471,7 @@ func TestContentsDetail_HappyPath(t *testing.T) {
 
 	detail := decodeContentDetail(t, resp)
 
-	if detail.Meta.ContentID != "detail-abc" {
+	if detail.Meta.ContentID != "11111111-1111-1111-1111-111111111111" {
 		t.Errorf("ContentID = %q", detail.Meta.ContentID)
 	}
 	if detail.Meta.Title != "Detail Video" {
@@ -532,7 +532,7 @@ func TestContentsDetail_NotFound(t *testing.T) {
 	}
 	dlog := &mockPinCountReader{}
 	srv := makeContentsServer(mc, dlog, nil)
-	resp := contentsGet(t, srv, "/v1/admin/contents/nonexistent", contentsAuthToken(t))
+	resp := contentsGet(t, srv, "/v1/admin/contents/00000000-0000-0000-0000-000000000000", contentsAuthToken(t))
 
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", resp.StatusCode)
@@ -549,7 +549,7 @@ func TestContentsDetail_PendingDelete(t *testing.T) {
 		ContentsDetailReader: &mockContentsDetailReader{
 			detail: &metadata.AdminContentDetail{
 				Meta: &types.ContentMeta{
-					ContentID:   "soft-deleted-content",
+					ContentID:   "22222222-2222-2222-2222-222222222222",
 					ContentType: "dash",
 					DeletedAt:   &deletedAt,
 				},
@@ -559,7 +559,7 @@ func TestContentsDetail_PendingDelete(t *testing.T) {
 
 	dlog := &mockPinCountReader{}
 	srv := makeContentsServer(mc, dlog, nil)
-	resp := contentsGet(t, srv, "/v1/admin/contents/soft-deleted-content", contentsAuthToken(t))
+	resp := contentsGet(t, srv, "/v1/admin/contents/22222222-2222-2222-2222-222222222222", contentsAuthToken(t))
 
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
@@ -580,7 +580,7 @@ func TestContentsDetail_NotDeleted(t *testing.T) {
 		ContentsDetailReader: &mockContentsDetailReader{
 			detail: &metadata.AdminContentDetail{
 				Meta: &types.ContentMeta{
-					ContentID:  "alive-content",
+					ContentID:  "33333333-3333-3333-3333-333333333333",
 					ContentType: "dash",
 					DeletedAt:  nil,
 				},
@@ -590,7 +590,7 @@ func TestContentsDetail_NotDeleted(t *testing.T) {
 
 	dlog := &mockPinCountReader{}
 	srv := makeContentsServer(mc, dlog, nil)
-	resp := contentsGet(t, srv, "/v1/admin/contents/alive-content", contentsAuthToken(t))
+	resp := contentsGet(t, srv, "/v1/admin/contents/33333333-3333-3333-3333-333333333333", contentsAuthToken(t))
 
 	detail := decodeContentDetail(t, resp)
 	if detail.Meta.PendingDelete {
@@ -599,55 +599,70 @@ func TestContentsDetail_NotDeleted(t *testing.T) {
 }
 
 func TestContentsDetail_MalformedID_Returns404(t *testing.T) {
-	// Simulate the real GetContentDetail code path: when a non-existent
-	// content ID is queried, GetContentMeta returns sql.ErrNoRows which
-	// GetContentDetail wraps as ErrContentNotFound. But if the error
-	// chain somehow loses ErrContentNotFound (e.g. a different code path),
-	// the handler must still return 404, not 500.
+	// The detail handler must reject non-UUID-shaped IDs before calling
+	// the storage layer. content_id is UUID PRIMARY KEY; PostgreSQL
+	// throws SQLSTATE 22P02 (invalid_input_syntax) for non-UUID strings,
+	// which is NOT sql.ErrNoRows and NOT ErrContentNotFound — the handler
+	// must catch it at the validation layer, not at the error-mapping layer.
 	//
-	// This test sends a non-UUID-ish string that is long enough to pass
-	// the contentIDMinLen guard (len >= 4) and verifies the handler
-	// returns 404 regardless of the error wrapping.
-	t.Run("non_existent_malformed_id", func(t *testing.T) {
+	// This test sends a non-UUID string and verifies 404.
+	t.Run("non_uuid_string", func(t *testing.T) {
 		mc := struct {
 			ContentsListReader
 			ContentsDetailReader
 			ContentMetaReader
 		}{
 			ContentsDetailReader: &mockContentsDetailReader{
-				// Simulate: real GetContentMeta returns sql.ErrNoRows,
-				// GetContentDetail wraps it as ErrContentNotFound.
-				err: fmt.Errorf("metadata: content %q: %w", "nonexistent123", metadata.ErrContentNotFound),
+				// The mock should never be reached; the handler must
+				// reject the malformed ID before calling GetContentDetail.
+				// If it IS reached, the handler has a bug.
+				err: errors.New("mock should not be called for malformed ID"),
 			},
 		}
 		dlog := &mockPinCountReader{}
 		srv := makeContentsServer(mc, dlog, nil)
 		resp := contentsGet(t, srv, "/v1/admin/contents/nonexistent123", contentsAuthToken(t))
 		if resp.StatusCode != http.StatusNotFound {
-			t.Errorf("status = %d, want 404 for malformed/non-existent content ID", resp.StatusCode)
+			t.Errorf("status = %d, want 404 for non-UUID content ID", resp.StatusCode)
 		}
 	})
 
-	// This test is the defensive catch: if the storage layer fails to
-	// wrap ErrContentNotFound (e.g. a raw sql.ErrNoRows leaks through),
-	// the handler must still return 404, not 500.
-	t.Run("raw_sql_ErrNoRows_fallback", func(t *testing.T) {
+	// A well-formed UUID that does not exist in the database must still
+	// return 404 (this path goes through the storage layer).
+	t.Run("absent_uuid", func(t *testing.T) {
 		mc := struct {
 			ContentsListReader
 			ContentsDetailReader
 			ContentMetaReader
 		}{
 			ContentsDetailReader: &mockContentsDetailReader{
-				// Simulate a bug where sql.ErrNoRows is not wrapped
-				// as ErrContentNotFound — the handler must catch it.
-				err: fmt.Errorf("metadata: get content meta %q: %w", "nonexistent456", sql.ErrNoRows),
+				err: fmt.Errorf("metadata: content %q: %w", "123e4567-e89b-12d3-a456-426614174000", metadata.ErrContentNotFound),
 			},
 		}
 		dlog := &mockPinCountReader{}
 		srv := makeContentsServer(mc, dlog, nil)
-		resp := contentsGet(t, srv, "/v1/admin/contents/nonexistent456", contentsAuthToken(t))
+		resp := contentsGet(t, srv, "/v1/admin/contents/123e4567-e89b-12d3-a456-426614174000", contentsAuthToken(t))
 		if resp.StatusCode != http.StatusNotFound {
-			t.Errorf("status = %d, want 404 for raw sql.ErrNoRows (defensive fallback)", resp.StatusCode)
+			t.Errorf("status = %d, want 404 for absent UUID", resp.StatusCode)
+		}
+	})
+
+	// A genuine DB fault (non-"not found" error) must still return 500.
+	t.Run("db_fault_still_500", func(t *testing.T) {
+		mc := struct {
+			ContentsListReader
+			ContentsDetailReader
+			ContentMetaReader
+		}{
+			ContentsDetailReader: &mockContentsDetailReader{
+				err: fmt.Errorf("metadata: get content detail %q: %w", "123e4567-e89b-12d3-a456-426614174000", errors.New("connection reset")),
+			},
+		}
+		dlog := &mockPinCountReader{}
+		srv := makeContentsServer(mc, dlog, nil)
+		resp := contentsGet(t, srv, "/v1/admin/contents/123e4567-e89b-12d3-a456-426614174000", contentsAuthToken(t))
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Errorf("status = %d, want 500 for genuine DB fault", resp.StatusCode)
 		}
 	})
 }
@@ -665,7 +680,7 @@ func TestContentsDetail_MetadataError(t *testing.T) {
 
 	dlog := &mockPinCountReader{}
 	srv := makeContentsServer(mc, dlog, nil)
-	resp := contentsGet(t, srv, "/v1/admin/contents/any-id", contentsAuthToken(t))
+	resp := contentsGet(t, srv, "/v1/admin/contents/44444444-4444-4444-4444-444444444444", contentsAuthToken(t))
 
 	status, msg := decodeError(t, resp)
 	if status != http.StatusInternalServerError {
@@ -684,7 +699,7 @@ func TestContentsDetail_NoToken(t *testing.T) {
 	}{}
 	dlog := &mockPinCountReader{}
 	srv := makeContentsServer(mc, dlog, nil)
-	resp := contentsGet(t, srv, "/v1/admin/contents/any-id", "")
+	resp := contentsGet(t, srv, "/v1/admin/contents/99999999-9999-9999-9999-999999999999", "")
 
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", resp.StatusCode)
@@ -717,7 +732,7 @@ func TestContentsDetail_TitleFallback(t *testing.T) {
 		ContentsDetailReader: &mockContentsDetailReader{
 			detail: &metadata.AdminContentDetail{
 				Meta: &types.ContentMeta{
-					ContentID: "titleless-content-xyz",
+					ContentID: "55555555-5555-5555-5555-555555555555",
 					Title:     "",
 				},
 			},
@@ -726,10 +741,10 @@ func TestContentsDetail_TitleFallback(t *testing.T) {
 
 	dlog := &mockPinCountReader{}
 	srv := makeContentsServer(mc, dlog, nil)
-	resp := contentsGet(t, srv, "/v1/admin/contents/titleless-content-xyz", contentsAuthToken(t))
+	resp := contentsGet(t, srv, "/v1/admin/contents/55555555-5555-5555-5555-555555555555", contentsAuthToken(t))
 
 	detail := decodeContentDetail(t, resp)
-	if detail.Meta.Title != "titleles" {
+	if detail.Meta.Title != "55555555" {
 		t.Errorf("Title fallback = %q, want 'titleles' (first 8 chars)", detail.Meta.Title)
 	}
 }
@@ -743,7 +758,7 @@ func TestContentsDetail_NilBlobsAndLocations(t *testing.T) {
 		ContentsDetailReader: &mockContentsDetailReader{
 			detail: &metadata.AdminContentDetail{
 				Meta: &types.ContentMeta{
-					ContentID:  "minimal",
+					ContentID:  "66666666-6666-6666-6666-666666666666",
 					ContentType: "dash",
 				},
 				Blobs:     nil,
@@ -754,7 +769,7 @@ func TestContentsDetail_NilBlobsAndLocations(t *testing.T) {
 
 	dlog := &mockPinCountReader{}
 	srv := makeContentsServer(mc, dlog, nil)
-	resp := contentsGet(t, srv, "/v1/admin/contents/minimal", contentsAuthToken(t))
+	resp := contentsGet(t, srv, "/v1/admin/contents/66666666-6666-6666-6666-666666666666", contentsAuthToken(t))
 
 	detail := decodeContentDetail(t, resp)
 	if detail.Blobs == nil {
@@ -797,7 +812,7 @@ func TestContentsRoutes_NoPrefixClash(t *testing.T) {
 		t.Errorf("list status = %d, want 200", resp.StatusCode)
 	}
 
-	resp = contentsGet(t, srv, "/v1/admin/contents/some-id-here", token)
+	resp = contentsGet(t, srv, "/v1/admin/contents/77777777-7777-7777-7777-777777777777", token)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("detail status = %d, want 404", resp.StatusCode)
 	}
@@ -859,7 +874,7 @@ func TestDeleteContent_HappyPath(t *testing.T) {
 	}{
 		ContentMetaReader: &mockContentMetaReader{
 			meta: &types.ContentMeta{
-				ContentID:   "content-to-delete",
+				ContentID:   "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
 				ContentType: "dash",
 			},
 		},
@@ -868,14 +883,14 @@ func TestDeleteContent_HappyPath(t *testing.T) {
 	srv := makeContentsServer(mc, &mockPinCountReader{}, deleter)
 	token := contentsAuthToken(t)
 
-	resp := contentsDelete(t, srv, "/v1/admin/contents/content-to-delete", token)
+	resp := contentsDelete(t, srv, "/v1/admin/contents/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", token)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 
 	body := decodeDeleteResponse(t, resp)
-	if body.ContentID != "content-to-delete" {
-		t.Errorf("content_id = %q, want content-to-delete", body.ContentID)
+	if body.ContentID != "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" {
+		t.Errorf("content_id = %q", body.ContentID)
 	}
 	if !body.PendingDelete {
 		t.Error("pending_delete = false, want true")
@@ -894,7 +909,7 @@ func TestDeleteContent_AlreadyDeleted(t *testing.T) {
 	}{
 		ContentMetaReader: &mockContentMetaReader{
 			meta: &types.ContentMeta{
-				ContentID:   "already-deleted-content",
+				ContentID:   "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
 				ContentType: "dash",
 				DeletedAt:   &deletedAt,
 			},
@@ -904,13 +919,13 @@ func TestDeleteContent_AlreadyDeleted(t *testing.T) {
 	srv := makeContentsServer(mc, &mockPinCountReader{}, deleter)
 	token := contentsAuthToken(t)
 
-	resp := contentsDelete(t, srv, "/v1/admin/contents/already-deleted-content", token)
+	resp := contentsDelete(t, srv, "/v1/admin/contents/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", token)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 
 	body := decodeDeleteResponse(t, resp)
-	if body.ContentID != "already-deleted-content" {
+	if body.ContentID != "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" {
 		t.Errorf("content_id = %q", body.ContentID)
 	}
 	if !body.PendingDelete {
@@ -934,7 +949,7 @@ func TestDeleteContent_NotFound(t *testing.T) {
 	srv := makeContentsServer(mc, &mockPinCountReader{}, &mockContentDeleter{})
 	token := contentsAuthToken(t)
 
-	resp := contentsDelete(t, srv, "/v1/admin/contents/nonexistent", token)
+	resp := contentsDelete(t, srv, "/v1/admin/contents/cccccccc-cccc-cccc-cccc-cccccccccccc", token)
 	if resp.StatusCode != http.StatusNotFound {
 		t.Errorf("status = %d, want 404", resp.StatusCode)
 	}
@@ -953,7 +968,7 @@ func TestDeleteContent_MetadataError(t *testing.T) {
 	srv := makeContentsServer(mc, &mockPinCountReader{}, &mockContentDeleter{})
 	token := contentsAuthToken(t)
 
-	resp := contentsDelete(t, srv, "/v1/admin/contents/any-id", token)
+	resp := contentsDelete(t, srv, "/v1/admin/contents/dddddddd-dddd-dddd-dddd-dddddddddddd", token)
 	status, msg := decodeError(t, resp)
 	if status != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500", status)
@@ -971,7 +986,7 @@ func TestDeleteContent_DeleterError(t *testing.T) {
 	}{
 		ContentMetaReader: &mockContentMetaReader{
 			meta: &types.ContentMeta{
-				ContentID:   "fail-delete",
+				ContentID:   "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee",
 				ContentType: "dash",
 			},
 		},
@@ -980,7 +995,7 @@ func TestDeleteContent_DeleterError(t *testing.T) {
 	srv := makeContentsServer(mc, &mockPinCountReader{}, deleter)
 	token := contentsAuthToken(t)
 
-	resp := contentsDelete(t, srv, "/v1/admin/contents/fail-delete", token)
+	resp := contentsDelete(t, srv, "/v1/admin/contents/eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee", token)
 	status, msg := decodeError(t, resp)
 	if status != http.StatusInternalServerError {
 		t.Errorf("status = %d, want 500", status)
@@ -998,7 +1013,7 @@ func TestDeleteContent_NoToken(t *testing.T) {
 	}{}
 	srv := makeContentsServer(mc, &mockPinCountReader{}, &mockContentDeleter{})
 
-	resp := contentsDelete(t, srv, "/v1/admin/contents/any-id", "")
+	resp := contentsDelete(t, srv, "/v1/admin/contents/ffffffff-ffff-ffff-ffff-ffffffffffff", "")
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", resp.StatusCode)
 	}
@@ -1025,7 +1040,7 @@ func TestDeleteContent_SubsequentGetShowsPendingDelete(t *testing.T) {
 	detailReader := &mockContentsDetailReader{
 		detail: &metadata.AdminContentDetail{
 			Meta: &types.ContentMeta{
-				ContentID:   "post-delete-check",
+				ContentID:   "deadbeef-dead-beef-dead-beefdeadbeef",
 				ContentType: "dash",
 				DeletedAt:   &deletedAt,
 			},
@@ -1042,7 +1057,7 @@ func TestDeleteContent_SubsequentGetShowsPendingDelete(t *testing.T) {
 	srv := makeContentsServer(mc, &mockPinCountReader{}, &mockContentDeleter{})
 	token := contentsAuthToken(t)
 
-	resp := contentsGet(t, srv, "/v1/admin/contents/post-delete-check", token)
+	resp := contentsGet(t, srv, "/v1/admin/contents/deadbeef-dead-beef-dead-beefdeadbeef", token)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("detail status = %d, want 200", resp.StatusCode)
 	}

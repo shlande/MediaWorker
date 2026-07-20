@@ -460,7 +460,7 @@ func TestAudit_ContentDelete(t *testing.T) {
 	}{
 		ContentsListReader:   &mockContentsListReader{},
 		ContentsDetailReader: &mockContentsDetailReader{},
-		ContentMetaReader:    &mockContentMetaReader{meta: &types.ContentMeta{ContentID: "content-to-delete"}},
+		ContentMetaReader:    &mockContentMetaReader{meta: &types.ContentMeta{ContentID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}},
 	}
 	dlog := &mockPinCountReader{counts: map[string]int{}}
 	deleter := &mockContentDeleter{}
@@ -470,21 +470,21 @@ func TestAudit_ContentDelete(t *testing.T) {
 	ts := serveMux(t, srv)
 	token := signAuditToken(t, []byte(contentsTestSecret), "admin")
 
-	if status, _ := doRaw(t, ts, http.MethodDelete, "/v1/admin/contents/content-to-delete", token, nil); status != http.StatusOK {
+	if status, _ := doRaw(t, ts, http.MethodDelete, "/v1/admin/contents/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", token, nil); status != http.StatusOK {
 		t.Fatalf("delete status = %d, want 200", status)
 	}
 	deleter.err = errors.New("db down")
-	if status, _ := doRaw(t, ts, http.MethodDelete, "/v1/admin/contents/content-to-delete", token, nil); status != http.StatusInternalServerError {
+	if status, _ := doRaw(t, ts, http.MethodDelete, "/v1/admin/contents/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", token, nil); status != http.StatusInternalServerError {
 		t.Fatalf("delete status = %d, want 500", status)
 	}
 
 	if len(cap.entries) != 2 {
 		t.Fatalf("entries = %d, want 2", len(cap.entries))
 	}
-	if e := cap.entries[0]; e.Kind != "content" || e.Action != "delete" || e.Result != "ok" || e.Target != "content-to-delete" || e.Actor != "admin" {
+	if e := cap.entries[0]; e.Kind != "content" || e.Action != "delete" || e.Result != "ok" || e.Target != "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" || e.Actor != "admin" {
 		t.Errorf("unexpected ok entry: %+v", e)
 	}
-	if e := cap.entries[1]; e.Kind != "content" || e.Action != "delete" || e.Result != "fail" || e.Target != "content-to-delete" {
+	if e := cap.entries[1]; e.Kind != "content" || e.Action != "delete" || e.Result != "fail" || e.Target != "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa" {
 		t.Errorf("unexpected fail entry: %+v", e)
 	}
 }
