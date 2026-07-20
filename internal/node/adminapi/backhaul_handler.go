@@ -79,7 +79,21 @@ type backhaulResponse struct {
 // decision D1, this function does not edit main.go; todo 49 consolidates all
 // node-admin route mounts.
 func RegisterBackhaulRoutes(srv *Server, deps BackhaulDeps) {
-	srv.Handle("GET /v1/backhaul", func(w http.ResponseWriter, r *http.Request) {
+	srv.Handle("GET /v1/backhaul", handleBackhaul(deps))
+}
+
+// handleBackhaul 返回 L4 回传链路状态（仅 L4 节点可用）。
+//
+//	@Summary		回传链路状态
+//	@Description	返回带宽使用率、24h 成功率、P95 延迟、linkpool 命中率与网盘账号列表。非 L4 节点返回 409。
+//	@Tags			node-admin
+//	@Produce		json
+//	@Success		200	{object}	backhaulResponse
+//	@Failure		409	{object}	types.ErrorResponse
+//	@Security		AdminToken
+//	@Router			/v1/backhaul [get]
+func handleBackhaul(deps BackhaulDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		if !deps.L4Enabled {
 			WriteError(w, http.StatusConflict, "node is not L4; backhaul unavailable")
 			return
@@ -118,7 +132,7 @@ func RegisterBackhaulRoutes(srv *Server, deps BackhaulDeps) {
 			Linkpool:       lp,
 			Accounts:       accounts,
 		})
-	})
+	}
 }
 
 func mapAccount(a *accountpool.Account) backhaulAccount {

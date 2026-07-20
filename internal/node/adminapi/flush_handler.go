@@ -29,9 +29,25 @@ type flushResponse struct {
 // function does not edit main.go; todo 49 consolidates all node-admin route
 // mounts.
 func RegisterFlushRoutes(srv *Server, warmCache WarmCacheFlusher) {
+	srv.Handle("POST /v1/admin/flush-cache", handleFlushCache(warmCache))
+}
+
+// handleFlushCache 异步冲刷 WarmCache 分区。
+//
+//	@Summary		冲刷缓存分区
+//	@Description	接受 partition 列表（当前仅支持 "warm"），立即返回 202 并异步执行冲刷；并发的第二次 POST 由 singleflight 去重。
+//	@Tags			node-admin
+//	@Accept			json
+//	@Param			body	body	flushRequest	true	"分区列表"
+//	@Success		202		{object}	flushResponse
+//	@Failure		400		{object}	types.ErrorResponse
+//	@Failure		409		{object}	types.ErrorResponse
+//	@Security		AdminToken
+//	@Router			/v1/admin/flush-cache [post]
+func handleFlushCache(warmCache WarmCacheFlusher) http.HandlerFunc {
 	var sfg singleflight.Group
 
-	srv.Handle("POST /v1/admin/flush-cache", func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
 		var req flushRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			WriteError(w, http.StatusBadRequest, "invalid request body")
@@ -78,5 +94,5 @@ func RegisterFlushRoutes(srv *Server, warmCache WarmCacheFlusher) {
 				return nil, warmCache.Flush(context.Background())
 			})
 		}()
-	})
+	}
 }

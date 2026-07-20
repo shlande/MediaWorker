@@ -113,7 +113,21 @@ type peerView struct {
 // all node-admin route mounts and constructs NetworkDeps from the live
 // components.
 func RegisterNetworkRoutes(srv *Server, deps NetworkDeps) {
-	srv.Handle("GET /v1/network", func(w http.ResponseWriter, r *http.Request) {
+	srv.Handle("GET /v1/network", handleNetwork(deps))
+	srv.Handle("GET /v1/peers", handlePeers(deps))
+}
+
+// handleNetwork 返回节点网络状态（监听地址、连接、DHT、GossipSub、NAT、hash ring）。
+//
+//	@Summary		网络状态
+//	@Description	返回监听地址、入站/出站连接数、DHT 路由表大小、GossipSub 订阅状态、NAT 可访问性与 hash ring 位置。
+//	@Tags			node-admin
+//	@Produce		json
+//	@Success		200	{object}	networkResponse
+//	@Security		AdminToken
+//	@Router			/v1/network [get]
+func handleNetwork(deps NetworkDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		resp := networkResponse{
 			ListenAddrs: listenAddrStrings(deps.Host),
 			Conn:        countConns(deps.Conns),
@@ -138,9 +152,20 @@ func RegisterNetworkRoutes(srv *Server, deps NetworkDeps) {
 			}
 		}
 		WriteJSON(w, http.StatusOK, resp)
-	})
+	}
+}
 
-	srv.Handle("GET /v1/peers", func(w http.ResponseWriter, r *http.Request) {
+// handlePeers 返回节点已知的对等点列表。
+//
+//	@Summary		对等点列表
+//	@Description	返回 peerstore 中所有已知对等点的身份、能力、评分、过期状态与最近活跃时间。
+//	@Tags			node-admin
+//	@Produce		json
+//	@Success		200	{array}		peerView
+//	@Security		AdminToken
+//	@Router			/v1/peers [get]
+func handlePeers(deps NetworkDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		out := []peerView{}
 		if deps.Peers != nil {
 			for _, e := range deps.Peers.List() {
@@ -155,7 +180,7 @@ func RegisterNetworkRoutes(srv *Server, deps NetworkDeps) {
 			}
 		}
 		WriteJSON(w, http.StatusOK, out)
-	})
+	}
 }
 
 // listenAddrStrings formats host listen addresses (logAddrs pattern).

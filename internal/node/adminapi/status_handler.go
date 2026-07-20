@@ -174,7 +174,20 @@ func RegisterStatusRoutes(srv *Server, deps StatusDeps) {
 		now = time.Now
 	}
 
-	srv.Handle("GET /v1/status", func(w http.ResponseWriter, r *http.Request) {
+	srv.Handle("GET /v1/status", handleStatus(deps, now))
+}
+
+// handleStatus 返回节点运行状态巡检信息。
+//
+//	@Summary		节点状态
+//	@Description	返回节点身份、能力、JWT 状态、连接数、缓存命中率与 TTFB P95。
+//	@Tags			node-admin
+//	@Produce		json
+//	@Success		200	{object}	statusResponse
+//	@Security		AdminToken
+//	@Router			/v1/status [get]
+func handleStatus(deps StatusDeps, now func() time.Time) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		resp := statusResponse{
 			PeerID:       deps.PeerID,
 			Capabilities: capabilityNames(deps.Capabilities),
@@ -222,5 +235,5 @@ func RegisterStatusRoutes(srv *Server, deps StatusDeps) {
 		}
 
 		WriteJSON(w, http.StatusOK, resp)
-	})
+	}
 }

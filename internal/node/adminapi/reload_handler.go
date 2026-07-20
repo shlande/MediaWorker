@@ -41,6 +41,16 @@ func (rl *Reloader) RegisterReloadRoutes(srv *Server) {
 	srv.Handle("POST /v1/admin/reload-config", rl.handleReload)
 }
 
+// handleReload 热加载配置文件。
+//
+//	@Summary		热加载配置
+//	@Description	重新加载配置文件并应用可热更新的白名单字段（JWT 刷新间隔、管理令牌等），需要重启的字段返回 not_applied。
+//	@Tags			node-admin
+//	@Produce		json
+//	@Success		200	{object}	config.ReloadReport
+//	@Failure		422	{object}	types.ErrorResponse
+//	@Security		AdminToken
+//	@Router			/v1/admin/reload-config [post]
 func (rl *Reloader) handleReload(w http.ResponseWriter, _ *http.Request) {
 	fresh, err := config.LoadConfig(rl.path)
 	if err != nil {

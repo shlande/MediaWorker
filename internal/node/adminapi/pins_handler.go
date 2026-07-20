@@ -74,6 +74,18 @@ func RegisterPinsRoutes(srv *Server, pinStore any, planLog PinPlanLogReader) {
 
 // ─── GET /v1/pins ────────────────────────────────────────────────────────────
 
+// handlePinsList 返回已钉扎的 blob 列表，支持 role/content_id/ready 过滤。
+//
+//	@Summary		钉扎列表
+//	@Description	返回已钉扎的 blob 条目，支持按 role、content_id、ready 过滤。
+//	@Tags			node-admin
+//	@Produce		json
+//	@Param			role		query	string	false	"按角色过滤"
+//	@Param			content_id	query	string	false	"按内容 ID 过滤"
+//	@Param			ready		query	bool	false	"按就绪状态过滤"
+//	@Success		200			{object}	pinsResponse
+//	@Security		AdminToken
+//	@Router			/v1/pins [get]
 func handlePinsList(ps PinListReader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if ps == nil {
@@ -128,6 +140,17 @@ func handlePinsList(ps PinListReader) http.HandlerFunc {
 
 // ─── POST /v1/pins/{hash}/retry ──────────────────────────────────────────────
 
+// handlePinsRetry 重新拉取失败的钉扎项。
+//
+//	@Summary		重试钉扎
+//	@Description	将指定 blob 哈希对应的失败钉扎项重新加入拉取队列。
+//	@Tags			node-admin
+//	@Produce		json
+//	@Param			hash	path	string	true	"blob SHA-256 哈希"
+//	@Success		202		{object}	map[string]string
+//	@Failure		404		{object}	types.ErrorResponse
+//	@Security		AdminToken
+//	@Router			/v1/pins/{hash}/retry [post]
 func handlePinsRetry(ps PinRetrier) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if ps == nil {
@@ -147,6 +170,16 @@ func handlePinsRetry(ps PinRetrier) http.HandlerFunc {
 
 // ─── GET /v1/pin-plans/recent ────────────────────────────────────────────────
 
+// handlePinPlansRecent 返回最近收到的钉扎计划记录。
+//
+//	@Summary		最近的钉扎计划
+//	@Description	返回 syncbroadcaster 最近收到的 PinPlan 记录，可选 limit 参数限制条数。
+//	@Tags			node-admin
+//	@Produce		json
+//	@Param			limit	query	int	false	"返回条数上限"
+//	@Success		200		{array}	planlog.Record
+//	@Security		AdminToken
+//	@Router			/v1/pin-plans/recent [get]
 func handlePinPlansRecent(pl PinPlanLogReader) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if pl == nil {

@@ -57,7 +57,20 @@ func prefixPartition(pi types.PinSpaceInfo) *cachePartition {
 // orchestrator decision D1, this function does not edit main.go; todo 49
 // consolidates all node-admin route mounts.
 func RegisterCacheRoutes(srv *Server, pinStore PinSpaceQuerier, warmCache WarmCacheReader) {
-	srv.Handle("GET /v1/cache", func(w http.ResponseWriter, r *http.Request) {
+	srv.Handle("GET /v1/cache", handleCache(pinStore, warmCache))
+}
+
+// handleCache 返回各缓存分区用量与驱逐计数。
+//
+//	@Summary		缓存状态
+//	@Description	返回 prefix（PinStore）、warm（WarmCache）分区用量、blob 数与驱逐计数器。
+//	@Tags			node-admin
+//	@Produce		json
+//	@Success		200	{object}	cacheResponse
+//	@Security		AdminToken
+//	@Router			/v1/cache [get]
+func handleCache(pinStore PinSpaceQuerier, warmCache WarmCacheReader) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		var prefix *cachePartition
 		if pinStore != nil {
 			prefix = prefixPartition(pinStore.QuerySpace())
@@ -81,5 +94,5 @@ func RegisterCacheRoutes(srv *Server, pinStore PinSpaceQuerier, warmCache WarmCa
 			Cold:            nil, // cold cache unwired — no cold storage layer at this time
 			EvictionCounter: evictionCounter{Warm1h: warm1h, Cold1h: 0},
 		})
-	})
+	}
 }

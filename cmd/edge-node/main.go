@@ -682,21 +682,11 @@ func main() {
 	// -------------------------------------------------------------------
 	httpListen := defaultHTTPListen
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /blob/{hash}", func(w http.ResponseWriter, r *http.Request) {
-		blobHash := r.PathValue("hash")
-		ctx, reqCancel := context.WithTimeout(r.Context(), 30*time.Second)
-		defer reqCancel()
-
-		logger.Info("blob request", "hash", blobHash)
-		if err := router.HandleBlobRequest(ctx, w, blobHash); err != nil {
-			logger.Error("blob request failed", "hash", blobHash, "err", err)
-			http.Error(w, "blob not found", http.StatusNotFound)
-		}
-	})
+	mux.HandleFunc("GET /blob/{hash}", handleGetBlob(router, logger))
 
 	// T20 — /metrics endpoint on the same port as /blob. No auth — see
 	// step 10a for the intranet deployment assumption.
-	mux.Handle("GET /metrics", metrics.HTTPHandler())
+	mux.Handle("GET /metrics", handleMetrics(metrics.HTTPHandler()))
 
 	httpSrv := &http.Server{
 		Addr:    httpListen,
@@ -718,9 +708,7 @@ func main() {
 	// -------------------------------------------------------------------
 	if cfg.AdminAPI.Listen != "" {
 		adminSrv := nodeadmin.NewServer(cfg.AdminAPI.Token)
-		adminSrv.HandleUnauthenticated("GET /v1/healthz", func(w http.ResponseWriter, r *http.Request) {
-			nodeadmin.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-		})
+		adminSrv.HandleUnauthenticated("GET /v1/healthz", handleAdminHealthz())
 
 		// NODE ADMIN ROUTES: consolidated mounts (todo 49). Typed-nil guard:
 		// components that are nil on this node (pinStore/warmCache when their
@@ -825,6 +813,60 @@ func main() {
 	}
 
 	logger.Info("shutdown complete")
+}
+
+// ---------------------------------------------------------------------------
+// HTTP handler functions (extracted from anonymous closures for swag
+// annotations — swag only parses ast.FuncDecl doc comments).
+// ---------------------------------------------------------------------------
+
+// handleGetBlob 按 SHA-256 哈希取 blob 字节流。
+//
+//	@Summary		按哈希取 blob 字节流
+//	@Description	根据 SHA-256 哈希值从缓存或对等节点获取 blob 内容并返回二进制流。
+//	@Tags			blob
+//	@Param			hash	path	string	true	"blob SHA-256 哈希"
+//	@Produce		application/octet-stream
+//	@Success		200	{file}		binary
+//	@Failure		404	{string}	string
+//	@Router			/blob/{hash} [get]
+func handleGetBlob(router *routing.EdgeRouter, logger *slog.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		blobHash := r.PathValue("hash")
+		ctx, reqCancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer reqCancel()
+
+		logger.Info("blob request", "hash", blobHash)
+		if err := router.HandleBlobRequest(ctx, w, blobHash); err != nil {
+			logger.Error("blob request failed", "hash", blobHash, "err", err)
+			http.Error(w, "blob not found", http.StatusNotFound)
+		}
+	}
+}
+
+// handleMetrics 代理 Prometheus 指标端点。
+//
+//	@Summary		节点指标
+//	@Description	Prometheus 文本格式的运行指标，包括缓存命中、对等点请求等度量。
+//	@Tags			ops
+//	@Produce		text/plain
+//	@Success		200	{string}	string
+//	@Router			/metrics [get]
+func handleMetrics(h http.Handler) http.HandlerFunc {
+	return h.ServeHTTP
+}
+
+// handleAdminHealthz 管理接口健康探测。
+//
+//	@Summary		管理接口健康探测
+//	@Description	返回 {"status":"ok"} 表示节点管理 API 可正常响应。
+//	@Tags			ops
+//	@Success		200	{object}	map[string]string
+//	@Router			/v1/healthz [get]
+func handleAdminHealthz() http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		nodeadmin.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	}
 }
 
 // ---------------------------------------------------------------------------
