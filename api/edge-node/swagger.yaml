@@ -499,6 +499,10 @@ paths:
             items:
               $ref: '#/definitions/planlog.Record'
             type: array
+        "400":
+          description: limit must be a positive integer
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
       security:
       - AdminToken: []
       summary: 最近的钉扎计划
@@ -527,6 +531,10 @@ paths:
           description: OK
           schema:
             $ref: '#/definitions/adminapi.pinsResponse'
+        "400":
+          description: ready must be true or false
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
       security:
       - AdminToken: []
       summary: 钉扎列表

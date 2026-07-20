@@ -120,31 +120,27 @@ func listWhitelistHandler(wlStore WhitelistStoreReader, reg WhitelistIssuanceRea
 // addWhitelistHandler returns an http.Handler for POST /v1/admin/whitelist.
 //
 // Body: {"peer_id": "<libp2p PeerId>"}
+// Validates peer_id format with peer.Decode (bad format → 400).
+// Double-writes to both the persistent store and the in-memory PeerIdSet
+// so JWT issuance (service.go:123) immediately reads the updated set.
+// Idempotent: duplicate POST overwrites the existing entry (200 for existing,
+// 201 for new). The choice is locked here with a comment for tests.
+// addedBy comes from the authenticated user (UserFromCtx), not the body.
 //
-//   - Validates peer_id format with peer.Decode (bad format → 400).
-//
-//   - Double-writes to both the persistent store and the in-memory PeerIdSet
-//     so JWT issuance (service.go:123) immediately reads the updated set.
-//
-//   - Idempotent: duplicate POST overwrites the existing entry (200 for existing,
-//     201 for new). The choice is locked here with a comment for tests.
-//
-//   - addedBy comes from the authenticated user (UserFromCtx), not the body.
-//
-//     @Summary		添加 L4 白名单
-//     @Description	将节点加入 L4 白名单，下一个 JWT 更新周期（≤1h）生效
-//     @Tags			admin-whitelist
-//     @Accept			json
-//     @Produce		json
-//     @Param			request	body		whitelistPostBody	true	"白名单请求"
-//     @Success		201		{object}	whitelistPostResponse
-//     @Success		200		{object}	whitelistPostResponse	"已存在（幂等）"
-//     @Failure		400		{object}	types.ErrorResponse		"无效 peer_id"
-//     @Failure		401		{object}	types.ErrorResponse
-//     @Failure		403		{object}	types.ErrorResponse
-//     @Failure		500		{object}	types.ErrorResponse
-//     @Security		AdminBearer
-//     @Router			/v1/admin/whitelist [post]
+//	@Summary		添加 L4 白名单
+//	@Description	将节点加入 L4 白名单，下一个 JWT 更新周期（≤1h）生效
+//	@Tags			admin-whitelist
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		whitelistPostBody	true	"白名单请求"
+//	@Success		201		{object}	whitelistPostResponse
+//	@Success		200		{object}	whitelistPostResponse	"已存在（幂等）"
+//	@Failure		400		{object}	types.ErrorResponse		"无效 peer_id"
+//	@Failure		401		{object}	types.ErrorResponse
+//	@Failure		403		{object}	types.ErrorResponse
+//	@Failure		500		{object}	types.ErrorResponse
+//	@Security		AdminBearer
+//	@Router			/v1/admin/whitelist [post]
 func addWhitelistHandler(wlStore WhitelistStoreReader, ps WhitelistSet, reg WhitelistIssuanceReader, audit AuditRecorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var body whitelistPostBody
@@ -203,23 +199,21 @@ func addWhitelistHandler(wlStore WhitelistStoreReader, ps WhitelistSet, reg Whit
 
 // deleteWhitelistHandler returns an http.Handler for DELETE /v1/admin/whitelist/{peer_id}.
 //
-//   - Checks existence via ps.Contains before removal (not present → 404).
+// Checks existence via ps.Contains before removal (not present → 404).
+// Double-removes from both the persistent store and the in-memory PeerIdSet.
+// Response carries the effective_after note (M3 contract wording).
 //
-//   - Double-removes from both the persistent store and the in-memory PeerIdSet.
-//
-//   - Response carries the effective_after note (M3 contract wording).
-//
-//     @Summary		移除 L4 白名单
-//     @Description	从白名单移除节点，下一个 JWT 更新周期（≤1h）生效
-//     @Tags			admin-whitelist
-//     @Param			peer_id	path	string	true	"libp2p PeerID"
-//     @Success		204		"No Content"
-//     @Failure		401		{object}	types.ErrorResponse
-//     @Failure		403		{object}	types.ErrorResponse
-//     @Failure		404		{object}	types.ErrorResponse	"节点不在白名单中"
-//     @Failure		500		{object}	types.ErrorResponse
-//     @Security		AdminBearer
-//     @Router			/v1/admin/whitelist/{peer_id} [delete]
+//	@Summary		移除 L4 白名单
+//	@Description	从白名单移除节点，下一个 JWT 更新周期（≤1h）生效
+//	@Tags			admin-whitelist
+//	@Param			peer_id	path	string	true	"libp2p PeerID"
+//	@Success		204		"No Content"
+//	@Failure		401		{object}	types.ErrorResponse
+//	@Failure		403		{object}	types.ErrorResponse
+//	@Failure		404		{object}	types.ErrorResponse	"节点不在白名单中"
+//	@Failure		500		{object}	types.ErrorResponse
+//	@Security		AdminBearer
+//	@Router			/v1/admin/whitelist/{peer_id} [delete]
 func deleteWhitelistHandler(wlStore WhitelistStoreReader, ps WhitelistSet, audit AuditRecorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		peerIDStr := r.PathValue("peer_id")

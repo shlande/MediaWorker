@@ -84,6 +84,7 @@ func RegisterPinsRoutes(srv *Server, pinStore any, planLog PinPlanLogReader) {
 //	@Param			content_id	query	string	false	"按内容 ID 过滤"
 //	@Param			ready		query	bool	false	"按就绪状态过滤"
 //	@Success		200			{object}	pinsResponse
+//	@Failure		400			{object}	types.ErrorResponse	"ready must be true or false"
 //	@Security		AdminToken
 //	@Router			/v1/pins [get]
 func handlePinsList(ps PinListReader) http.HandlerFunc {
@@ -178,6 +179,7 @@ func handlePinsRetry(ps PinRetrier) http.HandlerFunc {
 //	@Produce		json
 //	@Param			limit	query	int	false	"返回条数上限"
 //	@Success		200		{array}	planlog.Record
+//	@Failure		400		{object}	types.ErrorResponse	"limit must be a positive integer"
 //	@Security		AdminToken
 //	@Router			/v1/pin-plans/recent [get]
 func handlePinPlansRecent(pl PinPlanLogReader) http.HandlerFunc {
