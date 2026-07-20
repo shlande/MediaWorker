@@ -5,6 +5,26 @@
 // an HTTP server for client blob requests.
 //
 // The binary does NOT import any internal/controlplane/ package.
+//
+// @title MediaWorker Edge-Node API
+// @version 1.0
+// @description 边缘节点 HTTP API：终端 blob 分发、节点本地管理 API 与 Prometheus 指标。
+// @host localhost:8080
+// @BasePath /
+//
+// @securityDefinitions.apikey AdminToken
+// @in header
+// @name X-Admin-Token
+// @description 节点本地管理 API 令牌
+//
+// @tag.name blob
+// @tag.description 终端 blob 分发
+//
+// @tag.name node-admin
+// @tag.description 节点本地管理
+//
+// @tag.name ops
+// @tag.description 运维与指标
 package main
 
 import (

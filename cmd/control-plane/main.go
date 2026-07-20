@@ -1,5 +1,68 @@
 // Control-plane binary: wires JWT HTTP server + DHT bootstrap host +
 // SyncBroadcaster + MetadataClient + PinOrchestrator into a single process.
+//
+// @title MediaWorker Control-Plane API
+// @version 1.0
+// @description 控制面 HTTP API：节点能力 JWT 签发、blob 存储位置查询、管理后台 API 与 Prometheus 指标。
+// @host localhost:8443
+// @BasePath /
+//
+// @securityDefinitions.apikey NodeBearer
+// @in header
+// @name Authorization
+// @description 节点能力 JWT，由 POST /v1/node/jwt 签发
+//
+// @securityDefinitions.apikey AdminBearer
+// @in header
+// @name Authorization
+// @description 管理后台 UserToken，由 POST /v1/auth/login 签发
+//
+// @securityDefinitions.apikey AlertWebhookToken
+// @in header
+// @name X-Alert-Token
+// @description Alertmanager webhook 令牌
+//
+// @tag.name node-auth
+// @tag.description 节点能力 JWT 签发与验证
+//
+// @tag.name locations
+// @tag.description blob 存储位置查询
+//
+// @tag.name admin-auth
+// @tag.description 管理后台身份认证
+//
+// @tag.name admin-accounts
+// @tag.description 云盘账号管理
+//
+// @tag.name admin-contents
+// @tag.description 内容管理
+//
+// @tag.name admin-nodes
+// @tag.description 节点管理
+//
+// @tag.name admin-whitelist
+// @tag.description L4 白名单管理
+//
+// @tag.name admin-pin
+// @tag.description 内容固定策略
+//
+// @tag.name admin-quota
+// @tag.description 速率配额管理
+//
+// @tag.name admin-alerts
+// @tag.description 告警配置与 webhook
+//
+// @tag.name admin-audit
+// @tag.description 操作审计日志
+//
+// @tag.name admin-overview
+// @tag.description 管理后台概览
+//
+// @tag.name admin-vendors
+// @tag.description 云盘供应商档案
+//
+// @tag.name ops
+// @tag.description 运维与指标
 package main
 
 import (

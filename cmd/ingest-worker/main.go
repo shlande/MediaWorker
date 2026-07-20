@@ -3,6 +3,18 @@
 // uploads blobs to cloud drives, writes metadata transactions to PG, and
 // publishes ContentIngestedEvent to the control-plane SyncBroadcaster over
 // libp2p sync channel (T8: 事件回路接通).
+//
+// @title MediaWorker Ingest-Worker API
+// @version 1.0
+// @description 入库 Worker HTTP API：multipart 内容上传入库、存活探针与 Prometheus 指标。
+// @host localhost:8080
+// @BasePath /
+//
+// @tag.name ingest
+// @tag.description 内容上传入库
+//
+// @tag.name ops
+// @tag.description 运维与指标
 package main
 
 import (

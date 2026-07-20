@@ -15,6 +15,12 @@ import (
 	"github.com/shlande/mediaworker/internal/types"
 )
 
+// IngestResponse 是 POST /ingest/{content_type} 成功响应体（swagger 文档模型），
+// 与 cmd/ingest-worker handleIngest 写出的 {"content_id": ...} 一致。
+type IngestResponse struct {
+	ContentID string `json:"content_id"`
+}
+
 // ─── Preprocessing (per-content-type) ────────────────────────────────
 
 // ContentIngester is a per-content-type preprocessor. Each concrete type

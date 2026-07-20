@@ -341,6 +341,13 @@ const (
 	EventContentIngested    = "CONTENT_INGESTED"
 )
 
+// ErrorResponse 是各 HTTP 服务统一错误响应体（swagger 文档模型）。
+// 线格式与各包的 writeHTTPError/writeJSONError/WriteError 写出的
+// map[string]string{"error": msg} 完全一致。
+type ErrorResponse struct {
+	Error string `json:"error"`
+}
+
 // Event is a generic event with a type tag and opaque payload (for SyncBroadcasterClient).
 type Event struct {
 	Type    string `json:"type"`
