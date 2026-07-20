@@ -37,3 +37,24 @@ Must-NOT guards:
 - Retry does not block (202 accepted, fetchPinnedBlob runs in goroutine)
 - No main.go mount (RegisterPinsRoutes per D1)
 - No edits outside pins_handler.go/pins_handler_test.go/.omo/evidence/.omo/notepads
+
+# 2026-07-20: Copylocks fix (go vet compliance)
+
+Fix: 6b41e42 fix(node-admin): avoid PinEntry value copies (vet copylocks)
+
+Problem: `go vet ./...` reported 3 copylocks warnings — PinEntry contains
+sync/atomic.Bool which embeds noCopy, so value-copying via range/append
+is flagged.
+
+Changes:
+- pins_handler.go:102 — `for _, e := range entries` → `for i := range entries { e := &entries[i] }`
+- pins_handler_test.go:26 — same pattern in fakePinStoreDB.List
+- pins_handler_test.go:36 — `append(out, e)` → `append(out, snapshotEntry(e))`
+  where snapshotEntry is a named-return helper that constructs a fresh
+  PinEntry by scalar fields + atomic.Store (same copylocks-clean pattern
+  as pinstore.snapshotPinEntry).
+
+Verification:
+- go vet ./...: clean (zero warnings)
+- go test ./internal/node/adminapi/ -run TestPins -count=1: 22/22 PASS
+- go test ./internal/node/pinstore/ -count=1: PASS
