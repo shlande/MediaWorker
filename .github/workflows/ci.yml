@@ -52,6 +52,32 @@ jobs:
           version: latest
           args: --timeout 5m
 
+  swagger:
+    name: Swagger drift check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install swag
+        run: go install github.com/swaggo/swag/cmd/swag@v1.16.6
+      - name: Set up Node
+        uses: actions/setup-node@v4
+      - name: Validate specs
+        run: |
+          npx --yes @apidevtools/swagger-cli validate api/control-plane/swagger.json
+          npx --yes @apidevtools/swagger-cli validate api/edge-node/swagger.json
+          npx --yes @apidevtools/swagger-cli validate api/ingest-worker/swagger.json
+      - name: Regenerate specs
+        run: bash scripts/gen-swagger.sh
+      - name: Route reconciliation
+        run: bash scripts/check-swagger-routes.sh
+      - name: Drift check
+        run: git diff --exit-code -- api/
+
   docker-amd64:
     name: Docker (amd64)
     runs-on: ubuntu-latest
