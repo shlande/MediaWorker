@@ -76,7 +76,7 @@ func (c *PromClient) QueryScalar(ctx context.Context, promQL string) (float64, b
 	if err != nil {
 		return 0, false, fmt.Errorf("%w: %w", ErrPromRequest, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {

@@ -2,7 +2,6 @@ package adminapi
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -200,10 +199,6 @@ func deleteWhitelistHandler(wlStore WhitelistStoreReader, ps WhitelistSet, audit
 		w.WriteHeader(http.StatusNoContent)
 	})
 }
-
-// ─── Error sentinel ────────────────────────────────────────────────────────
-
-var errWhitelistPeerNotFound = errors.New("whitelist peer not found")
 
 // ─── Route registration (for todo 54) ──────────────────────────────────────
 

@@ -340,10 +340,10 @@ func TestWhitelistStore_listAll_readsLegacyFormat(t *testing.T) {
 		return txn.Set(legacyKey, []byte{1})
 	})
 	if err != nil {
-		legacyDB.Close()
+		_ = legacyDB.Close()
 		t.Fatalf("write legacy value: %v", err)
 	}
-	legacyDB.Close()
+	_ = legacyDB.Close()
 
 	// When: reopen the store and ListAll.
 	store3, err := jwt.NewWhitelistStore(dbPath)
@@ -419,10 +419,10 @@ func TestWhitelistStore_listAll_corruptJSON_doesNotAbort(t *testing.T) {
 		return txn.Set(corruptKey, []byte("this is not valid json {{{"))
 	})
 	if err != nil {
-		corruptDB.Close()
+		_ = corruptDB.Close()
 		t.Fatalf("write corrupt value: %v", err)
 	}
-	corruptDB.Close()
+	_ = corruptDB.Close()
 
 	// When: ListAll.
 	store2, err := jwt.NewWhitelistStore(dbPath)
@@ -557,10 +557,10 @@ func TestWhitelistStore_restoreFromLegacyValues(t *testing.T) {
 		return txn.Set(legacyKey, []byte{1})
 	})
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		t.Fatalf("write legacy: %v", err)
 	}
-	db.Close()
+	_ = db.Close()
 
 	// When: Restore from the legacy data.
 	store, err := jwt.NewWhitelistStore(dbPath)

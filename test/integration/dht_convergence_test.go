@@ -70,6 +70,8 @@ func TestDHTBootstrapConvergence(t *testing.T) {
 		t.Logf("edge %d peer: %s", i, h.ID())
 	}
 
+	_ = edgeHosts
+
 	// Assert: CP DHT routing table converges to hold both edge peers.
 	deadline := time.Now().Add(15 * time.Second)
 	for {

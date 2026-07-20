@@ -103,7 +103,7 @@ func getAccounts(t *testing.T, ts *httptest.Server, token string, query string) 
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var body accountsResponse
 	if resp.StatusCode == http.StatusOK && resp.Body != nil {
@@ -325,7 +325,7 @@ func TestListAccounts_NoCredentialLeak(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var raw json.RawMessage
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
@@ -688,7 +688,7 @@ func doRaw(t *testing.T, ts *httptest.Server, method, path, token string, rawBod
 	if err != nil {
 		t.Fatalf("%s %s: %v", method, path, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
@@ -1593,7 +1593,7 @@ func getVendorProfiles(t *testing.T, ts *httptest.Server, token string) (*http.R
 	if err != nil {
 		t.Fatalf("GET /v1/admin/vendor-profiles: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var body vendorProfilesResponse
 	if resp.StatusCode == http.StatusOK && resp.Body != nil {
@@ -1727,7 +1727,7 @@ func TestVendorProfiles_ResponseShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var raw json.RawMessage
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {

@@ -60,7 +60,7 @@ func auditGet(t *testing.T, ts *httptest.Server, params url.Values, withToken bo
 	if err != nil {
 		t.Fatalf("GET %s: %v", u, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var body auditQueryResponse
 	_ = json.NewDecoder(resp.Body).Decode(&body) // error bodies don't match the shape; status is asserted first
 	return resp.StatusCode, body
@@ -319,7 +319,7 @@ func auditExportGet(t *testing.T, ts *httptest.Server, params url.Values, withTo
 	if err != nil {
 		t.Fatalf("GET %s: %v", u, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	sc := bufio.NewScanner(resp.Body)
 	var lines []auditEntryResponse

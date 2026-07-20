@@ -932,7 +932,7 @@ func TestAdminAPI_EndToEnd(t *testing.T) {
 	if st != http.StatusNoContent {
 		t.Fatalf("whitelist delete = %d, want 204", st)
 	}
-	st, body = cpDo(t, http.MethodGet, base+"/v1/admin/whitelist", token, nil)
+	_, body = cpDo(t, http.MethodGet, base+"/v1/admin/whitelist", token, nil)
 	entries = cpDecode[[]cpWhitelistWire](t, body)
 	for _, e := range entries {
 		if e.PeerID == pid {

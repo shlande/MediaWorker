@@ -339,7 +339,7 @@ func TestAudit_LoginFailureAndSuccess(t *testing.T) {
 	ts := serveMux(t, srv)
 
 	resp := postJSON(t, ts.Client(), ts.URL+"/v1/auth/login", `{"username":"admin","password":"wrong"}`, "")
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", resp.StatusCode)
 	}
@@ -355,7 +355,7 @@ func TestAudit_LoginFailureAndSuccess(t *testing.T) {
 	}
 
 	resp = postJSON(t, ts.Client(), ts.URL+"/v1/auth/login", `{"username":"admin","password":"correct-password"}`, "")
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}

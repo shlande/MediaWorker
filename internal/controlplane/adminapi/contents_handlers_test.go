@@ -112,7 +112,7 @@ func contentsGet(t *testing.T, srv *Server, path, token string) *http.Response {
 
 func decodeContentsList(t *testing.T, resp *http.Response) ([]contentRowResponse, int) {
 	t.Helper()
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var body struct {
 		Contents []contentRowResponse `json:"contents"`
 		Total    int                  `json:"total"`
@@ -127,7 +127,7 @@ func decodeContentsList(t *testing.T, resp *http.Response) ([]contentRowResponse
 
 func decodeContentDetail(t *testing.T, resp *http.Response) contentDetailResponse {
 	t.Helper()
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var body contentDetailResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode body: %v", err)
@@ -137,7 +137,7 @@ func decodeContentDetail(t *testing.T, resp *http.Response) contentDetailRespons
 
 func decodeError(t *testing.T, resp *http.Response) (int, string) {
 	t.Helper()
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var body map[string]string
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode error body: %v", err)
@@ -319,7 +319,7 @@ func TestContentsList_ReplicasDegradedFilter(t *testing.T) {
 	}
 
 	resp = contentsGet(t, srv, "/v1/admin/contents?replicas=degraded", contentsAuthToken(t))
-	contents, total = decodeContentsList(t, resp)
+	contents, _ = decodeContentsList(t, resp)
 	if len(contents) != 2 {
 		t.Fatalf("degraded filter: len=%d, want 2", len(contents))
 	}
@@ -760,18 +760,7 @@ func strPtr(s string) *string {
 	return &s
 }
 
-func eqStrSlice(t *testing.T, got, want []string) {
-	t.Helper()
-	if len(got) != len(want) {
-		t.Errorf("slice len: got %d, want %d", len(got), len(want))
-		return
-	}
-	for i := range got {
-		if got[i] != want[i] {
-			t.Errorf("index %d: got %q, want %q", i, got[i], want[i])
-		}
-	}
-}
+
 
 var _ = strings.Repeat
 
@@ -798,7 +787,7 @@ func contentsDelete(t *testing.T, srv *Server, path, token string) *http.Respons
 
 func decodeDeleteResponse(t *testing.T, resp *http.Response) contentDeleteResponse {
 	t.Helper()
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var body contentDeleteResponse
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode delete response: %v", err)

@@ -1,7 +1,6 @@
 package adminapi
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/json"
 	"errors"
@@ -181,7 +180,7 @@ func doWhitelistGet(t *testing.T, ts *httptest.Server, token string) (*http.Resp
 		t.Fatalf("Do: %v", err)
 	}
 	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
 	}
@@ -213,7 +212,7 @@ func doWhitelistPost(t *testing.T, ts *httptest.Server, token string, body strin
 		t.Fatalf("Do: %v", err)
 	}
 	rbody, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
 	}
@@ -235,7 +234,7 @@ func doWhitelistDelete(t *testing.T, ts *httptest.Server, token string, peerIDSt
 		t.Fatalf("Do: %v", err)
 	}
 	body, err := io.ReadAll(resp.Body)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if err != nil {
 		t.Fatalf("ReadAll: %v", err)
 	}
@@ -973,7 +972,7 @@ func TestWhitelist_prefix_clash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Do: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	// Go 1.22+ ServeMux: the DELETE /v1/admin/whitelist/{peer_id} pattern has a
 	// wildcard segment, so GET /v1/admin/whitelist/extra matches the path but not
 	// the method → 405 Method Not Allowed.
@@ -982,10 +981,4 @@ func TestWhitelist_prefix_clash(t *testing.T) {
 	}
 }
 
-// ─── Context helper ─────────────────────────────────────────────────────
 
-func withUserCtx(t *testing.T) context.Context {
-	t.Helper()
-	u := &ctxUser{userID: "user-1", username: "root", roles: []string{"admin"}}
-	return context.WithValue(context.Background(), userCtxKey{}, u)
-}

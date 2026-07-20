@@ -53,7 +53,7 @@ func get(t *testing.T, url, authHeader string) (int, map[string]string) {
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var body map[string]string
 	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 		t.Fatalf("decode body: %v", err)
@@ -182,7 +182,7 @@ func TestServer_NoAuthRoute_200(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
@@ -279,7 +279,7 @@ func TestServer_ServeShutdown(t *testing.T) {
 	for {
 		resp, err := http.Get("http://" + addr + "/ping")
 		if err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			break
 		}
 		if time.Now().After(deadline) {
@@ -323,7 +323,7 @@ func TestServer_ServeDrainsInFlight(t *testing.T) {
 			respCh <- -1
 			return
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		_, _ = io.Copy(io.Discard, resp.Body)
 		respCh <- resp.StatusCode
 	}()

@@ -54,7 +54,7 @@ func TestPinPlans_AckAndOffline(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var items []PinPlanItem
 	if err := json.NewDecoder(resp.Body).Decode(&items); err != nil {
@@ -114,10 +114,10 @@ func TestPinPlans_SentAtBoundaryAcked(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var items []PinPlanItem
-	json.NewDecoder(resp.Body).Decode(&items)
+	_ = json.NewDecoder(resp.Body).Decode(&items)
 
 	if len(items) != 1 {
 		t.Fatalf("len(items) = %d, want 1", len(items))
@@ -160,10 +160,10 @@ func TestPinPlans_Pagination(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET page 2: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var items []PinPlanItem
-	json.NewDecoder(resp.Body).Decode(&items)
+	_ = json.NewDecoder(resp.Body).Decode(&items)
 
 	if len(items) != 2 {
 		t.Fatalf("page 2 len = %d, want 2", len(items))
@@ -179,8 +179,8 @@ func TestPinPlans_Pagination(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET page 3: %v", err)
 	}
-	defer resp.Body.Close()
-	json.NewDecoder(resp.Body).Decode(&items)
+	defer func() { _ = resp.Body.Close() }()
+	_ = json.NewDecoder(resp.Body).Decode(&items)
 	if len(items) != 1 || items[0].Seq != 1 {
 		t.Errorf("page 3 = {len:%d, seq:%d}, want {1, 1}", len(items), items[0].Seq)
 	}
@@ -192,8 +192,8 @@ func TestPinPlans_Pagination(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET page 4: %v", err)
 	}
-	defer resp.Body.Close()
-	json.NewDecoder(resp.Body).Decode(&items)
+	defer func() { _ = resp.Body.Close() }()
+	_ = json.NewDecoder(resp.Body).Decode(&items)
 	if len(items) != 0 {
 		t.Errorf("page 4 len = %d, want 0", len(items))
 	}
@@ -216,13 +216,13 @@ func TestPinPlans_Empty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status = %d, want 200", resp.StatusCode)
 	}
 	var items []PinPlanItem
-	json.NewDecoder(resp.Body).Decode(&items)
+	_ = json.NewDecoder(resp.Body).Decode(&items)
 	if len(items) != 0 {
 		t.Errorf("len(items) = %d, want 0", len(items))
 	}
@@ -243,7 +243,7 @@ func TestPinPlans_NoToken_401(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", resp.StatusCode)
@@ -282,10 +282,10 @@ func TestPinPlans_ResponseShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GET: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var items []PinPlanItem
-	json.NewDecoder(resp.Body).Decode(&items)
+	_ = json.NewDecoder(resp.Body).Decode(&items)
 
 	if len(items) != 1 {
 		t.Fatalf("len(items) = %d, want 1", len(items))

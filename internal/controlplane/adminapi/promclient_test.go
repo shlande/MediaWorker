@@ -17,7 +17,7 @@ func TestPromClient_QueryScalar_Vector(t *testing.T) {
 	// Given: a Prometheus API that returns a valid vector response
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"status": "success",
 			"data": {
 				"resultType": "vector",
@@ -48,7 +48,7 @@ func TestPromClient_QueryScalar_EmptyResult(t *testing.T) {
 	// Given: a Prometheus API that returns an empty vector result
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"status": "success",
 			"data": {
 				"resultType": "vector",
@@ -79,7 +79,7 @@ func TestPromClient_QueryScalar_NonVector(t *testing.T) {
 	// Given: a Prometheus API that returns a "matrix" resultType (query_range)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"status": "success",
 			"data": {
 				"resultType": "matrix",
@@ -110,7 +110,7 @@ func TestPromClient_QueryScalar_5xx(t *testing.T) {
 	// Given: a Prometheus endpoint that returns 503
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		fmt.Fprint(w, "Service Unavailable")
+		_, _ = fmt.Fprint(w, "Service Unavailable")
 	}))
 	defer srv.Close()
 
@@ -179,7 +179,7 @@ func TestPromClient_CacheHitRate(t *testing.T) {
 	// Given: a Prometheus API returning a valid vector for cache hit rate
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"status": "success",
 			"data": {
 				"resultType": "vector",
@@ -209,7 +209,7 @@ func TestPromClient_CacheHitRate(t *testing.T) {
 func TestPromClient_TTFBP95(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"status": "success",
 			"data": {
 				"resultType": "vector",
@@ -235,7 +235,7 @@ func TestPromClient_TTFBP95(t *testing.T) {
 func TestPromClient_BackhaulBandwidthBps(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{
+		_, _ = fmt.Fprint(w, `{
 			"status": "success",
 			"data": {
 				"resultType": "vector",

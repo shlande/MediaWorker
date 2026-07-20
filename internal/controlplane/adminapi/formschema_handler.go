@@ -61,16 +61,7 @@ func buildSchema() map[types.Vendor]vendorSchemaEntry {
 			Notes: rule.Notes,
 		}
 		for _, f := range rule.Fields {
-			entry.Fields = append(entry.Fields, fieldDef{
-				Key:       f.Key,
-				Label:     f.Label,
-				Type:      f.Type,
-				Required:  f.Required,
-				Sensitive: f.Sensitive,
-				Options:   f.Options,
-				KvHint:    f.KvHint,
-				Help:      f.Help,
-			})
+			entry.Fields = append(entry.Fields, fieldDef(f))
 		}
 		out[vendor] = entry
 	}

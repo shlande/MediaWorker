@@ -94,7 +94,7 @@ func postWithToken(t *testing.T, srv *Server, path string, body *bytes.Buffer) *
 
 func decodeManualPinResponse(t *testing.T, resp *http.Response) manualPinResponse {
 	t.Helper()
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	var r manualPinResponse
 	if err := json.NewDecoder(resp.Body).Decode(&r); err != nil {
 		t.Fatalf("decode response: %v", err)
@@ -330,7 +330,7 @@ func TestManualPin_NoToken_401(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", resp.StatusCode)
@@ -555,7 +555,7 @@ func TestManualUnpin_NoToken_401(t *testing.T) {
 	if err != nil {
 		t.Fatalf("POST: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", resp.StatusCode)

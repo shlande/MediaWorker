@@ -140,7 +140,7 @@ func getNodesList(t *testing.T, ts *httptest.Server, token string, query string)
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var body []nodeListItemResponse
 	if resp.StatusCode == http.StatusOK && resp.Body != nil {
@@ -168,7 +168,7 @@ func getNodesRawJSON(t *testing.T, ts *httptest.Server, token string, query stri
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var raw []byte
 	if resp.Body != nil {
@@ -231,7 +231,7 @@ func getNodeDetail(t *testing.T, ts *httptest.Server, token string, peerID strin
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var body nodeDetailResponse
 	if resp.StatusCode == http.StatusOK && resp.Body != nil {
@@ -256,7 +256,7 @@ func getNodeDetailRawJSON(t *testing.T, ts *httptest.Server, token string, peerI
 	if err != nil {
 		t.Fatalf("GET %s: %v", url, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var raw []byte
 	if resp.Body != nil {
@@ -276,7 +276,6 @@ func ptrString(v string) *string { return &v }
 var (
 	testNow = time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
 	exp1    = time.Date(2026, 7, 20, 13, 0, 0, 0, time.UTC).Unix()
-	exp2    = testNow.Add(5 * time.Minute).Unix()
 	exp3    = testNow.Add(-5 * time.Minute).Unix()
 	startedAt = testNow.Add(-3 * time.Hour).Unix()
 )

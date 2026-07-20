@@ -101,7 +101,7 @@ func Subscribe(ctx context.Context, t *Tracker, bus event.Bus) error {
 	}
 	t.SetDCUtRAvailable(false)
 	go func() {
-		defer sub.Close()
+		defer func() { _ = sub.Close() }()
 		for {
 			select {
 			case <-ctx.Done():
