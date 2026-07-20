@@ -132,7 +132,9 @@ func TestStatus_AllFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("gen key: %v", err)
 	}
-	exp := testNow.Add(time.Hour).Unix()
+	// Use real clock: VerifyJWTAnyPeerID (which the handler calls) checks
+	// against time.Now() — not the injected testNow clock.
+	exp := time.Now().Add(time.Hour).Unix()
 	token := mustCapabilityJWT(t, cpPub, cpPriv, exp)
 
 	srv := NewServer("secret")
