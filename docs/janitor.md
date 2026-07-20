@@ -1,8 +1,8 @@
-# janitor（独立 GC 服务）接口文档
+# janitor（独立 GC 服务）
 
 入口：`cmd/janitor/main.go`　配置：`configs/janitor.yaml`（`internal/config/janitor.go`）　镜像：`Dockerfile.janitor`
 
-> T13/T14 落地。Janitor 是与 edge-node / control-plane / ingest-worker 物理隔离的**独立二进制**，承担 blob 两阶段软删（mark + sweep）。**无 HTTP 端口**，仅 CLI 运行。
+> T13/T14 落地。Janitor 是与 edge-node / control-plane / ingest-worker 物理隔离的**独立二进制**，承担 blob 两阶段软删（mark + sweep）。**无 HTTP 端口**，仅 CLI 运行。配置项表见 [configuration.md §4](./configuration.md)。
 
 ## 1. 职责
 
@@ -33,31 +33,7 @@
 
 interval 模式下单个 cycle 失败：`slog.Error` 记录后继续下一周期（不退出进程）；仅 `-once` 模式或启动阶段失败才会 `os.Exit(1)`。
 
-## 4. 配置项（`configs/janitor.yaml`）
-
-完整结构：`internal/config/janitor.go::JanitorConfig`。
-
-| YAML 路径 | 必填 | 默认 | 说明 |
-|---|---|---|---|
-| `metadata.pg_dsn` | 是 | — | PostgreSQL DSN（与 control-plane / ingest-worker 共享元数据库） |
-| `storage.cloud_accounts[]` | 是（≥1 enabled） | — | 云盘账号列表，复用 `IngestStorageConfig` 形态（vendor/account_id/client_id/client_secret/refresh_token/redirect_uri/region/enabled）。dry-run 下也需配置，便于 resolver 解析 backend_id |
-| `storage.vendor_profiles.<vendor>.{weight,base_latency_ms,bandwidth_mbps}` | 否 | weight=2.0 | 厂商画像 |
-| `storage.rate_limits.<vendor>.{qps,burst,concurrent}` | 否 | 驱动默认 | 厂商限流 |
-| `gc.interval` | 否 | `1h` | interval 模式 cycle 周期（duration 字符串，如 `1h`、`30m`） |
-| `gc.min_age` | 否 | `24h` | blob 进入 mark 候选的最小年龄（保护 in-flight ingest 事务窗口） |
-| `gc.grace` | 否 | `24h` | soft-mark 到 hard-delete 的等待窗口；窗口内被引用即 rescue |
-| `gc.batch_limit` | 否 | `500` | 单 cycle 处理的 blob_hash 数量上限 |
-| `gc.dry_run` | 否 | `true`（指针 `*bool`，nil → true） | dry-run 开关。**唯一安全读法是 `cfg.GC.EffectiveDryRun()`**；直接解引用 `*cfg.GC.DryRun` 在字段省略时会 nil-panic |
-| `gc.once` | 否 | `false`（指针 `*bool`） | 单次模式开关 |
-
-**两层 dry-run 门控**：
-
-1. **配置层** `EffectiveDryRun()`：YAML 省略 → true；显式 `dry_run: false` → false。
-2. **CLI 层** `-dry-run` 标志：默认 true；显式 `-dry-run=false` → false。
-
-**两层必须同时为 false 才会真正删除**。CLI 标志优先于配置。Janitor 永远调用 `gc.Collector.SweepWithDryRun(..., dryRun)`，**绝不调用** `gc.Collector.Sweep()`（live 删除器）；后者仅供 T13 单元测试与未来直接调用方使用。
-
-## 5. 内部契约
+## 4. 内部契约
 
 - **`gc.AccountResolver`** 接口：`Resolve(backendID) → (driver.Driver, *circuitbreaker.CircuitBreaker, ok)`。生产侧由 `accountpool.AccountPool` 包装：`backend_id` 形如 `vendor:account_id`，按 `accountpool` 中注册的账号解析。
 - **熔断传播**：单副本 `Driver.Remove` 失败 → `CircuitBreaker.ForceOpen()`（对本 cycle 与并发读路径同时可见）→ 本 cycle 跳过该 backend 的后续副本（`broken` map）。
@@ -66,7 +42,7 @@ interval 模式下单个 cycle 失败：`slog.Error` 记录后继续下一周期
 - **NoLocations 路径**：`blob_location` 为空的软标记 blob 直接走单事务 `DELETE`（否则会永久卡死）。
 - **PG 元数据访问器**：`PGMetadataClient.DB() *sql.DB`（T13 新增，T14 启用）—— docstring 警告调用方**禁止 Close**，生命周期由 `PGMetadataClient.Close()` 管理。
 
-## 6. 部署
+## 5. 部署
 
 `Dockerfile.janitor`：`golang:1.25-alpine` 构建 + `alpine:3.20` 运行时（`ca-certificates` + `tzdata` + 非 root 用户）。**无 ffmpeg**（janitor 不做转码）、**无 EXPOSE**（无 HTTP 监听）。
 
@@ -76,7 +52,7 @@ interval 模式下单个 cycle 失败：`slog.Error` 记录后继续下一周期
 - **K8s Deployment**：interval 模式（`gc.interval: 1h`），SIGTERM 优雅退出。
 - 初次部署或版本升级后**首次运行建议 `-dry-run=true`**，核对日志中 `would delete` 输出符合预期再切换到 live 模式。
 
-## 7. 安全考量
+## 6. 安全考量
 
 - **dry-run 默认值是 true，且双层门控**：防止误配置导致批量删除（plan line 221）。
 - **无网络端口**：攻击面仅限于 PG 与云盘 API 凭据；运行身份需最小权限（PG: blob 表读写 + blob_location 读写；云盘: 文件删除权限）。
