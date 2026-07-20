@@ -844,14 +844,14 @@ func TestAdminAPI_EndToEnd(t *testing.T) {
 		"vendor":     "baidu",
 		"account_id": "mw_02",
 		"enabled":    true,
-		"rate_limit": map[string]any{"qps": 5, "burst": 10, "concurrent_limit": 2},
+		"rate_limit": map[string]any{"qps": 5, "burst": 10, "concurrent": 2},
 		"auth":       map[string]any{"client_id": "cid2", "client_secret": "cs2", "refresh_token": "rt2"},
 	})
 	if st != http.StatusCreated {
 		t.Fatalf("create account = %d, want 201: %s", st, string(body))
 	}
 	st, body = cpDo(t, http.MethodPut, base+"/v1/admin/accounts/baidu/mw_02", token, map[string]any{
-		"rate_limit": map[string]any{"qps": 9, "burst": 9, "concurrent_limit": 3},
+		"rate_limit": map[string]any{"qps": 9, "burst": 9, "concurrent": 3},
 	})
 	if st != http.StatusAccepted {
 		t.Fatalf("update account = %d, want 202: %s", st, string(body))
