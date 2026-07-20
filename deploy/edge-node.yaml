@@ -70,6 +70,11 @@ data:
 
     hash_ring:
       replicas: 150
+
+    admin_api:
+      listen: ":8081"
+      # QA token for test env — TODO: move to Secret before production
+      token: "REPLACE_VIA_CLUSTER_LOCAL_SECRET"
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

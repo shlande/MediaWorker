@@ -47,6 +47,14 @@ data:
     identity:
       priv_key_path: "/data/controlplane/ed25519-jwt.key"
       libp2p_priv_key_path: "/data/controlplane/ed25519-libp2p.key"
+
+    admin_api:
+      listen: ":8082"
+      # QA token for test env — TODO: move to Secret before production
+      token_secret: "REPLACE_VIA_CLUSTER_LOCAL_SECRET"
+      prometheus_url: ""
+      alert_webhook_token: "REPLACE_VIA_CLUSTER_LOCAL_SECRET"
+      quota_rebalance_interval: "60s"
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -131,6 +139,9 @@ spec:
           env:
             - name: GOMAXPROCS
               value: "2"
+            # Test-env admin seed password — TODO: move to Secret before production
+            - name: ADMIN_BOOTSTRAP_PASSWORD
+              value: "REPLACE_VIA_CLUSTER_LOCAL_SECRET"
           resources:
             requests:
               cpu: 100m
