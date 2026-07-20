@@ -1,6 +1,7 @@
 package adminapi
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 	"time"
@@ -10,23 +11,21 @@ import (
 // Helpers
 // ---------------------------------------------------------------------------
 
-// tamperBase64url replaces the last character of a base64url part with a
-// different valid base64url character, guaranteeing that base64url decoding
-// succeeds but produces a different decoded value.
+// tamperBase64url decodes the base64url part, flips the first byte, and
+// re-encodes.  This guarantees the decoded bytes are always different from
+// the original, unlike the old alphabet-swap approach which was nondetermin-
+// istic (the last base64url char of a 32-byte HMAC-SHA256 signature carries
+// only 4 significant bits, so swapping 'A'→'B' produced identical raw bytes
+// ~1/16 of the time, causing a flaky CI failure).
 func tamperBase64url(part string) string {
-	if len(part) == 0 {
-		return part
+	raw, err := base64.RawURLEncoding.DecodeString(part)
+	if err != nil || len(raw) == 0 {
+		// If the input is not valid base64url, append a character to still
+		// produce a different string (the caller will fail at decode time).
+		return part + "A"
 	}
-	const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
-	b := []byte(part)
-	last := b[len(b)-1]
-	for i := 0; i < len(alphabet); i++ {
-		if alphabet[i] != last {
-			b[len(b)-1] = alphabet[i]
-			break
-		}
-	}
-	return string(b)
+	raw[0] ^= 0xFF
+	return base64.RawURLEncoding.EncodeToString(raw)
 }
 
 func testSecret() []byte {
