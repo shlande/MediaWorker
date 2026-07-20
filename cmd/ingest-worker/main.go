@@ -124,17 +124,8 @@ func run(configPath string) error {
 	mux.HandleFunc("/ingest/", func(w http.ResponseWriter, r *http.Request) {
 		handleIngest(w, r, pipeline, cfg.HTTP.MaxUploadBytes, metrics)
 	})
-	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("ok"))
-	})
-	mux.Handle("/metrics", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Refresh the publish-failures gauge before each scrape so the
-		// value reflects the latest syncpub counter. The gauge is a
-		// mirror, not a counter — the source of truth lives in syncpub.
-		metrics.SetIngestPublishFailures(syncpub.PublishFailures())
-		metricsHandler.ServeHTTP(w, r)
-	}))
+	mux.HandleFunc("/healthz", handleHealthz)
+	mux.Handle("/metrics", handleMetrics(metricsHandler, metrics))
 
 	srv := &http.Server{
 		Addr:         cfg.HTTP.Listen,
@@ -252,6 +243,24 @@ func checkWorkDirDiskSpace(workDir string, maxUploadBytes int64) {
 
 // ─── HTTP handler ──────────────────────────────────────────────────────
 
+// handleIngest receives multipart file uploads and runs the ingest pipeline to
+// produce derivative content, upload blobs to cloud drives, write metadata
+// transactions, and publish ContentIngestedEvent.
+//
+//	@Summary		multipart 上传内容并入库
+//	@Description	接收 multipart/form-data 文件上传，经 ingest pipeline 处理后入库到云盘并写入元数据。
+//	@Tags			ingest
+//	@Accept			multipart/form-data
+//	@Produce		json
+//	@Param			content_type	path		string	true	"内容类型（dash_video|image）"
+//	@Param			file			formData	file	true	"上传文件"
+//	@Param			metadata		formData	string	false	"JSON 元数据（ingest.ProcessOptions.Metadata）"
+//	@Param			content_id		formData	string	false	"指定内容 ID"
+//	@Success		200				{object}	ingest.IngestResponse
+//	@Failure		400				{object}	types.ErrorResponse
+//	@Failure		405				{object}	types.ErrorResponse
+//	@Failure		500				{object}	types.ErrorResponse
+//	@Router			/ingest/{content_type} [post]
 func handleIngest(w http.ResponseWriter, r *http.Request, pipeline *ingest.IngestPipeline, maxUploadBytes int64, metrics *monitor.Metrics) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -312,6 +321,37 @@ func handleIngest(w http.ResponseWriter, r *http.Request, pipeline *ingest.Inges
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// handleHealthz is a liveness probe returning 200 "ok".
+//
+//	@Summary		存活探针
+//	@Description	返回 200 "ok"，供 Kubernetes liveness/readiness 探针使用。
+//	@Tags			ops
+//	@Produce		plain
+//	@Success		200	{string}	string	"ok"
+//	@Router			/healthz [get]
+func handleHealthz(w http.ResponseWriter, _ *http.Request) {
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte("ok"))
+}
+
+// handleMetrics returns an http.Handler that refreshes the
+// ingest_publish_failures gauge from syncpub.PublishFailures() before each
+// scrape, preserving all existing Prometheus metrics served by the
+// underlying metricsHandler.
+//
+//	@Summary		Prometheus 指标
+//	@Description	返回 Prometheus 文本格式指标，抓取前刷新 ingest_publish_failures 计数。
+//	@Tags			ops
+//	@Produce		plain
+//	@Success		200	{string}	string
+//	@Router			/metrics [get]
+func handleMetrics(metricsHandler http.Handler, metrics *monitor.Metrics) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		metrics.SetIngestPublishFailures(syncpub.PublishFailures())
+		metricsHandler.ServeHTTP(w, r)
+	}
 }
 
 // ─── Account pool construction ─────────────────────────────────────────
