@@ -869,7 +869,7 @@ func TestAccountsWrite_PostValidationErrors(t *testing.T) {
 			name: "qps out of range",
 			payload: map[string]any{
 				"vendor": "baidu", "account_id": "mw_05",
-				"rate_limit": map[string]any{"qps": 200, "burst": 4, "concurrent_limit": 8},
+				"rate_limit": map[string]any{"qps": 200, "burst": 4, "concurrent": 8},
 				"auth":       map[string]any{"client_id": "x", "client_secret": "y", "refresh_token": "z"},
 			},
 			wantField: "rate_limit.qps",
@@ -1179,6 +1179,104 @@ func TestAccountsWrite_PutVendorProfileWritesRecordWithNote(t *testing.T) {
 	}
 }
 
+// F1 repro: the contract rate_limit key is `concurrent`
+// (docs/ui-api-requirements.md §3.3, form-schema defaults, and the GET
+// response DTO all use it). Given a stored account, when PUT carries
+// {"rate_limit":{"qps":3,"burst":6,"concurrent":4}}, then 202 and the
+// registry receives ConcurrentLimit=4 — not a 400 on a zero value.
+func TestAccountsWrite_PutRateLimitContractKeys(t *testing.T) {
+	reg, _, ts, token := makeWriteServer(t)
+	seedAccount(t, reg, accountregistry.AccountInfo{
+		Vendor:    types.VendorBaidu,
+		AccountID: "mw_bak_01",
+		Enabled:   true,
+	})
+	status, body := doRaw(t, ts, http.MethodPut, "/v1/admin/accounts/baidu/mw_bak_01", token,
+		jsonBody(t, map[string]any{"rate_limit": map[string]any{"qps": 3, "burst": 6, "concurrent": 4}}))
+	if status != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202 (body=%s)", status, body)
+	}
+	assertNoSecretLeak(t, body)
+	if len(reg.setRateLimitCalls) != 1 {
+		t.Fatalf("setRateLimitCalls = %v, want 1 call", reg.setRateLimitCalls)
+	}
+	cfg := reg.setRateLimitCalls[0]
+	if cfg.QPS != 3 || cfg.Burst != 6 || cfg.ConcurrentLimit != 4 {
+		t.Errorf("SetRateLimit arg = %+v, want {3,6,4}", cfg)
+	}
+}
+
+// Given valid input with the contract `concurrent` key, when POST creates
+// the account, then 201 and the stored RateLimitCfg carries the submitted
+// values (same binding class as PUT).
+func TestAccountsWrite_PostRateLimitContractKeys(t *testing.T) {
+	reg, _, ts, token := makeWriteServer(t)
+	status, body := doRaw(t, ts, http.MethodPost, "/v1/admin/accounts", token, jsonBody(t, map[string]any{
+		"vendor":     "baidu",
+		"account_id": "mw_bak_02",
+		"rate_limit": map[string]any{"qps": 3, "burst": 6, "concurrent": 4},
+		"auth": map[string]any{
+			"client_id": "x", "client_secret": sentinelClientSecret, "refresh_token": sentinelRefreshToken,
+		},
+	}))
+	if status != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 (body=%s)", status, body)
+	}
+	assertNoSecretLeak(t, body)
+	stored := reg.accounts[fakeKey(types.VendorBaidu, "mw_bak_02")]
+	if stored.RateLimitCfg.QPS != 3 || stored.RateLimitCfg.Burst != 6 || stored.RateLimitCfg.ConcurrentLimit != 4 {
+		t.Errorf("stored rate_limit = %+v, want {3,6,4}", stored.RateLimitCfg)
+	}
+}
+
+// Given a stored account, when PUT rate_limit violates each bound, then 400
+// with the matching field_errors key; boundary values 1 and 64 pass.
+func TestAccountsWrite_PutRateLimitBounds(t *testing.T) {
+	cases := []struct {
+		name      string
+		rateLimit map[string]any
+		wantCode  int
+		wantField string
+		wantMsg   string
+	}{
+		{name: "qps below min", rateLimit: map[string]any{"qps": 0.05, "burst": 6, "concurrent": 4}, wantCode: http.StatusBadRequest, wantField: "rate_limit.qps", wantMsg: "between 0.1 and 100"},
+		{name: "burst below min", rateLimit: map[string]any{"qps": 3, "burst": 0, "concurrent": 4}, wantCode: http.StatusBadRequest, wantField: "rate_limit.burst", wantMsg: "between 1 and 100"},
+		{name: "concurrent below min", rateLimit: map[string]any{"qps": 3, "burst": 6, "concurrent": 0}, wantCode: http.StatusBadRequest, wantField: "rate_limit.concurrent", wantMsg: "between 1 and 64"},
+		{name: "concurrent above max", rateLimit: map[string]any{"qps": 3, "burst": 6, "concurrent": 65}, wantCode: http.StatusBadRequest, wantField: "rate_limit.concurrent", wantMsg: "between 1 and 64"},
+		{name: "concurrent boundary 1", rateLimit: map[string]any{"qps": 3, "burst": 6, "concurrent": 1}, wantCode: http.StatusAccepted},
+		{name: "concurrent boundary 64", rateLimit: map[string]any{"qps": 3, "burst": 6, "concurrent": 64}, wantCode: http.StatusAccepted},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			reg, _, ts, token := makeWriteServer(t)
+			seedAccount(t, reg, accountregistry.AccountInfo{
+				Vendor:    types.VendorBaidu,
+				AccountID: "mw_bak_01",
+				Enabled:   true,
+			})
+			status, body := doRaw(t, ts, http.MethodPut, "/v1/admin/accounts/baidu/mw_bak_01", token,
+				jsonBody(t, map[string]any{"rate_limit": tc.rateLimit}))
+			if status != tc.wantCode {
+				t.Fatalf("status = %d, want %d (body=%s)", status, tc.wantCode, body)
+			}
+			assertNoSecretLeak(t, body)
+			if tc.wantCode == http.StatusBadRequest {
+				fe := decodeFieldErrors(t, body)
+				msg, ok := fe[tc.wantField]
+				if !ok {
+					t.Fatalf("field_errors = %v, want key %q", fe, tc.wantField)
+				}
+				if !strings.Contains(msg, tc.wantMsg) {
+					t.Errorf("field_errors[%q] = %q, want substring %q", tc.wantField, msg, tc.wantMsg)
+				}
+				if len(reg.setRateLimitCalls) != 0 {
+					t.Errorf("setRateLimitCalls = %v, want none on rejected input", reg.setRateLimitCalls)
+				}
+			}
+		})
+	}
+}
+
 // Given no bearer token, when POST or PUT is attempted, then 401.
 func TestAccountsWrite_NoToken(t *testing.T) {
 	_, _, ts, _ := makeWriteServer(t)
@@ -1230,7 +1328,7 @@ func TestAccountsWrite_ZeroSecretLeakAcrossResponses(t *testing.T) {
 		jsonBody(t, map[string]any{"auth": map[string]any{"refresh_token": "rotated-" + sentinelRefreshToken}})))
 	// 400 put validation
 	collect(doRaw(t, ts, http.MethodPut, "/v1/admin/accounts/onedrive/mw_od_01", token,
-		jsonBody(t, map[string]any{"rate_limit": map[string]any{"qps": 0, "burst": 1, "concurrent_limit": 1}})))
+		jsonBody(t, map[string]any{"rate_limit": map[string]any{"qps": 0, "burst": 1, "concurrent": 1}})))
 	// 404 put missing
 	collect(doRaw(t, ts, http.MethodPut, "/v1/admin/accounts/onedrive/ghost_01", token,
 		jsonBody(t, map[string]any{"auth": map[string]any{"refresh_token": sentinelRefreshToken}})))

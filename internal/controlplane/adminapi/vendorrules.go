@@ -379,10 +379,10 @@ func BuildAccountInfo(req createAccountRequest) (accountregistry.AccountInfo, ma
 	}
 	rlCfg := rule.DefaultRateLimit
 	if req.RateLimit != nil {
-		for k, v := range ValidateRateLimit(*req.RateLimit) {
+		rlCfg = req.RateLimit.toConfig()
+		for k, v := range ValidateRateLimit(rlCfg) {
 			fieldErrors[k] = v
 		}
-		rlCfg = *req.RateLimit
 	}
 	var cred types.Credential
 	var cc types.ClientConfig

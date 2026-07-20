@@ -240,22 +240,35 @@ type EventBroadcaster interface {
 	Broadcast(eventType string, payload any) error
 }
 
+// rateLimitRequest binds the contract rate_limit keys
+// (docs/ui-api-requirements.md §3.3, same shape as accountRateLimitResponse);
+// types.RateLimitConfig's `concurrent_limit` tag is the internal/DB spelling.
+type rateLimitRequest struct {
+	QPS        float64 `json:"qps"`
+	Burst      int     `json:"burst"`
+	Concurrent int     `json:"concurrent"`
+}
+
+func (r rateLimitRequest) toConfig() types.RateLimitConfig {
+	return types.RateLimitConfig{QPS: r.QPS, Burst: r.Burst, ConcurrentLimit: r.Concurrent}
+}
+
 type createAccountRequest struct {
-	Vendor        string                 `json:"vendor"`
-	AccountID     string                 `json:"account_id"`
-	Enabled       *bool                  `json:"enabled,omitempty"`
-	RateLimit     *types.RateLimitConfig `json:"rate_limit,omitempty"`
-	VendorProfile *types.VendorProfile   `json:"vendor_profile,omitempty"`
-	Auth          map[string]any         `json:"auth,omitempty"`
+	Vendor        string               `json:"vendor"`
+	AccountID     string               `json:"account_id"`
+	Enabled       *bool                `json:"enabled,omitempty"`
+	RateLimit     *rateLimitRequest    `json:"rate_limit,omitempty"`
+	VendorProfile *types.VendorProfile `json:"vendor_profile,omitempty"`
+	Auth          map[string]any       `json:"auth,omitempty"`
 }
 
 type updateAccountRequest struct {
-	Vendor        *string                `json:"vendor,omitempty"` // must match path when present
-	AccountID     *string                `json:"account_id,omitempty"`
-	Enabled       *bool                  `json:"enabled,omitempty"`
-	RateLimit     *types.RateLimitConfig `json:"rate_limit,omitempty"`
-	VendorProfile *types.VendorProfile   `json:"vendor_profile,omitempty"`
-	Auth          map[string]any         `json:"auth,omitempty"`
+	Vendor        *string              `json:"vendor,omitempty"` // must match path when present
+	AccountID     *string              `json:"account_id,omitempty"`
+	Enabled       *bool                `json:"enabled,omitempty"`
+	RateLimit     *rateLimitRequest    `json:"rate_limit,omitempty"`
+	VendorProfile *types.VendorProfile `json:"vendor_profile,omitempty"`
+	Auth          map[string]any       `json:"auth,omitempty"`
 }
 
 type createAccountResponse struct {
@@ -363,8 +376,10 @@ func updateAccountHandler(registry AdminAccountsWriter, audit AuditRecorder) htt
 			WriteError(w, http.StatusBadRequest, "no fields to update")
 			return
 		}
+		var rlCfg types.RateLimitConfig
 		if req.RateLimit != nil {
-			if fe := ValidateRateLimit(*req.RateLimit); len(fe) > 0 {
+			rlCfg = req.RateLimit.toConfig()
+			if fe := ValidateRateLimit(rlCfg); len(fe) > 0 {
 				recordWriteAudit(r, audit, "account", "update", target, "fail", nil)
 				writeFieldErrors(w, fe)
 				return
@@ -394,7 +409,7 @@ func updateAccountHandler(registry AdminAccountsWriter, audit AuditRecorder) htt
 			}
 		}
 		if req.RateLimit != nil {
-			if err := registry.SetRateLimit(r.Context(), vendor, id, *req.RateLimit); err != nil {
+			if err := registry.SetRateLimit(r.Context(), vendor, id, rlCfg); err != nil {
 				recordWriteAudit(r, audit, "account", "update", target, "fail", nil)
 				writeRegistryError(w, "update", err)
 				return
