@@ -370,39 +370,9 @@ func main() {
 	logger.Info("hash ring created", "replicas", cfg.HashRing.Replicas)
 
 	// -------------------------------------------------------------------
-	// 17. Pin store (T15: gated by edge.prefix_cache.enabled)
+	// 17. Pin store — constructed at 17d, after the backhaul manager it
+	// depends on for the pin fetch source.
 	// -------------------------------------------------------------------
-	var pinStore *pinstore.PinStore
-	if cfg.Edge.PrefixCache.Enabled {
-		ps2, err := pinstore.NewPinStore(
-			cfg.Edge.PrefixCache.Path+".pin.db",
-			cfg.Edge.PrefixCache.Path,
-			int64(cfg.Edge.PrefixCache.SizeGB)*1_000_000_000,
-			func(blobHash string) ([]byte, error) {
-				if warmCache == nil {
-					return nil, fmt.Errorf("blob %s not in warm cache (warm cache disabled)", blobHash)
-				}
-				data, ok := warmCache.Get(blobHash)
-				if !ok {
-					return nil, fmt.Errorf("blob %s not in warm cache", blobHash)
-				}
-				return data, nil
-			},
-		)
-		if err != nil {
-			log.Fatalf("create pin store: %v", err)
-		}
-		if err := ps2.Restore(); err != nil {
-			logger.Error("pin store restore failed (continuing with empty index)", "err", err)
-		}
-		pinStore = ps2
-		logger.Info("pin store initialized",
-			"prefix_path", cfg.Edge.PrefixCache.Path,
-			"max_size_gb", cfg.Edge.PrefixCache.SizeGB,
-		)
-	} else {
-		logger.Info("prefix cache disabled (edge.prefix_cache.enabled=false) — pin store not built, syncbroadcaster PinPlan handler is no-op")
-	}
 
 	// -------------------------------------------------------------------
 	// 17b. L4 data plane stack (gated by access_layer.data_plane.enabled):
@@ -436,6 +406,79 @@ func main() {
 		)
 	}
 	dispatcher := events.NewDispatcher(pool, nil, logger)
+
+	// -------------------------------------------------------------------
+	// 17c. Backhaul manager. Constructed before the pin store: the pin
+	// fetch source is the backhaul path, so the manager must exist first.
+	// -------------------------------------------------------------------
+	var backhaulMgr *backhaul.BackhaulManager
+	switch {
+	case cfg.Access.DataPlane.Enabled:
+		// L4 node: local data plane wired (section 17b). HandleBlobL4 falls
+		// back to ICP / L4 stream on data-plane failure inside the manager.
+		backhaulMgr = backhaul.NewBackhaulManager(
+			backhaulWarmCache{warmCache},
+			dataPlane,
+			backhaulICPFetcher{h: h, ring: ring, self: nodeIdentity.PeerID},
+			nil, // l4Fetcher — this IS an L4 node
+		)
+		logger.Info("backhaul manager created (L4 mode, data plane wired)")
+
+	default:
+		// Non-L4 edge node: no data plane. HandleBlobNoL4 uses cache → ICP →
+		// L4 stream fallback.
+		// l4Fetcher is nil for now — L4 stream protocol not yet defined.
+		backhaulMgr = backhaul.NewBackhaulManager(
+			backhaulWarmCache{warmCache},
+			nil, // dataPlane — disabled
+			backhaulICPFetcher{h: h, ring: ring, self: nodeIdentity.PeerID},
+			nil, // l4Fetcher — not yet implemented
+		)
+		logger.Info("backhaul manager created (edge mode, no L4)")
+	}
+
+	// T20 — wire the metrics instance into the backhaul manager so
+	// HandleBlobL4/NoL4 can increment edge_cache_request_total +
+	// edge_cache_hit_total + edge_peer_request_total + edge_peer_hit_total.
+	backhaulMgr.SetMetrics(metrics)
+
+	// -------------------------------------------------------------------
+	// 17d. Pin store (T15: gated by edge.prefix_cache.enabled).
+	// The fetchFunc walks the node's normal backhaul path on a warm-cache
+	// miss (docs/distribution/README.md §9.1: fetchPinnedBlob goes through
+	// the regular backhaul path). The capability-appropriate
+	// BackhaulManager method is selected the same way as the serving path.
+	// -------------------------------------------------------------------
+	var pinStore *pinstore.PinStore
+	if cfg.Edge.PrefixCache.Enabled {
+		var warmGet func(string) ([]byte, bool)
+		if warmCache != nil {
+			warmGet = warmCache.Get
+		}
+		backhaulFetch := backhaulMgr.HandleBlobNoL4
+		if cfg.Access.DataPlane.Enabled {
+			backhaulFetch = backhaulMgr.HandleBlobL4
+		}
+		ps2, err := pinstore.NewPinStore(
+			cfg.Edge.PrefixCache.Path+".pin.db",
+			cfg.Edge.PrefixCache.Path,
+			int64(cfg.Edge.PrefixCache.SizeGB)*1_000_000_000,
+			makePinFetchFunc(warmGet, backhaulFetch),
+		)
+		if err != nil {
+			log.Fatalf("create pin store: %v", err)
+		}
+		if err := ps2.Restore(); err != nil {
+			logger.Error("pin store restore failed (continuing with empty index)", "err", err)
+		}
+		pinStore = ps2
+		logger.Info("pin store initialized",
+			"prefix_path", cfg.Edge.PrefixCache.Path,
+			"max_size_gb", cfg.Edge.PrefixCache.SizeGB,
+		)
+	} else {
+		logger.Info("prefix cache disabled (edge.prefix_cache.enabled=false) — pin store not built, syncbroadcaster PinPlan handler is no-op")
+	}
 
 	// -------------------------------------------------------------------
 	// 18. SyncBroadcaster client — receive PinPlan from control plane
@@ -601,38 +644,9 @@ func main() {
 	logger.Info("gossipsub popularity sync started", "topic", gossippop.PopularityTopic)
 
 	// -------------------------------------------------------------------
-	// 20. Backhaul manager
+	// 20. Backhaul manager — constructed at 17c (the pin store's fetch
+	// source depends on it, so it precedes the pin store).
 	// -------------------------------------------------------------------
-	var backhaulMgr *backhaul.BackhaulManager
-	switch {
-	case cfg.Access.DataPlane.Enabled:
-		// L4 node: local data plane wired (section 17b). HandleBlobL4 falls
-		// back to ICP / L4 stream on data-plane failure inside the manager.
-		backhaulMgr = backhaul.NewBackhaulManager(
-			backhaulWarmCache{warmCache},
-			dataPlane,
-			backhaulICPFetcher{h: h, ring: ring, self: nodeIdentity.PeerID},
-			nil, // l4Fetcher — this IS an L4 node
-		)
-		logger.Info("backhaul manager created (L4 mode, data plane wired)")
-
-	default:
-		// Non-L4 edge node: no data plane. HandleBlobNoL4 uses cache → ICP →
-		// L4 stream fallback.
-		// l4Fetcher is nil for now — L4 stream protocol not yet defined.
-		backhaulMgr = backhaul.NewBackhaulManager(
-			backhaulWarmCache{warmCache},
-			nil, // dataPlane — disabled
-			backhaulICPFetcher{h: h, ring: ring, self: nodeIdentity.PeerID},
-			nil, // l4Fetcher — not yet implemented
-		)
-		logger.Info("backhaul manager created (edge mode, no L4)")
-	}
-
-	// T20 — wire the metrics instance into the backhaul manager so
-	// HandleBlobL4/NoL4 can increment edge_cache_request_total +
-	// edge_cache_hit_total + edge_peer_request_total + edge_peer_hit_total.
-	backhaulMgr.SetMetrics(metrics)
 
 	// -------------------------------------------------------------------
 	// 21. Edge router — hash-ring routing with proxy fallback
