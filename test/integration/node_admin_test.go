@@ -157,7 +157,7 @@ func assembleNodeAdmin(t *testing.T, l4 bool) *nodeAdminFixture {
 	durations.Store(runningCfg.Node.JWTService.ParsedRefreshInterval, runningCfg.Node.JWTService.ParsedRefreshBeforeExpiry)
 
 	srv := adminapi.NewServer(nodeAdminToken)
-	srv.Handle("GET /v1/healthz", func(w http.ResponseWriter, r *http.Request) {
+	srv.HandleUnauthenticated("GET /v1/healthz", func(w http.ResponseWriter, r *http.Request) {
 		adminapi.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 
@@ -261,12 +261,28 @@ func nodeAdminRoutes() []routeCase {
 }
 
 // Given the full L4 assembly, when every endpoint is hit without a token,
-// then ALL return 401; with the right token, ALL return their success status.
+// then ALL return 401 EXCEPT healthz (which is unauthenticated per design);
+// with the right token, ALL return their success status.
 func TestNodeAdmin_RouteAndAuthMatrix(t *testing.T) {
 	fx := assembleNodeAdmin(t, true)
 
 	for _, rc := range nodeAdminRoutes() {
 		t.Run(rc.name, func(t *testing.T) {
+			// Healthz is exempt from the token middleware — unauthenticated requests
+			// must succeed (k8s health probe contract).
+			if rc.name == "healthz" {
+				code, data := fx.do(t, rc.method, rc.path, "", rc.body)
+				if code != http.StatusOK {
+					t.Fatalf("healthz no token: %s %s = %d, want 200 (body %s)", rc.method, rc.path, code, data)
+				}
+				// Also verify it works with token (should still work).
+				code, data = fx.do(t, rc.method, rc.path, nodeAdminToken, rc.body)
+				if code != rc.want {
+					t.Fatalf("healthz with token: %s %s = %d, want %d (body %s)", rc.method, rc.path, code, rc.want, data)
+				}
+				return
+			}
+
 			code, _ := fx.do(t, rc.method, rc.path, "", rc.body)
 			if code != http.StatusUnauthorized {
 				t.Fatalf("no token: %s %s = %d, want 401", rc.method, rc.path, code)

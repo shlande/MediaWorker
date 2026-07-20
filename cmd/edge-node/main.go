@@ -684,7 +684,7 @@ func main() {
 	// -------------------------------------------------------------------
 	if cfg.AdminAPI.Listen != "" {
 		adminSrv := nodeadmin.NewServer(cfg.AdminAPI.Token)
-		adminSrv.Handle("GET /v1/healthz", func(w http.ResponseWriter, r *http.Request) {
+		adminSrv.HandleUnauthenticated("GET /v1/healthz", func(w http.ResponseWriter, r *http.Request) {
 			nodeadmin.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		})
 

@@ -51,10 +51,19 @@ func (s *Server) SetToken(token string) {
 }
 
 // Handle mounts h on the mux under pattern (Go 1.22+ ServeMux syntax, e.g.
-// "GET /v1/healthz"). EVERY route is wrapped in the X-Admin-Token middleware —
-// there is no unauthenticated mount on this server.
+// "GET /v1/healthz"). Every route is wrapped in the X-Admin-Token middleware.
+// Use HandleUnauthenticated for routes that must be reachable without a token
+// (e.g. k8s health probes).
 func (s *Server) Handle(pattern string, h http.HandlerFunc) {
 	s.mux.Handle(pattern, s.tokenAuth(h))
+}
+
+// HandleUnauthenticated mounts h on the mux without the X-Admin-Token middleware.
+// Use only for routes that must be reachable without a token (e.g. GET /v1/healthz).
+// NOTE: the mux is a plain http.ServeMux — the last Handle/HandleUnauthenticated
+// call for a given pattern wins, so there is no risk of double-registration.
+func (s *Server) HandleUnauthenticated(pattern string, h http.HandlerFunc) {
+	s.mux.Handle(pattern, h)
 }
 
 // tokenAuth enforces the X-Admin-Token header. Comparison is constant-time

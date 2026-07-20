@@ -32,6 +32,34 @@ func doGet(t *testing.T, s *Server, path, token string) *httptest.ResponseRecord
 	return rr
 }
 
+// Given a route mounted via HandleUnauthenticated, when the request carries
+// no X-Admin-Token header, then the response is 200 — the middleware is
+// skipped entirely.
+func TestServer_HandleUnauthenticated_SkipsTokenCheck(t *testing.T) {
+	s := NewServer(testToken)
+	s.HandleUnauthenticated("GET /v1/healthz", func(w http.ResponseWriter, r *http.Request) {
+		WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+	})
+
+	rr := doGet(t, s, "/v1/healthz", "")
+	if rr.Code != http.StatusOK {
+		t.Fatalf("unauthenticated route without token: status = %d, want 200", rr.Code)
+	}
+	var body map[string]string
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["status"] != "ok" {
+		t.Fatalf("body = %v, want status=ok", body)
+	}
+
+	// Also verify it still works with a token attached (should be fine).
+	rr = doGet(t, s, "/v1/healthz", testToken)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("unauthenticated route with token: status = %d, want 200", rr.Code)
+	}
+}
+
 // Given a route on the admin server, when the request carries no
 // X-Admin-Token header, then the response is 401 with the generic error body.
 func TestServer_NoToken_401(t *testing.T) {
