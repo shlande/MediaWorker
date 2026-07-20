@@ -77,8 +77,9 @@ data:
 
     admin_api:
       listen: ":8081"
-      # QA token for test env — TODO: move to Secret before production
-      token: "REPLACE_VIA_CLUSTER_LOCAL_SECRET"
+      # REQUIRED at deploy time via cluster-local injection. Never commit real values. Node fails startup if admin_api.listen set but token empty by design.
+      # 部署时通过集群本地注入. 绝不提交真实值. 若设置了 admin_api.listen 而 token 为空, Node 按设计拒绝启动.
+      token: ""
 ---
 apiVersion: apps/v1
 kind: StatefulSet

@@ -8,6 +8,8 @@ metadata:
     app.kubernetes.io/part-of: mediaworker
 data:
   janitor.yaml: |
+    # pg_dsn password MUST be injected cluster-locally before apply (real value lives in CNPG secret pg-mediaworker-app, namespace mediaworker-test). Never commit real credentials.
+    # 密码必须在 apply 前通过集群本地方式注入 (真实值存于 CNPG secret pg-mediaworker-app). 绝不提交真实凭据.
     metadata:
       pg_dsn: "postgres://mediaworker:REPLACE_VIA_CLUSTER_LOCAL_SECRET@pg-mediaworker-rw.mediaworker-test.svc.cluster.local:5432/mediaworker?sslmode=disable"
 

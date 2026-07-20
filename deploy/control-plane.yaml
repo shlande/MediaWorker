@@ -39,8 +39,8 @@ data:
       send_timeout: "30s"
 
     # DSN 指向同 namespace 下的 CNPG Cluster (deploy/postgres.yaml)
-    # 密码由 CNPG operator 自动生成, 存于 secret pg-mediaworker-app
-    # TODO: move to Secret ref before production
+    # pg_dsn password MUST be injected cluster-locally before apply (real value lives in CNPG secret pg-mediaworker-app, namespace mediaworker-test). Never commit real credentials.
+    # 密码必须在 apply 前通过集群本地方式注入 (真实值存于 CNPG secret pg-mediaworker-app). 绝不提交真实凭据.
     metadata:
       pg_dsn: "postgres://mediaworker:REPLACE_VIA_CLUSTER_LOCAL_SECRET@pg-mediaworker-rw.mediaworker-test.svc.cluster.local:5432/mediaworker?sslmode=disable"
 
@@ -50,10 +50,13 @@ data:
 
     admin_api:
       listen: ":8082"
-      # QA token for test env — TODO: move to Secret before production
-      token_secret: "REPLACE_VIA_CLUSTER_LOCAL_SECRET"
+      # REQUIRED at deploy time via cluster-local injection (kubectl patch / sealed-secret). Never commit real values. CP fails startup if left empty by design.
+      # 部署时通过集群本地注入 (kubectl patch / sealed-secret). 绝不提交真实值. 留空则 CP 按设计拒绝启动.
+      token_secret: ""
       prometheus_url: ""
-      alert_webhook_token: "REPLACE_VIA_CLUSTER_LOCAL_SECRET"
+      # REQUIRED at deploy time via cluster-local injection (kubectl patch / sealed-secret). Never commit real values. Empty = webhook endpoint not mounted (per config semantics).
+      # 同上: 集群本地注入. 留空 = webhook 端点不挂载 (符合配置语义).
+      alert_webhook_token: ""
       quota_rebalance_interval: "60s"
 ---
 apiVersion: v1
@@ -139,9 +142,8 @@ spec:
           env:
             - name: GOMAXPROCS
               value: "2"
-            # Test-env admin seed password — TODO: move to Secret before production
-            - name: ADMIN_BOOTSTRAP_PASSWORD
-              value: "REPLACE_VIA_CLUSTER_LOCAL_SECRET"
+            # Admin seed: env unset → CP generates a one-time random bootstrap password and logs it at startup (cluster-local only). Set cluster-locally if a fixed QA password is needed — never commit.
+            # Admin 种子: env 未设置 → CP 生成一次性随机 bootstrap 密码并仅在启动日志中输出 (仅集群本地可见). 如需固定 QA 密码请集群本地设置 — 绝不提交.
           resources:
             requests:
               cpu: 100m
