@@ -250,6 +250,23 @@ func TestWriteError(t *testing.T) {
 // Serve: lifecycle + graceful drain
 // ---------------------------------------------------------------------------
 
+// waitForListener dials addr in a retry loop until the server accepts (or
+// timeout). This prevents connection-refused races when tests fire HTTP
+// requests before the goroutine running Serve has bound the listener.
+func waitForListener(t *testing.T, addr string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("waitForListener(%s) timed out after %v", addr, timeout)
+}
+
 func freeAddr(t *testing.T) string {
 	t.Helper()
 	l, err := net.Listen("tcp", "127.0.0.1:0")
@@ -315,6 +332,8 @@ func TestServer_ServeDrainsInFlight(t *testing.T) {
 	done := make(chan error, 1)
 	addr := freeAddr(t)
 	go func() { done <- s.Serve(ctx, addr) }()
+
+	waitForListener(t, addr, 2*time.Second)
 
 	respCh := make(chan int, 1)
 	go func() {

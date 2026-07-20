@@ -114,7 +114,8 @@ func TestAuditLog_InvalidSignatureProducesResultFail(t *testing.T) {
 // TestAuditLog_RateLimitedProducesResultFail asserts a rate-limit hit
 // writes "result":"fail" with reason "rate_limited".
 func TestAuditLog_RateLimitedProducesResultFail(t *testing.T) {
-	// Use a RateLimiter that blocks all requests.
+	// Use a RateLimiter with a 1-hour interval so the refill can never
+	// elapse between two sequential calls — deterministic rate-limit.
 	_, privKey, err := sjwt.GenerateEd25519Key()
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
@@ -122,7 +123,7 @@ func TestAuditLog_RateLimitedProducesResultFail(t *testing.T) {
 	buf := &bytes.Buffer{}
 	auditLog := jwt.NewAuditLog(buf)
 	whitelist := jwt.NewPeerIdSet()
-	blockAll := jwt.NewRateLimiter(1 * time.Millisecond)
+	blockAll := jwt.NewRateLimiter(1 * time.Hour)
 	svc := jwt.NewJWTService(privKey, whitelist, blockAll, auditLog, config.JWTPolicyConfig{})
 
 	_, nodePriv, err := sjwt.GenerateEd25519Key()
