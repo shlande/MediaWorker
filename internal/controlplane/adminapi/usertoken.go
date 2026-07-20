@@ -16,9 +16,9 @@ import (
 // ---------------------------------------------------------------------------
 
 var (
-	ErrUserTokenExpired     = errors.New("adminapi: user token expired")
+	ErrUserTokenExpired      = errors.New("adminapi: user token expired")
 	ErrUserTokenBadSignature = errors.New("adminapi: bad user token signature")
-	ErrUserTokenFormat      = errors.New("adminapi: invalid user token format")
+	ErrUserTokenFormat       = errors.New("adminapi: invalid user token format")
 )
 
 // ---------------------------------------------------------------------------

@@ -460,13 +460,13 @@ func TestJWT_Dedup(t *testing.T) {
 				handlerCalled <- struct{}{}
 			})
 
-		// Seed store with existing entry
-		if tc.existingExp > 0 {
-			_ = store.Put(types.PeerStoreEntry{ // test setup
-				PeerID: types.PeerId(host2.ID().String()),
-				JWTExp: tc.existingExp,
-				JWT:    types.CapabilityJWT("old-jwt-" + tc.name),
-			})
+			// Seed store with existing entry
+			if tc.existingExp > 0 {
+				_ = store.Put(types.PeerStoreEntry{ // test setup
+					PeerID: types.PeerId(host2.ID().String()),
+					JWTExp: tc.existingExp,
+					JWT:    types.CapabilityJWT("old-jwt-" + tc.name),
+				})
 			}
 
 			// Build JWT with requested exp

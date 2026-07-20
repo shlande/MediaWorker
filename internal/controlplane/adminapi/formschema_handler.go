@@ -7,14 +7,14 @@ import (
 )
 
 type fieldDef struct {
-	Key       string          `json:"key"`
-	Label     string          `json:"label"`
-	Type      string          `json:"type"`
-	Required  bool            `json:"required"`
-	Sensitive bool            `json:"sensitive,omitempty"`
-	Options   []FieldOption   `json:"options,omitempty"`
-	KvHint    []KvHintEntry   `json:"kvHint,omitempty"`
-	Help      string          `json:"help,omitempty"`
+	Key       string        `json:"key"`
+	Label     string        `json:"label"`
+	Type      string        `json:"type"`
+	Required  bool          `json:"required"`
+	Sensitive bool          `json:"sensitive,omitempty"`
+	Options   []FieldOption `json:"options,omitempty"`
+	KvHint    []KvHintEntry `json:"kvHint,omitempty"`
+	Help      string        `json:"help,omitempty"`
 }
 
 type defaultDef struct {
@@ -28,14 +28,14 @@ type rateLimitDef struct {
 }
 
 type vendorSchemaEntry struct {
-	Auth     string      `json:"auth"`
-	Fields   []fieldDef  `json:"fields"`
-	Defaults defaultDef  `json:"defaults"`
-	Notes    []string    `json:"notes,omitempty"`
+	Auth     string     `json:"auth"`
+	Fields   []fieldDef `json:"fields"`
+	Defaults defaultDef `json:"defaults"`
+	Notes    []string   `json:"notes,omitempty"`
 }
 
 type formSchemaResponse struct {
-	SchemaVersion string                         `json:"schema_version"`
+	SchemaVersion string                             `json:"schema_version"`
 	Vendors       map[types.Vendor]vendorSchemaEntry `json:"vendors"`
 }
 

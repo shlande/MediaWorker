@@ -10,20 +10,20 @@ import (
 )
 
 type nodeDetailResponse struct {
-	PeerID         string                       `json:"peer_id"`
-	Capabilities   []string                     `json:"capabilities"`
-	PrefixSpace    nodeSpaceResponse            `json:"prefix_space"`
-	WarmSpace      nodeSpaceResponse            `json:"warm_space"`
-	ColdSpace      *nodeSpaceResponse           `json:"cold_space"`
-	Healthy        bool                         `json:"healthy"`
-	LastSeen       string                       `json:"last_seen"`
-	Region         string                       `json:"region"`
-	Version        string                       `json:"version"`
-	UptimeSec      int64                        `json:"uptime_sec,omitempty"`
-	ConnCount      int                          `json:"conn_count"`
-	JWT            *nodeJWTResponse             `json:"jwt"`
-	RecentReports  []nodeHistoryReportResponse  `json:"recent_reports"`
-	RecentPinPlans []pinPlanRecordResponse      `json:"recent_pin_plans"`
+	PeerID         string                      `json:"peer_id"`
+	Capabilities   []string                    `json:"capabilities"`
+	PrefixSpace    nodeSpaceResponse           `json:"prefix_space"`
+	WarmSpace      nodeSpaceResponse           `json:"warm_space"`
+	ColdSpace      *nodeSpaceResponse          `json:"cold_space"`
+	Healthy        bool                        `json:"healthy"`
+	LastSeen       string                      `json:"last_seen"`
+	Region         string                      `json:"region"`
+	Version        string                      `json:"version"`
+	UptimeSec      int64                       `json:"uptime_sec,omitempty"`
+	ConnCount      int                         `json:"conn_count"`
+	JWT            *nodeJWTResponse            `json:"jwt"`
+	RecentReports  []nodeHistoryReportResponse `json:"recent_reports"`
+	RecentPinPlans []pinPlanRecordResponse     `json:"recent_pin_plans"`
 }
 
 type nodeHistoryReportResponse struct {

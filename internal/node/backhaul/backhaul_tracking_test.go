@@ -75,7 +75,7 @@ func TestStats24h_ExcludesObservationsOlderThan24h(t *testing.T) {
 	// Given: one in-window success and one 25h-old failure
 	bm := NewBackhaulManager(newMockCache(), &mockDataPlane{}, nil, nil)
 	now := time.Now()
-	bm.recordObservation(observation{ts: now.Add(-25*time.Hour), success: false, latencyMs: 999, bytes: 5})
+	bm.recordObservation(observation{ts: now.Add(-25 * time.Hour), success: false, latencyMs: 999, bytes: 5})
 	bm.recordObservation(observation{ts: now.Add(-time.Hour), success: true, latencyMs: 42, bytes: 5})
 
 	// When: computing stats
@@ -99,7 +99,7 @@ func TestBackhaulUtilization_AveragesLast60s(t *testing.T) {
 	// Given: 600 bytes observed just now, plus 10KB observed 2 minutes ago
 	bm := NewBackhaulManager(newMockCache(), &mockDataPlane{}, nil, nil)
 	now := time.Now()
-	bm.recordObservation(observation{ts: now.Add(-2*time.Minute), success: true, latencyMs: 1, bytes: 10_000})
+	bm.recordObservation(observation{ts: now.Add(-2 * time.Minute), success: true, latencyMs: 1, bytes: 10_000})
 	bm.recordObservation(observation{ts: now, success: true, latencyMs: 1, bytes: 600})
 
 	// When: reading utilization

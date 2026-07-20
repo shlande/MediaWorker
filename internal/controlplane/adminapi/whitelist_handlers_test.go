@@ -20,10 +20,10 @@ import (
 // ─── Mock WhitelistStoreReader ──────────────────────────────────────────
 
 type mockWhitelistStore struct {
-	entries    []jwt.WhitelistEntry
-	addErr     error
-	listErr    error
-	removeErr  error
+	entries   []jwt.WhitelistEntry
+	addErr    error
+	listErr   error
+	removeErr error
 
 	// Spy: last arguments.
 	lastAddPeer    types.PeerId
@@ -980,5 +980,3 @@ func TestWhitelist_prefix_clash(t *testing.T) {
 		t.Errorf("GET /v1/admin/whitelist/extra: expected 405, got %d", resp.StatusCode)
 	}
 }
-
-

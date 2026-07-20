@@ -212,7 +212,7 @@ type alertItem struct {
 	Severity string          `json:"severity"`
 	Target   string          `json:"target"`
 	Since    *time.Time      `json:"since"`
-	Detail   json.RawMessage `json:"detail"`
+	Detail   json.RawMessage `json:"detail" swaggertype:"object"`
 }
 
 // listAlertsHandler serves GET /v1/admin/alerts.

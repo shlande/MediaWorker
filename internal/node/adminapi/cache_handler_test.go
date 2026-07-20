@@ -11,9 +11,9 @@ import (
 
 // fakePinStore implements PinSpaceQuerier for tests.
 type fakePinStore struct {
-	available      int64
-	pinnedCount    int32
-	totalPinned    int64
+	available   int64
+	pinnedCount int32
+	totalPinned int64
 }
 
 func (f *fakePinStore) QuerySpace() types.PinSpaceInfo {
@@ -26,15 +26,15 @@ func (f *fakePinStore) QuerySpace() types.PinSpaceInfo {
 
 // fakeWarmCache implements WarmCacheReader for tests.
 type fakeWarmCache struct {
-	used    int64
-	total   int64
-	count   int
-	ev1h    int
+	used  int64
+	total int64
+	count int
+	ev1h  int
 }
 
 func (f *fakeWarmCache) Usage() (used, total int64) { return f.used, f.total }
-func (f *fakeWarmCache) Count() int                  { return f.count }
-func (f *fakeWarmCache) Evictions1h() int            { return f.ev1h }
+func (f *fakeWarmCache) Count() int                 { return f.count }
+func (f *fakeWarmCache) Evictions1h() int           { return f.ev1h }
 
 func doCacheGet(t *testing.T, s *Server, token string) *httptest.ResponseRecorder {
 	t.Helper()

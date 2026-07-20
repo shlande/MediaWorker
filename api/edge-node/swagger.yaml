@@ -1,0 +1,583 @@
+basePath: /
+definitions:
+  adminapi.backhaulAccount:
+    properties:
+      backend_id:
+        type: string
+      circuit:
+        type: string
+      health:
+        type: string
+      inflight:
+        type: integer
+      qps:
+        $ref: '#/definitions/adminapi.backhaulQPS'
+    type: object
+  adminapi.backhaulBandwidth:
+    properties:
+      capacity_bps:
+        type: integer
+      used_bps:
+        type: number
+    type: object
+  adminapi.backhaulLinkpool:
+    properties:
+      entries:
+        type: integer
+      hit_rate:
+        type: number
+    type: object
+  adminapi.backhaulQPS:
+    properties:
+      limit:
+        type: number
+      used:
+        type: number
+    type: object
+  adminapi.backhaulResponse:
+    properties:
+      accounts:
+        items:
+          $ref: '#/definitions/adminapi.backhaulAccount'
+        type: array
+      bandwidth:
+        $ref: '#/definitions/adminapi.backhaulBandwidth'
+      latency_p95_ms:
+        type: integer
+      linkpool:
+        $ref: '#/definitions/adminapi.backhaulLinkpool'
+      success_rate_24h:
+        type: number
+    type: object
+  adminapi.cacheHitRates:
+    properties:
+      prefix:
+        type: number
+      warm:
+        type: number
+    type: object
+  adminapi.cachePartition:
+    properties:
+      blob_count:
+        type: integer
+      total:
+        type: integer
+      used:
+        type: integer
+    type: object
+  adminapi.cacheResponse:
+    properties:
+      cold: {}
+      eviction_counters:
+        $ref: '#/definitions/adminapi.evictionCounter'
+      prefix:
+        $ref: '#/definitions/adminapi.cachePartition'
+      warm:
+        $ref: '#/definitions/adminapi.cachePartition'
+    type: object
+  adminapi.connBreakdown:
+    properties:
+      in:
+        type: integer
+      out:
+        type: integer
+      total:
+        type: integer
+    type: object
+  adminapi.connStats:
+    properties:
+      inbound:
+        type: integer
+      outbound:
+        type: integer
+      total:
+        type: integer
+    type: object
+  adminapi.dhtStatus:
+    properties:
+      mode:
+        type: string
+      table_size:
+        type: integer
+    type: object
+  adminapi.evictionCounter:
+    properties:
+      cold_1h:
+        type: integer
+      warm_1h:
+        type: integer
+    type: object
+  adminapi.flushRequest:
+    properties:
+      partitions:
+        items:
+          type: string
+        type: array
+    type: object
+  adminapi.flushResponse:
+    properties:
+      partitions:
+        items:
+          type: string
+        type: array
+      status:
+        type: string
+    type: object
+  adminapi.gossipsubStatus:
+    properties:
+      subscribed:
+        description: 'static true: the topic is joined during assembly'
+        type: boolean
+    type: object
+  adminapi.hashRingStatus:
+    properties:
+      peers_on_ring:
+        type: integer
+      position_pct:
+        description: null when self is absent from the ring
+        type: number
+    type: object
+  adminapi.jwtStatus:
+    properties:
+      exp:
+        description: null when no verifiable JWT
+        type: integer
+      last_refresh_at:
+        description: null when never attempted
+        type: string
+      last_refresh_ok:
+        type: boolean
+      refresh_before:
+        type: integer
+      refresh_fail_count_24h:
+        type: integer
+    type: object
+  adminapi.natStatus:
+    properties:
+      dcutr_counters_unavailable:
+        type: boolean
+      dcutr_success_rate:
+        type: number
+      reachability:
+        type: string
+      relay_circuits:
+        type: integer
+    type: object
+  adminapi.networkResponse:
+    properties:
+      conn:
+        $ref: '#/definitions/adminapi.connBreakdown'
+      dht:
+        $ref: '#/definitions/adminapi.dhtStatus'
+      gossipsub:
+        $ref: '#/definitions/adminapi.gossipsubStatus'
+      hash_ring:
+        $ref: '#/definitions/adminapi.hashRingStatus'
+      listen_addrs:
+        items:
+          type: string
+        type: array
+      nat:
+        $ref: '#/definitions/adminapi.natStatus'
+    type: object
+  adminapi.peerView:
+    properties:
+      addrs:
+        items:
+          type: string
+        type: array
+      capabilities:
+        items:
+          type: string
+        type: array
+      last_seen:
+        type: integer
+      peer_id:
+        type: string
+      score:
+        type: number
+      stale:
+        type: boolean
+    type: object
+  adminapi.pinEntry:
+    properties:
+      blob_hash:
+        type: string
+      content_id:
+        type: string
+      last_error:
+        type: string
+      pinned_at:
+        type: string
+      role:
+        type: string
+      size:
+        type: integer
+      state:
+        type: string
+    type: object
+  adminapi.pinSummary:
+    properties:
+      failed:
+        type: integer
+      pulling:
+        type: integer
+      ready:
+        type: integer
+      total:
+        type: integer
+    type: object
+  adminapi.pinsResponse:
+    properties:
+      pins:
+        items:
+          $ref: '#/definitions/adminapi.pinEntry'
+        type: array
+      summary:
+        $ref: '#/definitions/adminapi.pinSummary'
+    type: object
+  adminapi.scoreView:
+    properties:
+      graylisted_peers:
+        type: integer
+    type: object
+  adminapi.statusResponse:
+    properties:
+      cache_hit_rate:
+        $ref: '#/definitions/adminapi.cacheHitRates'
+      capabilities:
+        items:
+          type: string
+        type: array
+      conn:
+        $ref: '#/definitions/adminapi.connStats'
+      healthy:
+        type: boolean
+      jwt:
+        $ref: '#/definitions/adminapi.jwtStatus'
+      mode:
+        description: '"l4" | "edge"'
+        type: string
+      peer_id:
+        type: string
+      region:
+        type: string
+      relay_bytes_24h:
+        type: integer
+      score_view:
+        $ref: '#/definitions/adminapi.scoreView'
+      ttfb_p95_ms:
+        type: integer
+      uptime_sec:
+        type: integer
+      version:
+        type: string
+    type: object
+  config.ReloadNotApplied:
+    properties:
+      field:
+        type: string
+      reason:
+        type: string
+    type: object
+  config.ReloadReport:
+    properties:
+      applied:
+        items:
+          type: string
+        type: array
+      not_applied:
+        items:
+          $ref: '#/definitions/config.ReloadNotApplied'
+        type: array
+    type: object
+  planlog.Record:
+    properties:
+      applied:
+        description: false when the pin store is disabled (prefix cache off)
+        type: boolean
+      pins:
+        type: integer
+      received_at:
+        type: string
+      seq:
+        type: integer
+      unpins:
+        type: integer
+    type: object
+  types.ErrorResponse:
+    properties:
+      error:
+        type: string
+    type: object
+host: localhost:8080
+info:
+  contact: {}
+  description: 边缘节点 HTTP API：终端 blob 分发、节点本地管理 API 与 Prometheus 指标。
+  title: MediaWorker Edge-Node API
+  version: "1.0"
+paths:
+  /blob/{hash}:
+    get:
+      description: 根据 SHA-256 哈希值从缓存或对等节点获取 blob 内容并返回二进制流。
+      parameters:
+      - description: blob SHA-256 哈希
+        in: path
+        name: hash
+        required: true
+        type: string
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "404":
+          description: Not Found
+          schema:
+            type: string
+      summary: 按哈希取 blob 字节流
+      tags:
+      - blob
+  /metrics:
+    get:
+      description: Prometheus 文本格式的运行指标，包括缓存命中、对等点请求等度量。
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+      summary: 节点指标
+      tags:
+      - ops
+  /v1/admin/flush-cache:
+    post:
+      consumes:
+      - application/json
+      description: 接受 partition 列表（当前仅支持 "warm"），立即返回 202 并异步执行冲刷；并发的第二次 POST 由 singleflight
+        去重。
+      parameters:
+      - description: 分区列表
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/adminapi.flushRequest'
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/adminapi.flushResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminToken: []
+      summary: 冲刷缓存分区
+      tags:
+      - node-admin
+  /v1/admin/reload-config:
+    post:
+      description: 重新加载配置文件并应用可热更新的白名单字段（JWT 刷新间隔、管理令牌等），需要重启的字段返回 not_applied。
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/config.ReloadReport'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminToken: []
+      summary: 热加载配置
+      tags:
+      - node-admin
+  /v1/backhaul:
+    get:
+      description: 返回带宽使用率、24h 成功率、P95 延迟、linkpool 命中率与网盘账号列表。非 L4 节点返回 409。
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/adminapi.backhaulResponse'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminToken: []
+      summary: 回传链路状态
+      tags:
+      - node-admin
+  /v1/cache:
+    get:
+      description: 返回 prefix（PinStore）、warm（WarmCache）分区用量、blob 数与驱逐计数器。
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/adminapi.cacheResponse'
+      security:
+      - AdminToken: []
+      summary: 缓存状态
+      tags:
+      - node-admin
+  /v1/healthz:
+    get:
+      description: 返回 {"status":"ok"} 表示节点管理 API 可正常响应。
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: 管理接口健康探测
+      tags:
+      - ops
+  /v1/network:
+    get:
+      description: 返回监听地址、入站/出站连接数、DHT 路由表大小、GossipSub 订阅状态、NAT 可访问性与 hash ring 位置。
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/adminapi.networkResponse'
+      security:
+      - AdminToken: []
+      summary: 网络状态
+      tags:
+      - node-admin
+  /v1/peers:
+    get:
+      description: 返回 peerstore 中所有已知对等点的身份、能力、评分、过期状态与最近活跃时间。
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/adminapi.peerView'
+            type: array
+      security:
+      - AdminToken: []
+      summary: 对等点列表
+      tags:
+      - node-admin
+  /v1/pin-plans/recent:
+    get:
+      description: 返回 syncbroadcaster 最近收到的 PinPlan 记录，可选 limit 参数限制条数。
+      parameters:
+      - description: 返回条数上限
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/planlog.Record'
+            type: array
+      security:
+      - AdminToken: []
+      summary: 最近的钉扎计划
+      tags:
+      - node-admin
+  /v1/pins:
+    get:
+      description: 返回已钉扎的 blob 条目，支持按 role、content_id、ready 过滤。
+      parameters:
+      - description: 按角色过滤
+        in: query
+        name: role
+        type: string
+      - description: 按内容 ID 过滤
+        in: query
+        name: content_id
+        type: string
+      - description: 按就绪状态过滤
+        in: query
+        name: ready
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/adminapi.pinsResponse'
+      security:
+      - AdminToken: []
+      summary: 钉扎列表
+      tags:
+      - node-admin
+  /v1/pins/{hash}/retry:
+    post:
+      description: 将指定 blob 哈希对应的失败钉扎项重新加入拉取队列。
+      parameters:
+      - description: blob SHA-256 哈希
+        in: path
+        name: hash
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminToken: []
+      summary: 重试钉扎
+      tags:
+      - node-admin
+  /v1/status:
+    get:
+      description: 返回节点身份、能力、JWT 状态、连接数、缓存命中率与 TTFB P95。
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/adminapi.statusResponse'
+      security:
+      - AdminToken: []
+      summary: 节点状态
+      tags:
+      - node-admin
+securityDefinitions:
+  AdminToken:
+    description: 节点本地管理 API 令牌
+    in: header
+    name: X-Admin-Token
+    type: apiKey
+swagger: "2.0"

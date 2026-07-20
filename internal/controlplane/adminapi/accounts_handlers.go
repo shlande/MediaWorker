@@ -131,9 +131,9 @@ type vendorProfileRowResponse struct {
 }
 
 type vendorProfilesResponse struct {
-	Profiles   []vendorProfileRowResponse `json:"profiles"`
-	ReadOnly   bool                       `json:"read_only"`
-	Note       string                     `json:"note"`
+	Profiles []vendorProfileRowResponse `json:"profiles"`
+	ReadOnly bool                       `json:"read_only"`
+	Note     string                     `json:"note"`
 }
 
 // ─── Handler ───────────────────────────────────────────────────────────────

@@ -580,9 +580,9 @@ func TestContentsDetail_NotDeleted(t *testing.T) {
 		ContentsDetailReader: &mockContentsDetailReader{
 			detail: &metadata.AdminContentDetail{
 				Meta: &types.ContentMeta{
-					ContentID:  "33333333-3333-3333-3333-333333333333",
+					ContentID:   "33333333-3333-3333-3333-333333333333",
 					ContentType: "dash",
-					DeletedAt:  nil,
+					DeletedAt:   nil,
 				},
 			},
 		},
@@ -758,7 +758,7 @@ func TestContentsDetail_NilBlobsAndLocations(t *testing.T) {
 		ContentsDetailReader: &mockContentsDetailReader{
 			detail: &metadata.AdminContentDetail{
 				Meta: &types.ContentMeta{
-					ContentID:  "66666666-6666-6666-6666-666666666666",
+					ContentID:   "66666666-6666-6666-6666-666666666666",
 					ContentType: "dash",
 				},
 				Blobs:     nil,
@@ -828,8 +828,6 @@ func TestContentsRoutes_NoPrefixClash(t *testing.T) {
 func strPtr(s string) *string {
 	return &s
 }
-
-
 
 var _ = strings.Repeat
 

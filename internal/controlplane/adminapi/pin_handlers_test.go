@@ -41,13 +41,13 @@ func (m *mockPinContentMeta) GetContentBlobs(_ context.Context, contentID string
 // ─── Mock PinOrchestrator ────────────────────────────────────────────────
 
 type mockPinOrchestrator struct {
-	seqs         []uint64
-	err          error
-	lastContent  string
-	lastTargets  []string
-	lastPins     []string
-	lastUnpins   []string
-	callCount    int
+	seqs        []uint64
+	err         error
+	lastContent string
+	lastTargets []string
+	lastPins    []string
+	lastUnpins  []string
+	callCount   int
 }
 
 func (m *mockPinOrchestrator) SendManualPlan(contentID string, targets []string, pinBlobs, unpinBlobs []string) ([]uint64, error) {
@@ -486,7 +486,7 @@ func TestManualUnpin_SkipsSpaceFilter(t *testing.T) {
 
 func TestManualUnpin_NodeNotFound_422(t *testing.T) {
 	mc := &mockPinContentMeta{
-		meta: &types.ContentMeta{ContentID: "c1"},
+		meta:  &types.ContentMeta{ContentID: "c1"},
 		blobs: []types.BlobDescriptor{{BlobHash: "h1", Size: 100}},
 	}
 	reg := noderegistry.NewRegistry()
@@ -585,7 +585,9 @@ func blobHashesEqual(a, b []string) bool {
 // ─── Compile-time interface satisfaction checks ──────────────────────────
 
 // Verify that *noderegistry.Registry satisfies the buildNodeIDMap input.
-var _ interface{ Snapshot() []noderegistry.NodeView } = (*noderegistry.Registry)(nil)
+var _ interface {
+	Snapshot() []noderegistry.NodeView
+} = (*noderegistry.Registry)(nil)
 
 // ─── Response shape validation ───────────────────────────────────────────
 

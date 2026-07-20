@@ -1,0 +1,2133 @@
+basePath: /
+definitions:
+  adminapi.FieldOption:
+    properties:
+      label:
+        type: string
+      value:
+        type: string
+    type: object
+  adminapi.KvHintEntry:
+    properties:
+      key:
+        type: string
+    type: object
+  adminapi.PinPlanItem:
+    properties:
+      ack_state:
+        type: string
+      content_id:
+        type: string
+      pins:
+        type: integer
+      sent_at:
+        type: string
+      seq:
+        type: integer
+      target_node:
+        type: string
+      trigger:
+        type: string
+      unpins:
+        type: integer
+    type: object
+  adminapi.accountHealthResponse:
+    properties:
+      ban_until:
+        description: RFC3339; omitempty handles nil
+        type: string
+      error_msg:
+        type: string
+      last_check:
+        type: string
+      latency_ms:
+        type: integer
+      state:
+        type: string
+    type: object
+  adminapi.accountOpResponse:
+    properties:
+      account_id:
+        type: string
+      effective:
+        type: string
+      vendor:
+        type: string
+      warnings:
+        items:
+          type: string
+        type: array
+    type: object
+  adminapi.accountRateLimitResponse:
+    properties:
+      burst:
+        type: integer
+      concurrent:
+        type: integer
+      qps:
+        type: number
+    type: object
+  adminapi.accountRowResponse:
+    properties:
+      account_id:
+        type: string
+      base_latency_ms:
+        type: integer
+      credential_meta:
+        $ref: '#/definitions/metadata.CredentialMeta'
+      enabled:
+        type: boolean
+      health:
+        allOf:
+        - $ref: '#/definitions/adminapi.accountHealthResponse'
+        description: null when the account has no health row
+      rate_limit:
+        $ref: '#/definitions/adminapi.accountRateLimitResponse'
+      vendor:
+        type: string
+      vendor_profile:
+        $ref: '#/definitions/types.VendorProfile'
+    type: object
+  adminapi.accountTestRequest:
+    properties:
+      account_id:
+        type: string
+      auth:
+        additionalProperties: {}
+        type: object
+      vendor:
+        type: string
+    type: object
+  adminapi.accountsResponse:
+    properties:
+      accounts:
+        items:
+          $ref: '#/definitions/adminapi.accountRowResponse'
+        type: array
+      summary:
+        $ref: '#/definitions/adminapi.accountsSummary'
+    type: object
+  adminapi.accountsSummary:
+    properties:
+      by_state:
+        additionalProperties:
+          type: integer
+        type: object
+      total:
+        type: integer
+    type: object
+  adminapi.alertItem:
+    properties:
+      detail:
+        type: object
+      name:
+        type: string
+      severity:
+        type: string
+      since:
+        type: string
+      target:
+        type: string
+    type: object
+  adminapi.amAlert:
+    properties:
+      annotations:
+        $ref: '#/definitions/adminapi.stringMap'
+      fingerprint:
+        type: string
+      labels:
+        $ref: '#/definitions/adminapi.stringMap'
+      startsAt:
+        type: string
+      status:
+        type: string
+    type: object
+  adminapi.amWebhookPayload:
+    properties:
+      alerts:
+        items:
+          $ref: '#/definitions/adminapi.amAlert'
+        type: array
+      status:
+        type: string
+    type: object
+  adminapi.auditEntryResponse:
+    properties:
+      action:
+        type: string
+      actor:
+        type: string
+      ip:
+        type: string
+      kind:
+        type: string
+      result:
+        type: string
+      target:
+        type: string
+      ts:
+        type: string
+    type: object
+  adminapi.auditQueryResponse:
+    properties:
+      entries:
+        items:
+          $ref: '#/definitions/adminapi.auditEntryResponse'
+        type: array
+      total:
+        type: integer
+    type: object
+  adminapi.banAccountRequest:
+    properties:
+      ban_until:
+        description: RFC3339; default +24h
+        type: string
+      reason:
+        type: string
+    type: object
+  adminapi.circuitAccountRequest:
+    properties:
+      action:
+        type: string
+    type: object
+  adminapi.contentDeleteResponse:
+    properties:
+      content_id:
+        type: string
+      note:
+        type: string
+      pending_delete:
+        type: boolean
+    type: object
+  adminapi.contentDetailBlobResponse:
+    properties:
+      blob_type:
+        type: string
+      business_meta:
+        additionalProperties: {}
+        type: object
+      hash:
+        type: string
+      role:
+        type: string
+      size:
+        type: integer
+      sort_order:
+        type: integer
+    type: object
+  adminapi.contentDetailLocationResponse:
+    properties:
+      account_health:
+        type: string
+      backend_id:
+        type: string
+      blob_hash:
+        type: string
+      file_id:
+        type: string
+    type: object
+  adminapi.contentDetailMetaResponse:
+    properties:
+      content_id:
+        type: string
+      content_type:
+        type: string
+      created_at:
+        type: string
+      pending_delete:
+        type: boolean
+      title:
+        type: string
+      type_metadata:
+        items:
+          type: integer
+        type: array
+    type: object
+  adminapi.contentDetailResponse:
+    properties:
+      blobs:
+        items:
+          $ref: '#/definitions/adminapi.contentDetailBlobResponse'
+        type: array
+      locations:
+        items:
+          $ref: '#/definitions/adminapi.contentDetailLocationResponse'
+        type: array
+      meta:
+        $ref: '#/definitions/adminapi.contentDetailMetaResponse'
+    type: object
+  adminapi.createAccountRequest:
+    properties:
+      account_id:
+        type: string
+      auth:
+        additionalProperties: {}
+        type: object
+      enabled:
+        type: boolean
+      rate_limit:
+        $ref: '#/definitions/adminapi.rateLimitRequest'
+      vendor:
+        type: string
+      vendor_profile:
+        $ref: '#/definitions/types.VendorProfile'
+    type: object
+  adminapi.createAccountResponse:
+    properties:
+      account_id:
+        type: string
+      vendor:
+        type: string
+      warnings:
+        items:
+          type: string
+        type: array
+    type: object
+  adminapi.defaultDef:
+    properties:
+      rate_limit:
+        $ref: '#/definitions/adminapi.rateLimitDef'
+    type: object
+  adminapi.fieldDef:
+    properties:
+      help:
+        type: string
+      key:
+        type: string
+      kvHint:
+        items:
+          $ref: '#/definitions/adminapi.KvHintEntry'
+        type: array
+      label:
+        type: string
+      options:
+        items:
+          $ref: '#/definitions/adminapi.FieldOption'
+        type: array
+      required:
+        type: boolean
+      sensitive:
+        type: boolean
+      type:
+        type: string
+    type: object
+  adminapi.formSchemaResponse:
+    properties:
+      schema_version:
+        type: string
+      vendors:
+        additionalProperties:
+          $ref: '#/definitions/adminapi.vendorSchemaEntry'
+        type: object
+    type: object
+  adminapi.loginRequest:
+    properties:
+      password:
+        type: string
+      username:
+        type: string
+    type: object
+  adminapi.loginResponse:
+    properties:
+      expires_at:
+        description: RFC3339
+        type: string
+      roles:
+        items:
+          type: string
+        type: array
+      token:
+        type: string
+    type: object
+  adminapi.manualPinRequest:
+    properties:
+      blobs:
+        description: blob_hash filter; empty = all
+        items:
+          type: string
+        type: array
+      content_id:
+        type: string
+      target_nodes:
+        items:
+          type: string
+        type: array
+    type: object
+  adminapi.manualPinResponse:
+    properties:
+      seq:
+        items:
+          type: integer
+        type: array
+      skipped:
+        items:
+          $ref: '#/definitions/adminapi.skipEntry'
+        type: array
+    type: object
+  adminapi.meResponse:
+    properties:
+      roles:
+        items:
+          type: string
+        type: array
+      user_id:
+        type: string
+      username:
+        type: string
+    type: object
+  adminapi.nodeDetailResponse:
+    properties:
+      capabilities:
+        items:
+          type: string
+        type: array
+      cold_space:
+        $ref: '#/definitions/adminapi.nodeSpaceResponse'
+      conn_count:
+        type: integer
+      healthy:
+        type: boolean
+      jwt:
+        $ref: '#/definitions/adminapi.nodeJWTResponse'
+      last_seen:
+        type: string
+      peer_id:
+        type: string
+      prefix_space:
+        $ref: '#/definitions/adminapi.nodeSpaceResponse'
+      recent_pin_plans:
+        items:
+          $ref: '#/definitions/adminapi.pinPlanRecordResponse'
+        type: array
+      recent_reports:
+        items:
+          $ref: '#/definitions/adminapi.nodeHistoryReportResponse'
+        type: array
+      region:
+        type: string
+      uptime_sec:
+        type: integer
+      version:
+        type: string
+      warm_space:
+        $ref: '#/definitions/adminapi.nodeSpaceResponse'
+    type: object
+  adminapi.nodeHistoryReportResponse:
+    properties:
+      conn_count:
+        type: integer
+      healthy:
+        type: boolean
+      id:
+        type: integer
+      node_id:
+        type: string
+      peer_id:
+        type: string
+      prefix_total:
+        type: integer
+      prefix_used:
+        type: integer
+      received_at:
+        type: string
+      region:
+        type: string
+      reported_at:
+        type: string
+      version:
+        type: string
+      warm_total:
+        type: integer
+      warm_used:
+        type: integer
+    type: object
+  adminapi.nodeJWTResponse:
+    properties:
+      exp:
+        type: string
+      should_have_renewed:
+        type: boolean
+    type: object
+  adminapi.nodeListItemResponse:
+    properties:
+      capabilities:
+        items:
+          type: string
+        type: array
+      conn_count:
+        type: integer
+      healthy:
+        type: boolean
+      jwt:
+        $ref: '#/definitions/adminapi.nodeJWTResponse'
+      last_seen:
+        type: string
+      peer_id:
+        type: string
+      prefix_space:
+        $ref: '#/definitions/adminapi.nodeSpaceResponse'
+      region:
+        type: string
+      uptime_sec:
+        type: integer
+      version:
+        type: string
+      warm_space:
+        $ref: '#/definitions/adminapi.nodeSpaceResponse'
+    type: object
+  adminapi.nodeSpaceResponse:
+    properties:
+      total:
+        type: integer
+      used:
+        type: integer
+    type: object
+  adminapi.overviewBackhaul:
+    properties:
+      capacity_bps:
+        type: number
+      used_bps:
+        type: number
+    type: object
+  adminapi.overviewCapabilityCounts:
+    properties:
+      edge:
+        type: integer
+      l4_backhaul:
+        type: integer
+      peer_icp:
+        type: integer
+      relay_provider:
+        type: integer
+    type: object
+  adminapi.overviewHotContent:
+    properties:
+      content_id:
+        type: string
+      content_type:
+        type: string
+      pin_node_count:
+        type: integer
+      replicas:
+        $ref: '#/definitions/adminapi.replicasResponse'
+      title:
+        type: string
+      window_24h:
+        type: integer
+    type: object
+  adminapi.overviewNodes:
+    properties:
+      by_capability:
+        $ref: '#/definitions/adminapi.overviewCapabilityCounts'
+      non_l4:
+        type: integer
+      online:
+        type: integer
+      space_buckets:
+        $ref: '#/definitions/adminapi.overviewSpaceBuckets'
+      total:
+        type: integer
+    type: object
+  adminapi.overviewPinStats:
+    properties:
+      batches:
+        type: integer
+      manual:
+        type: integer
+      pins:
+        type: integer
+      unpins:
+        type: integer
+    type: object
+  adminapi.overviewResponse:
+    properties:
+      alerts:
+        items:
+          $ref: '#/definitions/adminapi.alertItem'
+        type: array
+      backhaul:
+        $ref: '#/definitions/adminapi.overviewBackhaul'
+      hot_contents:
+        items:
+          $ref: '#/definitions/adminapi.overviewHotContent'
+        type: array
+      nodes:
+        $ref: '#/definitions/adminapi.overviewNodes'
+      partial:
+        type: boolean
+      pin_stats_1h:
+        $ref: '#/definitions/adminapi.overviewPinStats'
+      slo:
+        $ref: '#/definitions/adminapi.overviewSLO'
+    type: object
+  adminapi.overviewSLO:
+    properties:
+      account_health_rate:
+        type: number
+      backhaul_success_rate:
+        type: number
+      cache_hit_rate:
+        type: number
+      ttfb_p95:
+        type: number
+    type: object
+  adminapi.overviewSpaceBuckets:
+    properties:
+      exhausted:
+        type: integer
+      sufficient:
+        type: integer
+      tight:
+        type: integer
+      unknown:
+        type: integer
+    type: object
+  adminapi.pinPlanRecordResponse:
+    properties:
+      content_id:
+        type: string
+      pins:
+        type: integer
+      sent_at:
+        type: string
+      seq:
+        type: integer
+      target_node:
+        type: string
+      trigger:
+        type: string
+      unpins:
+        type: integer
+    type: object
+  adminapi.quotaAllocationRow:
+    properties:
+      base_share:
+        type: number
+      peer_id:
+        type: string
+    type: object
+  adminapi.quotaResponse:
+    properties:
+      allocations:
+        items:
+          $ref: '#/definitions/adminapi.quotaAllocationRow'
+        type: array
+      base_share:
+        type: number
+      global_qps:
+        type: number
+      node_count:
+        type: integer
+    type: object
+  adminapi.rateLimitDef:
+    properties:
+      burst:
+        type: integer
+      concurrent:
+        type: integer
+      qps:
+        type: number
+    type: object
+  adminapi.rateLimitRequest:
+    properties:
+      burst:
+        type: integer
+      concurrent:
+        type: integer
+      qps:
+        type: number
+    type: object
+  adminapi.replicasResponse:
+    properties:
+      have:
+        type: integer
+      want:
+        type: integer
+    type: object
+  adminapi.skipEntry:
+    properties:
+      peer_id:
+        type: string
+      reason:
+        type: string
+    type: object
+  adminapi.stringMap:
+    additionalProperties:
+      type: string
+    type: object
+  adminapi.updateAccountRequest:
+    properties:
+      account_id:
+        type: string
+      auth:
+        additionalProperties: {}
+        type: object
+      enabled:
+        type: boolean
+      rate_limit:
+        $ref: '#/definitions/adminapi.rateLimitRequest'
+      vendor:
+        description: must match path when present
+        type: string
+      vendor_profile:
+        $ref: '#/definitions/types.VendorProfile'
+    type: object
+  adminapi.updateAccountResponse:
+    properties:
+      account_id:
+        type: string
+      convergence:
+        type: string
+      effective:
+        type: string
+      note:
+        type: string
+      vendor:
+        type: string
+      warnings:
+        items:
+          type: string
+        type: array
+    type: object
+  adminapi.vendorProfileRowResponse:
+    properties:
+      bandwidth_mbps:
+        type: integer
+      base_latency_ms:
+        type: integer
+      vendor:
+        type: string
+      weight:
+        type: number
+    type: object
+  adminapi.vendorProfilesResponse:
+    properties:
+      note:
+        type: string
+      profiles:
+        items:
+          $ref: '#/definitions/adminapi.vendorProfileRowResponse'
+        type: array
+      read_only:
+        type: boolean
+    type: object
+  adminapi.vendorSchemaEntry:
+    properties:
+      auth:
+        type: string
+      defaults:
+        $ref: '#/definitions/adminapi.defaultDef'
+      fields:
+        items:
+          $ref: '#/definitions/adminapi.fieldDef'
+        type: array
+      notes:
+        items:
+          type: string
+        type: array
+    type: object
+  adminapi.whitelistEntryResponse:
+    properties:
+      added_at:
+        type: string
+      added_by:
+        type: string
+      effective:
+        type: boolean
+      peer_id:
+        type: string
+    type: object
+  adminapi.whitelistPostBody:
+    properties:
+      peer_id:
+        type: string
+    type: object
+  adminapi.whitelistPostResponse:
+    properties:
+      effective_after:
+        type: string
+      peer_id:
+        type: string
+    type: object
+  locationsvc.locationsResponse:
+    properties:
+      locations:
+        items:
+          $ref: '#/definitions/types.BlobLocation'
+        type: array
+    type: object
+  metadata.CredentialMeta:
+    properties:
+      auth_type:
+        description: '"oauth2" | "cookie"'
+        type: string
+      cookie_keys:
+        description: sorted key names, cookie auth only
+        items:
+          type: string
+        type: array
+      has_client_secret:
+        type: boolean
+      has_refresh_token:
+        type: boolean
+      region:
+        type: string
+    type: object
+  types.BlobLocation:
+    properties:
+      backend_id:
+        description: '"vendor:account_id", e.g. "115:acct_03"'
+        type: string
+      blob_hash:
+        type: string
+      file_id:
+        type: string
+    type: object
+  types.ErrorResponse:
+    properties:
+      error:
+        type: string
+    type: object
+  types.JWTRequest:
+    properties:
+      declared_capabilities:
+        $ref: '#/definitions/types.NodeCapabilities'
+      peer_id:
+        type: string
+      signed_peer_id:
+        items:
+          type: integer
+        type: array
+    type: object
+  types.JWTResponse:
+    properties:
+      jwt:
+        type: string
+      refresh_before:
+        description: seconds before exp to start refreshing
+        type: integer
+    type: object
+  types.NodeCapabilities:
+    properties:
+      edge:
+        type: boolean
+      l4_backhaul:
+        type: boolean
+      peer_icp:
+        type: boolean
+      relay_provider:
+        type: boolean
+    type: object
+  types.Vendor:
+    enum:
+    - "115"
+    - baidu
+    - quark
+    - onedrive
+    - aliyundrive
+    type: string
+    x-enum-varnames:
+    - Vendor115
+    - VendorBaidu
+    - VendorQuark
+    - VendorOneDrive
+    - VendorAliyundrive
+  types.VendorProfile:
+    properties:
+      bandwidth_mbps:
+        type: integer
+      base_latency_ms:
+        type: integer
+      vendor:
+        $ref: '#/definitions/types.Vendor'
+      weight:
+        type: number
+    type: object
+host: localhost:8443
+info:
+  contact: {}
+  description: 控制面 HTTP API：节点能力 JWT 签发、blob 存储位置查询、管理后台 API 与 Prometheus 指标。
+  title: MediaWorker Control-Plane API
+  version: "1.0"
+paths:
+  /metrics:
+    get:
+      description: Prometheus 文本格式指标端点
+      produces:
+      - text/plain
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+      summary: Prometheus 指标
+      tags:
+      - ops
+  /v1/admin/accounts:
+    get:
+      description: 返回所有云盘账号及其健康状态、速率限制与供应商档案，支持按 vendor 和 state 过滤
+      parameters:
+      - description: 供应商过滤
+        in: query
+        name: vendor
+        type: string
+      - description: 状态过滤（healthy|degraded|banned）
+        in: query
+        name: state
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/adminapi.accountsResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 查询云盘账号列表
+      tags:
+      - admin-accounts
+    post:
+      consumes:
+      - application/json
+      description: 新建云盘账号，auth 字段按供应商 schema 验证
+      parameters:
+      - description: 创建账号请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/adminapi.createAccountRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/adminapi.createAccountResponse'
+        "400":
+          description: 无效请求体或字段验证失败
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "409":
+          description: 账号已存在
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 创建云盘账号
+      tags:
+      - admin-accounts
+  /v1/admin/accounts/{vendor}/{id}:
+    put:
+      consumes:
+      - application/json
+      description: 部分更新账号属性，所有 body 字段可选，auth 字段变更触发凭据轮换
+      parameters:
+      - description: 供应商
+        in: path
+        name: vendor
+        required: true
+        type: string
+      - description: 账号 ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 更新账号请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/adminapi.updateAccountRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/adminapi.updateAccountResponse'
+        "400":
+          description: 无效请求体/路径参数/字段验证失败
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "404":
+          description: 账号不存在
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 更新云盘账号
+      tags:
+      - admin-accounts
+  /v1/admin/accounts/{vendor}/{id}/ban:
+    post:
+      consumes:
+      - application/json
+      description: 设置账号为 banned 状态，默认封禁 24 小时
+      parameters:
+      - description: 供应商
+        in: path
+        name: vendor
+        required: true
+        type: string
+      - description: 账号 ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 封禁请求
+        in: body
+        name: request
+        schema:
+          $ref: '#/definitions/adminapi.banAccountRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/adminapi.accountOpResponse'
+        "400":
+          description: 无效请求体/路径参数
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "404":
+          description: 账号不存在
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 封禁账号
+      tags:
+      - admin-accounts
+  /v1/admin/accounts/{vendor}/{id}/circuit:
+    post:
+      consumes:
+      - application/json
+      description: 强制打开/关闭账号熔断器（force_open / force_close）
+      parameters:
+      - description: 供应商
+        in: path
+        name: vendor
+        required: true
+        type: string
+      - description: 账号 ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 熔断请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/adminapi.circuitAccountRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/adminapi.accountOpResponse'
+        "400":
+          description: 无效请求体/路径参数/action 非法
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 熔断控制
+      tags:
+      - admin-accounts
+  /v1/admin/accounts/{vendor}/{id}/rotate:
+    post:
+      consumes:
+      - application/json
+      description: 更新账号凭据（auth 字段），触发 CREDENTIAL_UPDATE 广播
+      parameters:
+      - description: 供应商
+        in: path
+        name: vendor
+        required: true
+        type: string
+      - description: 账号 ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: auth 字段键值对
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/adminapi.accountOpResponse'
+        "400":
+          description: 无效请求体/路径参数/字段验证失败
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "404":
+          description: 账号不存在
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 轮换凭据
+      tags:
+      - admin-accounts
+  /v1/admin/accounts/{vendor}/{id}/unban:
+    post:
+      description: 解除账号 banned 状态，恢复健康检测
+      parameters:
+      - description: 供应商
+        in: path
+        name: vendor
+        required: true
+        type: string
+      - description: 账号 ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/adminapi.accountOpResponse'
+        "400":
+          description: 路径参数无效
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "404":
+          description: 账号不存在
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 解封账号
+      tags:
+      - admin-accounts
+  /v1/admin/accounts/test:
+    post:
+      consumes:
+      - application/json
+      description: 连接测试：draft 模式传入 auth 字段测试未保存凭据，stored 模式传入 account_id 测试已存储凭据
+      parameters:
+      - description: 测试请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/adminapi.accountTestRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{state, latency_ms}'
+          schema:
+            type: object
+        "400":
+          description: 无效请求体或字段验证失败
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "404":
+          description: 已存储账号不存在
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "422":
+          description: '{state, error_msg}'
+          schema:
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "501":
+          description: '{error, vendor}'
+          schema:
+            type: object
+      security:
+      - AdminBearer: []
+      summary: 账号连通性测试
+      tags:
+      - admin-accounts
+  /v1/admin/alerts:
+    get:
+      description: 返回当前 firing 状态的告警事件
+      parameters:
+      - description: 告警状态（默认 firing）
+        in: query
+        name: status
+        type: string
+      - description: 返回条数（最多 100）
+        in: query
+        name: limit
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/adminapi.alertItem'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 活跃告警列表
+      tags:
+      - admin-alerts
+  /v1/admin/alerts/webhook:
+    post:
+      consumes:
+      - application/json
+      description: 接收 Alertmanager v4 webhook 告警，持久化到 alert_events 表
+      parameters:
+      - description: Webhook 令牌
+        in: header
+        name: X-Alert-Token
+        required: true
+        type: string
+      - description: Alertmanager webhook payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/adminapi.amWebhookPayload'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: '{"received": N}'
+          schema:
+            type: object
+        "400":
+          description: 无效 payload
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: 无效 X-Alert-Token
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AlertWebhookToken: []
+      summary: Alertmanager Webhook
+      tags:
+      - admin-alerts
+  /v1/admin/audit:
+    get:
+      description: 从 JWT 环缓冲或 admin_audit 表查询审计记录
+      parameters:
+      - description: 来源（jwt|admin|account|whitelist|pin|content|auth）
+        in: query
+        name: kind
+        type: string
+      - description: 起始时间（RFC3339）
+        in: query
+        name: from
+        type: string
+      - description: 结束时间（RFC3339）
+        in: query
+        name: to
+        type: string
+      - description: 搜索关键词（jwt 源按 peer_id；admin 源按 target）
+        in: query
+        name: q
+        type: string
+      - description: 页码
+        in: query
+        name: page
+        type: integer
+      - description: 每页条数
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/adminapi.auditQueryResponse'
+        "400":
+          description: 无效 kind 或时间格式
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 审计日志查询
+      tags:
+      - admin-audit
+  /v1/admin/audit/export:
+    get:
+      description: 以 NDJSON 格式流式导出审计记录（application/x-ndjson，Content-Disposition attachment）
+      parameters:
+      - description: 来源（jwt|admin|account|whitelist|pin|content|auth）
+        in: query
+        name: kind
+        type: string
+      - description: 起始时间（RFC3339）
+        in: query
+        name: from
+        type: string
+      - description: 结束时间（RFC3339）
+        in: query
+        name: to
+        type: string
+      - description: 搜索关键词
+        in: query
+        name: q
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "400":
+          description: 无效 kind 或时间格式
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 审计日志导出
+      tags:
+      - admin-audit
+  /v1/admin/contents:
+    get:
+      description: 分页查询所有内容，支持排序、类型和副本数筛选
+      parameters:
+      - description: 排序字段（popularity|created_at）
+        in: query
+        name: sort
+        type: string
+      - description: 内容类型过滤
+        in: query
+        name: type
+        type: string
+      - description: 副本筛选（degraded）
+        in: query
+        name: replicas
+        type: string
+      - description: 页码
+        in: query
+        name: page
+        type: integer
+      - description: 每页条数
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: '{"contents":[...], "total":N, "page":N, "page_size":N}'
+          schema:
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 内容列表
+      tags:
+      - admin-contents
+  /v1/admin/contents/{id}:
+    delete:
+      description: 标记内容为 pending_delete（blobs 变为孤儿，janitor 在 min_age 后清理）
+      parameters:
+      - description: 内容 UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/adminapi.contentDeleteResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "404":
+          description: 内容不存在
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 软删除内容
+      tags:
+      - admin-contents
+    get:
+      description: 返回指定内容的完整元数据、blob 列表与存储位置
+      parameters:
+      - description: 内容 UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/adminapi.contentDetailResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "404":
+          description: 内容不存在
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 内容详情
+      tags:
+      - admin-contents
+  /v1/admin/nodes:
+    get:
+      description: 返回所有边缘节点及其容量、健康状态、最近派单计划
+      parameters:
+      - description: 健康筛选（true|false）
+        in: query
+        name: healthy
+        type: string
+      - description: 能力筛选（edge|l4_backhaul|relay_provider|peer_icp）
+        in: query
+        name: capability
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/adminapi.nodeListItemResponse'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 节点列表
+      tags:
+      - admin-nodes
+  /v1/admin/nodes/{peer_id}:
+    get:
+      description: 返回指定节点的完整信息，含最近状态历史与最近派单计划
+      parameters:
+      - description: libp2p PeerID
+        in: path
+        name: peer_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/adminapi.nodeDetailResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "404":
+          description: 节点不存在
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 节点详情
+      tags:
+      - admin-nodes
+  /v1/admin/overview:
+    get:
+      description: 仪表盘聚合端点：SLO 指标、节点状态、热门内容、活跃告警、Pin 统计（部分失败时 partial=true）
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/adminapi.overviewResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 管理后台概览
+      tags:
+      - admin-overview
+  /v1/admin/pin:
+    post:
+      consumes:
+      - application/json
+      description: 将内容 blobs 手动派发到指定节点
+      parameters:
+      - description: 固定请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/adminapi.manualPinRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/adminapi.manualPinResponse'
+        "400":
+          description: 无效请求体
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "404":
+          description: 内容不存在
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "422":
+          description: 所有目标被跳过
+          schema:
+            $ref: '#/definitions/adminapi.manualPinResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 手动固定内容
+      tags:
+      - admin-pin
+  /v1/admin/pin-plans:
+    get:
+      description: 返回分页的 pin/unpin 派单记录，含节点 Ack 状态
+      parameters:
+      - default: 1
+        description: 页码
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: 每页条数
+        in: query
+        name: page_size
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/adminapi.PinPlanItem'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 固定计划列表
+      tags:
+      - admin-pin
+  /v1/admin/quota:
+    get:
+      description: 返回全局 QPS 及各节点分配份额（v1 简化版）
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/adminapi.quotaResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 速率配额视图
+      tags:
+      - admin-quota
+  /v1/admin/unpin:
+    post:
+      consumes:
+      - application/json
+      description: 从指定节点取消固定内容 blobs
+      parameters:
+      - description: 取消固定请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/adminapi.manualPinRequest'
+      produces:
+      - application/json
+      responses:
+        "202":
+          description: Accepted
+          schema:
+            $ref: '#/definitions/adminapi.manualPinResponse'
+        "400":
+          description: 无效请求体
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "404":
+          description: 内容不存在
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "422":
+          description: 目标节点不存在
+          schema:
+            $ref: '#/definitions/adminapi.manualPinResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 手动取消固定
+      tags:
+      - admin-pin
+  /v1/admin/vendor-profiles:
+    get:
+      description: 返回所有云盘供应商的权重、延迟、带宽配置（v1 只读）
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/adminapi.vendorProfilesResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 查询供应商档案列表
+      tags:
+      - admin-vendors
+  /v1/admin/vendors/form-schema:
+    get:
+      description: 返回所有供应商的 auth 字段定义、默认速率限制与帮助说明
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/adminapi.formSchemaResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 供应商表单 schema
+      tags:
+      - admin-vendors
+  /v1/admin/whitelist:
+    get:
+      description: 列出所有白名单条目及其 L4 能力生效状态
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/adminapi.whitelistEntryResponse'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: L4 白名单列表
+      tags:
+      - admin-whitelist
+    post:
+      consumes:
+      - application/json
+      description: 将节点加入 L4 白名单，下一个 JWT 更新周期（≤1h）生效
+      parameters:
+      - description: 白名单请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/adminapi.whitelistPostBody'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: 已存在（幂等）
+          schema:
+            $ref: '#/definitions/adminapi.whitelistPostResponse'
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/adminapi.whitelistPostResponse'
+        "400":
+          description: 无效 peer_id
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 添加 L4 白名单
+      tags:
+      - admin-whitelist
+  /v1/admin/whitelist/{peer_id}:
+    delete:
+      description: 从白名单移除节点，下一个 JWT 更新周期（≤1h）生效
+      parameters:
+      - description: libp2p PeerID
+        in: path
+        name: peer_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "404":
+          description: 节点不在白名单中
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 移除 L4 白名单
+      tags:
+      - admin-whitelist
+  /v1/auth/login:
+    post:
+      consumes:
+      - application/json
+      description: 用户名+密码登录，签发 8 小时有效期的 UserToken
+      parameters:
+      - description: 登录请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/adminapi.loginRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/adminapi.loginResponse'
+        "400":
+          description: 无效请求体
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: 凭据无效
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: 账号已禁用
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: 内部错误
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      summary: 管理员登录
+      tags:
+      - admin-auth
+  /v1/auth/logout:
+    post:
+      description: 审计记录登出事件，客户端负责丢弃令牌（无服务端撤销）
+      responses:
+        "204":
+          description: 无内容
+        "401":
+          description: 未认证
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 管理员登出
+      tags:
+      - admin-auth
+  /v1/auth/me:
+    get:
+      description: 从 UserToken 上下文中返回当前认证用户的身份信息
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/adminapi.meResponse'
+        "401":
+          description: 未认证
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 获取当前登录用户信息
+      tags:
+      - admin-auth
+  /v1/blob-locations/{hash}:
+    get:
+      description: 认证调用者能力 JWT，返回 blob 在边缘节点的 K 副本存储位置列表
+      parameters:
+      - description: blob SHA-256 哈希（十六进制）
+        in: path
+        name: hash
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/locationsvc.locationsResponse'
+        "400":
+          description: 缺少 hash 路径参数
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: 缺失/过期/签名无效的 JWT
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: JWT 不含 Edge 能力
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "404":
+          description: 哈希合法但无已存储位置
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: 元数据查询异常
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "503":
+          description: BlobStoreClient 未配置（mc==nil）
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - NodeBearer: []
+      summary: 按哈希查询 blob 存储位置
+      tags:
+      - locations
+  /v1/node/jwt:
+    post:
+      consumes:
+      - application/json
+      description: 验证节点提供的 Ed25519 签名请求并签发能力 JWT
+      parameters:
+      - description: JWT 签发请求
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/types.JWTRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/types.JWTResponse'
+        "400":
+          description: 无效 JSON 或非法 PeerID
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: 签名验证失败
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "405":
+          description: 方法不允许
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "429":
+          description: 速率限制
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: 内部错误
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      summary: 签发节点能力 JWT
+      tags:
+      - node-auth
+securityDefinitions:
+  AdminBearer:
+    description: 管理后台 UserToken，由 POST /v1/auth/login 签发
+    in: header
+    name: Authorization
+    type: apiKey
+  AlertWebhookToken:
+    description: Alertmanager webhook 令牌
+    in: header
+    name: X-Alert-Token
+    type: apiKey
+  NodeBearer:
+    description: 节点能力 JWT，由 POST /v1/node/jwt 签发
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

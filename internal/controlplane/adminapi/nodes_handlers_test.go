@@ -90,13 +90,15 @@ func (m *mockPinPlanLogReader) RecentByNode(nodeID string, limit int) []pinstrat
 
 // ─── slog helpers ───────────────────────────────────────────────────────────
 
-func slogLogger() *slog.Logger       { return slog.New(slog.NewTextHandler(ioWriter{}, nil)) }
-func discardLogger() *slog.Logger    { return slog.New(slog.NewTextHandler(discardWriter{}, nil)) }
+func slogLogger() *slog.Logger    { return slog.New(slog.NewTextHandler(ioWriter{}, nil)) }
+func discardLogger() *slog.Logger { return slog.New(slog.NewTextHandler(discardWriter{}, nil)) }
 
 type ioWriter struct{}
+
 func (ioWriter) Write(p []byte) (n int, err error) { return len(p), nil }
 
 type discardWriter struct{}
+
 func (discardWriter) Write(p []byte) (n int, err error) { return len(p), nil }
 
 // ─── Test helpers ───────────────────────────────────────────────────────────
@@ -274,9 +276,9 @@ func ptrString(v string) *string { return &v }
 // ─── Test data ──────────────────────────────────────────────────────────────
 
 var (
-	testNow = time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
-	exp1    = time.Date(2026, 7, 20, 13, 0, 0, 0, time.UTC).Unix()
-	exp3    = testNow.Add(-5 * time.Minute).Unix()
+	testNow   = time.Date(2026, 7, 20, 12, 0, 0, 0, time.UTC)
+	exp1      = time.Date(2026, 7, 20, 13, 0, 0, 0, time.UTC).Unix()
+	exp3      = testNow.Add(-5 * time.Minute).Unix()
 	startedAt = testNow.Add(-3 * time.Hour).Unix()
 )
 
@@ -290,7 +292,7 @@ func TestNodesList_Happy_ThreeNodes(t *testing.T) {
 				Capabilities: types.NodeCapabilities{Edge: true, L4Backhaul: true},
 				PrefixSpace:  types.PartitionStatus{TotalBytes: 1000, UsedBytes: 200, BlobCount: 5},
 				WarmSpace:    types.PartitionStatus{TotalBytes: 5000, UsedBytes: 1500, BlobCount: 30},
-				Healthy: true, ReceivedAt: testNow.Add(-30 * time.Second),
+				Healthy:      true, ReceivedAt: testNow.Add(-30 * time.Second),
 				Region: "ap-northeast-1", Version: "v1.2.3", StartedAt: startedAt, ConnCount: 12,
 			},
 			{
@@ -298,7 +300,7 @@ func TestNodesList_Happy_ThreeNodes(t *testing.T) {
 				Capabilities: types.NodeCapabilities{Edge: true, RelayProvider: true},
 				PrefixSpace:  types.PartitionStatus{TotalBytes: 2000, UsedBytes: 800, BlobCount: 12},
 				WarmSpace:    types.PartitionStatus{TotalBytes: 10000, UsedBytes: 3000, BlobCount: 60},
-				Healthy: true, ReceivedAt: testNow.Add(-15 * time.Second),
+				Healthy:      true, ReceivedAt: testNow.Add(-15 * time.Second),
 				Region: "ap-southeast-1", Version: "v1.2.3", StartedAt: startedAt, ConnCount: 8,
 			},
 			{
@@ -306,7 +308,7 @@ func TestNodesList_Happy_ThreeNodes(t *testing.T) {
 				Capabilities: types.NodeCapabilities{Edge: true, L4Backhaul: true, PeerICP: true},
 				PrefixSpace:  types.PartitionStatus{TotalBytes: 3000, UsedBytes: 2500, BlobCount: 8},
 				WarmSpace:    types.PartitionStatus{TotalBytes: 8000, UsedBytes: 6000, BlobCount: 45},
-				Healthy: false, ReceivedAt: testNow.Add(-2 * time.Minute),
+				Healthy:      false, ReceivedAt: testNow.Add(-2 * time.Minute),
 				Region: "us-west-1", Version: "v1.2.0", StartedAt: 0, ConnCount: 3,
 			},
 		},
@@ -364,8 +366,8 @@ func TestNodesList_NoScoreField(t *testing.T) {
 		views: []noderegistry.NodeView{
 			{PeerID: "peer-1", NodeID: "n1", Capabilities: types.NodeCapabilities{Edge: true},
 				PrefixSpace: types.PartitionStatus{TotalBytes: 1000, UsedBytes: 200, BlobCount: 5},
-				WarmSpace: types.PartitionStatus{TotalBytes: 5000, UsedBytes: 1500, BlobCount: 30},
-				Healthy: true, ReceivedAt: testNow, Region: "cn", Version: "v1", StartedAt: startedAt, ConnCount: 5},
+				WarmSpace:   types.PartitionStatus{TotalBytes: 5000, UsedBytes: 1500, BlobCount: 30},
+				Healthy:     true, ReceivedAt: testNow, Region: "cn", Version: "v1", StartedAt: startedAt, ConnCount: 5},
 		},
 	}
 	clock := func() time.Time { return testNow }
@@ -576,7 +578,7 @@ func TestNodeDetail_ColdSpacePresent(t *testing.T) {
 				PeerID: "peer-cold", NodeID: "node-cold",
 				ColdSpace:    &types.PartitionStatus{TotalBytes: 10000, UsedBytes: 5000, BlobCount: 20},
 				Capabilities: types.NodeCapabilities{Edge: true},
-				Healthy: true, ReceivedAt: testNow, Region: "us", Version: "v1", StartedAt: startedAt,
+				Healthy:      true, ReceivedAt: testNow, Region: "us", Version: "v1", StartedAt: startedAt,
 			},
 		},
 	}
