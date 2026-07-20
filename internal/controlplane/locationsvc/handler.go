@@ -45,6 +45,21 @@ func NewHandler(controlPlanePubKey ed25519.PublicKey, mc metadata.BlobStoreClien
 
 // ServeHTTP implements http.Handler.
 //
+//	@Summary		按哈希查询 blob 存储位置
+//	@Description	认证调用者能力 JWT，返回 blob 在边缘节点的 K 副本存储位置列表
+//	@Tags			locations
+//	@Produce		json
+//	@Param			hash	path		string	true	"blob SHA-256 哈希（十六进制）"
+//	@Success		200		{object}	locationsResponse
+//	@Failure		400		{object}	types.ErrorResponse	"缺少 hash 路径参数"
+//	@Failure		401		{object}	types.ErrorResponse	"缺失/过期/签名无效的 JWT"
+//	@Failure		403		{object}	types.ErrorResponse	"JWT 不含 Edge 能力"
+//	@Failure		404		{object}	types.ErrorResponse	"哈希合法但无已存储位置"
+//	@Failure		500		{object}	types.ErrorResponse	"元数据查询异常"
+//	@Failure		503		{object}	types.ErrorResponse	"BlobStoreClient 未配置（mc==nil）"
+//	@Security		NodeBearer
+//	@Router			/v1/blob-locations/{hash} [get]
+//
 // Status codes:
 //   - 200: locations found (JSON {"locations":[...]})
 //   - 401: missing, malformed, expired, or bad-signature JWT

@@ -139,6 +139,19 @@ type vendorProfilesResponse struct {
 // ─── Handler ───────────────────────────────────────────────────────────────
 
 // listAccountsHandler returns an http.Handler that serves GET /v1/admin/accounts.
+//
+//	@Summary		查询云盘账号列表
+//	@Description	返回所有云盘账号及其健康状态、速率限制与供应商档案，支持按 vendor 和 state 过滤
+//	@Tags			admin-accounts
+//	@Produce		json
+//	@Param			vendor	query		string	false	"供应商过滤"
+//	@Param			state	query		string	false	"状态过滤（healthy|degraded|banned）"
+//	@Success		200		{object}	accountsResponse
+//	@Failure		401		{object}	types.ErrorResponse
+//	@Failure		403		{object}	types.ErrorResponse
+//	@Failure		500		{object}	types.ErrorResponse
+//	@Security		AdminBearer
+//	@Router			/v1/admin/accounts [get]
 func listAccountsHandler(mc AdminAccountsReader) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()
@@ -165,6 +178,17 @@ func listAccountsHandler(mc AdminAccountsReader) http.Handler {
 
 // listVendorProfilesHandler returns an http.Handler that serves
 // GET /v1/admin/vendor-profiles. It is read-only (note + read_only marker).
+//
+//	@Summary		查询供应商档案列表
+//	@Description	返回所有云盘供应商的权重、延迟、带宽配置（v1 只读）
+//	@Tags			admin-vendors
+//	@Produce		json
+//	@Success		200	{object}	vendorProfilesResponse
+//	@Failure		401	{object}	types.ErrorResponse
+//	@Failure		403	{object}	types.ErrorResponse
+//	@Failure		500	{object}	types.ErrorResponse
+//	@Security		AdminBearer
+//	@Router			/v1/admin/vendor-profiles [get]
 func listVendorProfilesHandler(mc VendorProfilesReader) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rows, err := mc.ListVendorProfiles(r.Context())
@@ -312,6 +336,21 @@ func isUniqueViolation(err error) bool {
 }
 
 // createAccountHandler serves POST /v1/admin/accounts (B2 创建).
+//
+//	@Summary		创建云盘账号
+//	@Description	新建云盘账号，auth 字段按供应商 schema 验证
+//	@Tags			admin-accounts
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		createAccountRequest	true	"创建账号请求"
+//	@Success		201		{object}	createAccountResponse
+//	@Failure		400		{object}	types.ErrorResponse	"无效请求体或字段验证失败"
+//	@Failure		401		{object}	types.ErrorResponse
+//	@Failure		403		{object}	types.ErrorResponse
+//	@Failure		409		{object}	types.ErrorResponse	"账号已存在"
+//	@Failure		500		{object}	types.ErrorResponse
+//	@Security		AdminBearer
+//	@Router			/v1/admin/accounts [post]
 func createAccountHandler(registry AdminAccountsWriter, audit AuditRecorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req createAccountRequest
@@ -350,6 +389,23 @@ func createAccountHandler(registry AdminAccountsWriter, audit AuditRecorder) htt
 // (B2 更新，含凭据轮换). All body fields are optional; absent = unchanged.
 // The audit detail carries only non-secret changed fields (enabled /
 // rate_limit / vendor_profile / auth_changed flag) — never auth material.
+//
+//	@Summary		更新云盘账号
+//	@Description	部分更新账号属性，所有 body 字段可选，auth 字段变更触发凭据轮换
+//	@Tags			admin-accounts
+//	@Accept			json
+//	@Produce		json
+//	@Param			vendor	path		string					true	"供应商"
+//	@Param			id		path		string					true	"账号 ID"
+//	@Param			request	body		updateAccountRequest	true	"更新账号请求"
+//	@Success		202		{object}	updateAccountResponse
+//	@Failure		400		{object}	types.ErrorResponse	"无效请求体/路径参数/字段验证失败"
+//	@Failure		401		{object}	types.ErrorResponse
+//	@Failure		403		{object}	types.ErrorResponse
+//	@Failure		404		{object}	types.ErrorResponse	"账号不存在"
+//	@Failure		500		{object}	types.ErrorResponse
+//	@Security		AdminBearer
+//	@Router			/v1/admin/accounts/{vendor}/{id} [put]
 func updateAccountHandler(registry AdminAccountsWriter, audit AuditRecorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		vendor := types.Vendor(r.PathValue("vendor"))
@@ -499,6 +555,23 @@ const vendorProfilesReadOnlyNote = "节点以本地 YAML 为准；CP 改动不�
 // the PUT-with-only-auth path (todo 26's ApplyAuthPatch) — on any credential/
 // client_config change ONE CREDENTIAL_UPDATE broadcast fires with the new
 // material, applied immediately by nodes (todo 9 dispatcher).
+//
+//	@Summary		轮换凭据
+//	@Description	更新账号凭据（auth 字段），触发 CREDENTIAL_UPDATE 广播
+//	@Tags			admin-accounts
+//	@Accept			json
+//	@Produce		json
+//	@Param			vendor	path		string				true	"供应商"
+//	@Param			id		path		string				true	"账号 ID"
+//	@Param			request	body		object				true	"auth 字段键值对"
+//	@Success		202		{object}	accountOpResponse
+//	@Failure		400		{object}	types.ErrorResponse	"无效请求体/路径参数/字段验证失败"
+//	@Failure		401		{object}	types.ErrorResponse
+//	@Failure		403		{object}	types.ErrorResponse
+//	@Failure		404		{object}	types.ErrorResponse	"账号不存在"
+//	@Failure		500		{object}	types.ErrorResponse
+//	@Security		AdminBearer
+//	@Router			/v1/admin/accounts/{vendor}/{id}/rotate [post]
 func rotateAccountHandler(registry AdminAccountsWriter, audit AuditRecorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		vendor := types.Vendor(r.PathValue("vendor"))
@@ -544,6 +617,23 @@ func rotateAccountHandler(registry AdminAccountsWriter, audit AuditRecorder) htt
 // banAccountHandler serves POST /v1/admin/accounts/{vendor}/{id}/ban.
 // ban_until defaults to +24h; an empty body is accepted (all defaults).
 // The audit detail carries the ban reason + expiry (spec-sanctioned fields).
+//
+//	@Summary		封禁账号
+//	@Description	设置账号为 banned 状态，默认封禁 24 小时
+//	@Tags			admin-accounts
+//	@Accept			json
+//	@Produce		json
+//	@Param			vendor		path		string				true	"供应商"
+//	@Param			id			path		string				true	"账号 ID"
+//	@Param			request		body		banAccountRequest	false	"封禁请求"
+//	@Success		202			{object}	accountOpResponse
+//	@Failure		400			{object}	types.ErrorResponse	"无效请求体/路径参数"
+//	@Failure		401			{object}	types.ErrorResponse
+//	@Failure		403			{object}	types.ErrorResponse
+//	@Failure		404			{object}	types.ErrorResponse	"账号不存在"
+//	@Failure		500			{object}	types.ErrorResponse
+//	@Security		AdminBearer
+//	@Router			/v1/admin/accounts/{vendor}/{id}/ban [post]
 func banAccountHandler(registry AdminAccountsWriter, audit AuditRecorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		vendor := types.Vendor(r.PathValue("vendor"))
@@ -585,6 +675,21 @@ func banAccountHandler(registry AdminAccountsWriter, audit AuditRecorder) http.H
 }
 
 // unbanAccountHandler serves POST /v1/admin/accounts/{vendor}/{id}/unban.
+//
+//	@Summary		解封账号
+//	@Description	解除账号 banned 状态，恢复健康检测
+//	@Tags			admin-accounts
+//	@Produce		json
+//	@Param			vendor	path		string	true	"供应商"
+//	@Param			id		path		string	true	"账号 ID"
+//	@Success		202		{object}	accountOpResponse
+//	@Failure		400		{object}	types.ErrorResponse	"路径参数无效"
+//	@Failure		401		{object}	types.ErrorResponse
+//	@Failure		403		{object}	types.ErrorResponse
+//	@Failure		404		{object}	types.ErrorResponse	"账号不存在"
+//	@Failure		500		{object}	types.ErrorResponse
+//	@Security		AdminBearer
+//	@Router			/v1/admin/accounts/{vendor}/{id}/unban [post]
 func unbanAccountHandler(registry AdminAccountsWriter, audit AuditRecorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		vendor := types.Vendor(r.PathValue("vendor"))
@@ -610,6 +715,22 @@ func unbanAccountHandler(registry AdminAccountsWriter, audit AuditRecorder) http
 // circuitAccountHandler serves POST /v1/admin/accounts/{vendor}/{id}/circuit.
 // It broadcasts CIRCUIT_FORCE_OPEN/CLOSE directly via the injected
 // broadcaster; a nil broadcaster (not wired) yields 500, never a panic.
+//
+//	@Summary		熔断控制
+//	@Description	强制打开/关闭账号熔断器（force_open / force_close）
+//	@Tags			admin-accounts
+//	@Accept			json
+//	@Produce		json
+//	@Param			vendor	path		string					true	"供应商"
+//	@Param			id		path		string					true	"账号 ID"
+//	@Param			request	body		circuitAccountRequest	true	"熔断请求"
+//	@Success		202		{object}	accountOpResponse
+//	@Failure		400		{object}	types.ErrorResponse	"无效请求体/路径参数/action 非法"
+//	@Failure		401		{object}	types.ErrorResponse
+//	@Failure		403		{object}	types.ErrorResponse
+//	@Failure		500		{object}	types.ErrorResponse
+//	@Security		AdminBearer
+//	@Router			/v1/admin/accounts/{vendor}/{id}/circuit [post]
 func circuitAccountHandler(broadcaster EventBroadcaster, audit AuditRecorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		vendor := types.Vendor(r.PathValue("vendor"))

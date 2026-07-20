@@ -39,6 +39,17 @@ type formSchemaResponse struct {
 	Vendors       map[types.Vendor]vendorSchemaEntry `json:"vendors"`
 }
 
+// formSchemaHandler serves GET /v1/admin/vendors/form-schema.
+//
+//	@Summary		供应商表单 schema
+//	@Description	返回所有供应商的 auth 字段定义、默认速率限制与帮助说明
+//	@Tags			admin-vendors
+//	@Produce		json
+//	@Success		200	{object}	formSchemaResponse
+//	@Failure		401	{object}	types.ErrorResponse
+//	@Failure		403	{object}	types.ErrorResponse
+//	@Security		AdminBearer
+//	@Router			/v1/admin/vendors/form-schema [get]
 func formSchemaHandler(w http.ResponseWriter, _ *http.Request) {
 	resp := formSchemaResponse{
 		SchemaVersion: "1",

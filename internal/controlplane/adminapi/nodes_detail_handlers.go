@@ -52,6 +52,19 @@ type pinPlanRecordResponse struct {
 	SentAt     string `json:"sent_at"`
 }
 
+// nodeDetailHandler serves GET /v1/admin/nodes/{peer_id}.
+//
+//	@Summary		节点详情
+//	@Description	返回指定节点的完整信息，含最近状态历史与最近派单计划
+//	@Tags			admin-nodes
+//	@Produce		json
+//	@Param			peer_id	path		string	true	"libp2p PeerID"
+//	@Success		200		{object}	nodeDetailResponse
+//	@Failure		401		{object}	types.ErrorResponse
+//	@Failure		403		{object}	types.ErrorResponse
+//	@Failure		404		{object}	types.ErrorResponse	"节点不存在"
+//	@Security		AdminBearer
+//	@Router			/v1/admin/nodes/{peer_id} [get]
 func nodeDetailHandler(reg NodesReader, historyReader NodeHistoryReader, pinPlanLog PinPlanLogReader, now func() time.Time, logger *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		peerIDStr := r.PathValue("peer_id")

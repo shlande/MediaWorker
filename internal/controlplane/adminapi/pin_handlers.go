@@ -60,6 +60,23 @@ func RegisterPinRoutes(srv *Server, mc PinContentMetaReader, reg *noderegistry.R
 
 // ─── POST /v1/admin/pin ─────────────────────────────────────────────────
 
+// manualPinHandler serves POST /v1/admin/pin.
+//
+//	@Summary		手动固定内容
+//	@Description	将内容 blobs 手动派发到指定节点
+//	@Tags			admin-pin
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		manualPinRequest	true	"固定请求"
+//	@Success		202		{object}	manualPinResponse
+//	@Failure		400		{object}	types.ErrorResponse	"无效请求体"
+//	@Failure		401		{object}	types.ErrorResponse
+//	@Failure		403		{object}	types.ErrorResponse
+//	@Failure		404		{object}	types.ErrorResponse	"内容不存在"
+//	@Failure		422		{object}	manualPinResponse	"所有目标被跳过"
+//	@Failure		500		{object}	types.ErrorResponse
+//	@Security		AdminBearer
+//	@Router			/v1/admin/pin [post]
 func manualPinHandler(mc PinContentMetaReader, reg *noderegistry.Registry, po PinOrchestrator, audit AuditRecorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req manualPinRequest
@@ -180,6 +197,23 @@ func manualPinHandler(mc PinContentMetaReader, reg *noderegistry.Registry, po Pi
 
 // ─── POST /v1/admin/unpin ───────────────────────────────────────────────
 
+// manualUnpinHandler serves POST /v1/admin/unpin.
+//
+//	@Summary		手动取消固定
+//	@Description	从指定节点取消固定内容 blobs
+//	@Tags			admin-pin
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		manualPinRequest	true	"取消固定请求"
+//	@Success		202		{object}	manualPinResponse
+//	@Failure		400		{object}	types.ErrorResponse	"无效请求体"
+//	@Failure		401		{object}	types.ErrorResponse
+//	@Failure		403		{object}	types.ErrorResponse
+//	@Failure		404		{object}	types.ErrorResponse	"内容不存在"
+//	@Failure		422		{object}	manualPinResponse	"目标节点不存在"
+//	@Failure		500		{object}	types.ErrorResponse
+//	@Security		AdminBearer
+//	@Router			/v1/admin/unpin [post]
 func manualUnpinHandler(mc PinContentMetaReader, reg *noderegistry.Registry, po PinOrchestrator, audit AuditRecorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req manualPinRequest

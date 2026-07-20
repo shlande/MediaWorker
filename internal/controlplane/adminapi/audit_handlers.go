@@ -110,6 +110,24 @@ func mapAdminRow(r metadata.AdminAuditRow) auditEntryResponse {
 // auditQueryHandler returns an http.Handler for GET /v1/admin/audit.
 // auditLog may be nil only when no jwt queries are expected; a nil auditLog
 // with kind=jwt is a 500 (wiring bug), never a silent empty result.
+//
+//	@Summary		审计日志查询
+//	@Description	从 JWT 环缓冲或 admin_audit 表查询审计记录
+//	@Tags			admin-audit
+//	@Produce		json
+//	@Param			kind		query	string	false	"来源（jwt|admin|account|whitelist|pin|content|auth）"
+//	@Param			from		query	string	false	"起始时间（RFC3339）"
+//	@Param			to			query	string	false	"结束时间（RFC3339）"
+//	@Param			q			query	string	false	"搜索关键词（jwt 源按 peer_id；admin 源按 target）"
+//	@Param			page		query	int		false	"页码"
+//	@Param			page_size	query	int		false	"每页条数"
+//	@Success		200			{object}	auditQueryResponse
+//	@Failure		400			{object}	types.ErrorResponse	"无效 kind 或时间格式"
+//	@Failure		401			{object}	types.ErrorResponse
+//	@Failure		403			{object}	types.ErrorResponse
+//	@Failure		500			{object}	types.ErrorResponse
+//	@Security		AdminBearer
+//	@Router			/v1/admin/audit [get]
 func auditQueryHandler(auditLog AuditLogQuerier, mc AdminAuditLister) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
@@ -213,6 +231,22 @@ func exportFilename() string {
 
 // auditExportHandler builds the streaming export handler. Dependencies match
 // auditQueryHandler exactly.
+//
+//	@Summary		审计日志导出
+//	@Description	以 NDJSON 格式流式导出审计记录（application/x-ndjson，Content-Disposition attachment）
+//	@Tags			admin-audit
+//	@Produce		json
+//	@Param			kind	query	string	false	"来源（jwt|admin|account|whitelist|pin|content|auth）"
+//	@Param			from	query	string	false	"起始时间（RFC3339）"
+//	@Param			to		query	string	false	"结束时间（RFC3339）"
+//	@Param			q		query	string	false	"搜索关键词"
+//	@Success		200		{file}	application/x-ndjson
+//	@Failure		400		{object}	types.ErrorResponse	"无效 kind 或时间格式"
+//	@Failure		401		{object}	types.ErrorResponse
+//	@Failure		403		{object}	types.ErrorResponse
+//	@Failure		500		{object}	types.ErrorResponse
+//	@Security		AdminBearer
+//	@Router			/v1/admin/audit/export [get]
 func auditExportHandler(auditLog AuditLogQuerier, mc AdminAuditLister) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()

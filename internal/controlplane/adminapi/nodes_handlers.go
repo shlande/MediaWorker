@@ -109,6 +109,19 @@ func capabilityFilter(caps types.NodeCapabilities, filter string) bool {
 	return false
 }
 
+// listNodesHandler serves GET /v1/admin/nodes.
+//
+//	@Summary		节点列表
+//	@Description	返回所有边缘节点及其容量、健康状态、最近派单计划
+//	@Tags			admin-nodes
+//	@Produce		json
+//	@Param			healthy		query		string	false	"健康筛选（true|false）"
+//	@Param			capability	query		string	false	"能力筛选（edge|l4_backhaul|relay_provider|peer_icp）"
+//	@Success		200			{array}		nodeListItemResponse
+//	@Failure		401			{object}	types.ErrorResponse
+//	@Failure		403			{object}	types.ErrorResponse
+//	@Security		AdminBearer
+//	@Router			/v1/admin/nodes [get]
 func listNodesHandler(reg NodesReader, now func() time.Time) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		query := r.URL.Query()

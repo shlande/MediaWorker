@@ -46,6 +46,16 @@ type quotaResponse struct {
 // (docs/ui-api-requirements.md §3.5 — usage/utilization/borrow-ledger fields
 // deliberately absent). The allocator keys allocations by the node's libp2p
 // host ID, which the UI contract exposes as peer_id.
+//
+//	@Summary		速率配额视图
+//	@Description	返回全局 QPS 及各节点分配份额（v1 简化版）
+//	@Tags			admin-quota
+//	@Produce		json
+//	@Success		200	{object}	quotaResponse
+//	@Failure		401	{object}	types.ErrorResponse
+//	@Failure		403	{object}	types.ErrorResponse
+//	@Security		AdminBearer
+//	@Router			/v1/admin/quota [get]
 func quotaHandler(qa *quota.QuotaAllocator, nodes nodeSnapshotter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		globalQPS := qa.GlobalQPS()

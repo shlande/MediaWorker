@@ -38,6 +38,23 @@ type accountTestRequest struct {
 }
 
 // accountTestHandler serves POST /v1/admin/accounts/test.
+//
+//	@Summary		账号连通性测试
+//	@Description	连接测试：draft 模式传入 auth 字段测试未保存凭据，stored 模式传入 account_id 测试已存储凭据
+//	@Tags			admin-accounts
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		accountTestRequest	true	"测试请求"
+//	@Success		200		{object}	object				"{state, latency_ms}"
+//	@Failure		400		{object}	types.ErrorResponse	"无效请求体或字段验证失败"
+//	@Failure		401		{object}	types.ErrorResponse
+//	@Failure		403		{object}	types.ErrorResponse
+//	@Failure		404		{object}	types.ErrorResponse	"已存储账号不存在"
+//	@Failure		422		{object}	object				"{state, error_msg}"
+//	@Failure		500		{object}	types.ErrorResponse
+//	@Failure		501		{object}	object				"{error, vendor}"
+//	@Security		AdminBearer
+//	@Router			/v1/admin/accounts/test [post]
 func accountTestHandler(tester *accounttester.Tester) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req accountTestRequest

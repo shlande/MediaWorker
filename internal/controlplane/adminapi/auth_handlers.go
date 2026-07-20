@@ -53,6 +53,19 @@ type meResponse struct {
 
 // loginHandler serves POST /v1/auth/login.
 //
+//	@Summary		管理员登录
+//	@Description	用户名+密码登录，签发 8 小时有效期的 UserToken
+//	@Tags			admin-auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		loginRequest	true	"登录请求"
+//	@Success		200		{object}	loginResponse
+//	@Failure		400		{object}	types.ErrorResponse	"无效请求体"
+//	@Failure		401		{object}	types.ErrorResponse	"凭据无效"
+//	@Failure		403		{object}	types.ErrorResponse	"账号已禁用"
+//	@Failure		500		{object}	types.ErrorResponse	"内部错误"
+//	@Router			/v1/auth/login [post]
+//
 // Anti-enumeration: an unknown username and a wrong password produce the
 // IDENTICAL 401 body ({"error":"invalid credentials"}); neither the error
 // text nor the status distinguishes them. A disabled account gets 403.
@@ -116,6 +129,15 @@ func loginHandler(users AdminUserStore, secret []byte, audit AuditRecorder) http
 
 // meHandler serves GET /v1/auth/me: the authenticated identity from the
 // bearer-middleware context.
+//
+//	@Summary		获取当前登录用户信息
+//	@Description	从 UserToken 上下文中返回当前认证用户的身份信息
+//	@Tags			admin-auth
+//	@Produce		json
+//	@Success		200	{object}	meResponse
+//	@Failure		401	{object}	types.ErrorResponse	"未认证"
+//	@Security		AdminBearer
+//	@Router			/v1/auth/me [get]
 func meHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		userID, username, roles, ok := UserFromCtx(r.Context())
@@ -131,6 +153,14 @@ func meHandler() http.Handler {
 // there is NO server-side revocation: logout is audit-only and the client
 // discards the token. A stolen token remains valid until its 8h expiry —
 // documented v1 limitation, no refresh tokens exist to rotate.
+//
+//	@Summary		管理员登出
+//	@Description	审计记录登出事件，客户端负责丢弃令牌（无服务端撤销）
+//	@Tags			admin-auth
+//	@Success		204	"无内容"
+//	@Failure		401	{object}	types.ErrorResponse	"未认证"
+//	@Security		AdminBearer
+//	@Router			/v1/auth/logout [post]
 func logoutHandler(audit AuditRecorder) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, username, _, ok := UserFromCtx(r.Context())

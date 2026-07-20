@@ -34,6 +34,19 @@ func RegisterPinPlansRoutes(srv *Server, dl *pinstrategy.DispatchLog, reg *noder
 	srv.Handle("GET /v1/admin/pin-plans", pinPlansHandler(dl, reg), true)
 }
 
+// pinPlansHandler serves GET /v1/admin/pin-plans.
+//
+//	@Summary		固定计划列表
+//	@Description	返回分页的 pin/unpin 派单记录，含节点 Ack 状态
+//	@Tags			admin-pin
+//	@Produce		json
+//	@Param			page		query	int	false	"页码"	default(1)
+//	@Param			page_size	query	int	false	"每页条数"	default(20)
+//	@Success		200			{array}	PinPlanItem
+//	@Failure		401			{object}	types.ErrorResponse
+//	@Failure		403			{object}	types.ErrorResponse
+//	@Security		AdminBearer
+//	@Router			/v1/admin/pin-plans [get]
 func pinPlansHandler(dl *pinstrategy.DispatchLog, reg *noderegistry.Registry) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		page, pageSize := ParsePage(r)

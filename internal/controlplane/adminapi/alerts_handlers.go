@@ -97,6 +97,21 @@ type amWebhookPayload struct {
 // POST /v1/admin/alerts/webhook
 // ---------------------------------------------------------------------------
 
+// alertWebhookHandler serves POST /v1/admin/alerts/webhook.
+//
+//	@Summary		Alertmanager Webhook
+//	@Description	接收 Alertmanager v4 webhook 告警，持久化到 alert_events 表
+//	@Tags			admin-alerts
+//	@Accept			json
+//	@Produce		json
+//	@Param			X-Alert-Token	header		string	true	"Webhook 令牌"
+//	@Param			request			body		amWebhookPayload	true	"Alertmanager webhook payload"
+//	@Success		202				{object}	object				"{"received": N}"
+//	@Failure		400				{object}	types.ErrorResponse	"无效 payload"
+//	@Failure		401				{object}	types.ErrorResponse	"无效 X-Alert-Token"
+//	@Failure		500				{object}	types.ErrorResponse
+//	@Security		AlertWebhookToken
+//	@Router			/v1/admin/alerts/webhook [post]
 func alertWebhookHandler(mc AlertEventStore, token string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("X-Alert-Token") != token {
@@ -200,6 +215,20 @@ type alertItem struct {
 	Detail   json.RawMessage `json:"detail"`
 }
 
+// listAlertsHandler serves GET /v1/admin/alerts.
+//
+//	@Summary		活跃告警列表
+//	@Description	返回当前 firing 状态的告警事件
+//	@Tags			admin-alerts
+//	@Produce		json
+//	@Param			status	query		string	false	"告警状态（默认 firing）"
+//	@Param			limit	query		int		false	"返回条数（最多 100）"
+//	@Success		200		{array}		alertItem
+//	@Failure		401		{object}	types.ErrorResponse
+//	@Failure		403		{object}	types.ErrorResponse
+//	@Failure		500		{object}	types.ErrorResponse
+//	@Security		AdminBearer
+//	@Router			/v1/admin/alerts [get]
 func listAlertsHandler(mc AlertEventStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		status := r.URL.Query().Get("status")

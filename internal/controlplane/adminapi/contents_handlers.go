@@ -71,17 +71,72 @@ func RegisterContentsRoutes(srv *Server, mc struct {
 	ContentsDetailReader
 	ContentMetaReader
 }, dlog PinCountReader, deleter ContentDeleter, audit AuditRecorder) {
-	srv.Handle("GET /v1/admin/contents", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv.Handle("GET /v1/admin/contents", listContentsFactory(mc, dlog), true)
+	srv.Handle("GET /v1/admin/contents/{id}", getContentFactory(mc), true)
+	srv.Handle("DELETE /v1/admin/contents/{id}", deleteContentFactory(mc.ContentMetaReader, deleter, audit), true)
+}
+
+// listContentsFactory returns the handler for GET /v1/admin/contents.
+//
+//	@Summary		内容列表
+//	@Description	分页查询所有内容，支持排序、类型和副本数筛选
+//	@Tags			admin-contents
+//	@Produce		json
+//	@Param			sort		query	string	false	"排序字段（popularity|created_at）"
+//	@Param			type		query	string	false	"内容类型过滤"
+//	@Param			replicas	query	string	false	"副本筛选（degraded）"
+//	@Param			page		query	int		false	"页码"
+//	@Param			page_size	query	int		false	"每页条数"
+//	@Success		200			{object}	object	"{"contents":[...], "total":N, "page":N, "page_size":N}"
+//	@Failure		401			{object}	types.ErrorResponse
+//	@Failure		403			{object}	types.ErrorResponse
+//	@Failure		500			{object}	types.ErrorResponse
+//	@Security		AdminBearer
+//	@Router			/v1/admin/contents [get]
+func listContentsFactory(mc ContentsListReader, dlog PinCountReader) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		listContents(w, r, mc, dlog)
-	}), true)
+	})
+}
 
-	srv.Handle("GET /v1/admin/contents/{id}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+// getContentFactory returns the handler for GET /v1/admin/contents/{id}.
+//
+//	@Summary		内容详情
+//	@Description	返回指定内容的完整元数据、blob 列表与存储位置
+//	@Tags			admin-contents
+//	@Produce		json
+//	@Param			id	path		string	true	"内容 UUID"
+//	@Success		200	{object}	contentDetailResponse
+//	@Failure		401	{object}	types.ErrorResponse
+//	@Failure		403	{object}	types.ErrorResponse
+//	@Failure		404	{object}	types.ErrorResponse	"内容不存在"
+//	@Failure		500	{object}	types.ErrorResponse
+//	@Security		AdminBearer
+//	@Router			/v1/admin/contents/{id} [get]
+func getContentFactory(mc ContentsDetailReader) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		getContentDetail(w, r, mc)
-	}), true)
+	})
+}
 
-	srv.Handle("DELETE /v1/admin/contents/{id}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		deleteContent(w, r, mc.ContentMetaReader, deleter, audit)
-	}), true)
+// deleteContentFactory returns the handler for DELETE /v1/admin/contents/{id}.
+//
+//	@Summary		软删除内容
+//	@Description	标记内容为 pending_delete（blobs 变为孤儿，janitor 在 min_age 后清理）
+//	@Tags			admin-contents
+//	@Produce		json
+//	@Param			id	path		string	true	"内容 UUID"
+//	@Success		200	{object}	contentDeleteResponse
+//	@Failure		401	{object}	types.ErrorResponse
+//	@Failure		403	{object}	types.ErrorResponse
+//	@Failure		404	{object}	types.ErrorResponse	"内容不存在"
+//	@Failure		500	{object}	types.ErrorResponse
+//	@Security		AdminBearer
+//	@Router			/v1/admin/contents/{id} [delete]
+func deleteContentFactory(metaReader ContentMetaReader, deleter ContentDeleter, audit AuditRecorder) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deleteContent(w, r, metaReader, deleter, audit)
+	})
 }
 
 // ─── List handler: GET /v1/admin/contents ─────────────────────────────────

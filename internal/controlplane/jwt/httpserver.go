@@ -51,6 +51,18 @@ func (s *JWTHTTPServer) RegisterMetricsHandler(metrics *cpmetrics.Metrics) {
 	}
 }
 
+// handleMetrics wraps s.metricsHandler as a named http.Handler for swag annotation.
+//
+//	@Summary		Prometheus 指标
+//	@Description	Prometheus 文本格式指标端点
+//	@Tags			ops
+//	@Produce		plain
+//	@Success		200	{string}	string
+//	@Router			/metrics [get]
+func (s *JWTHTTPServer) handleMetrics() http.Handler {
+	return s.metricsHandler
+}
+
 // Serve starts the HTTP server on listenAddr and blocks until ctx is
 // cancelled, at which point it performs a graceful shutdown.
 //
@@ -66,7 +78,7 @@ func (s *JWTHTTPServer) Serve(ctx context.Context, listenAddr string, readTimeou
 	if s.metricsHandler != nil {
 		// No auth — /metrics is intended for the operator/scraper network
 		// behind the same ACL as the JWT port (plan line 275 — intranet).
-		mux.Handle("GET /metrics", s.metricsHandler)
+		mux.Handle("GET /metrics", s.handleMetrics())
 	}
 
 	srv := &http.Server{
@@ -118,6 +130,21 @@ func extractRemoteIP(req *http.Request) string {
 	return host
 }
 
+// handleJWTRequest 签发节点能力 JWT。
+//
+//	@Summary		签发节点能力 JWT
+//	@Description	验证节点提供的 Ed25519 签名请求并签发能力 JWT
+//	@Tags			node-auth
+//	@Accept			json
+//	@Produce		json
+//	@Param			request	body		types.JWTRequest	true	"JWT 签发请求"
+//	@Success		200		{object}	types.JWTResponse
+//	@Failure		400		{object}	types.ErrorResponse	"无效 JSON 或非法 PeerID"
+//	@Failure		403		{object}	types.ErrorResponse	"签名验证失败"
+//	@Failure		405		{object}	types.ErrorResponse	"方法不允许"
+//	@Failure		429		{object}	types.ErrorResponse	"速率限制"
+//	@Failure		500		{object}	types.ErrorResponse	"内部错误"
+//	@Router			/v1/node/jwt [post]
 func (s *JWTHTTPServer) handleJWTRequest(w http.ResponseWriter, req *http.Request) {
 	if req.Method != http.MethodPost {
 		writeHTTPError(w, http.StatusMethodNotAllowed, "method not allowed")

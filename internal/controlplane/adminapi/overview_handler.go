@@ -175,6 +175,17 @@ func RegisterOverviewRoutes(srv *Server, deps OverviewDeps) {
 
 // ─── Handler ────────────────────────────────────────────────────────────────
 
+// overviewHandler serves GET /v1/admin/overview.
+//
+//	@Summary		管理后台概览
+//	@Description	仪表盘聚合端点：SLO 指标、节点状态、热门内容、活跃告警、Pin 统计（部分失败时 partial=true）
+//	@Tags			admin-overview
+//	@Produce		json
+//	@Success		200	{object}	overviewResponse
+//	@Failure		401	{object}	types.ErrorResponse
+//	@Failure		403	{object}	types.ErrorResponse
+//	@Security		AdminBearer
+//	@Router			/v1/admin/overview [get]
 func overviewHandler(deps OverviewDeps) http.Handler {
 	nowFn := deps.Now
 	if nowFn == nil {
