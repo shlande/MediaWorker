@@ -1,8 +1,12 @@
 # edge-node.yaml -- MediaWorker edge-node (test env, namespace: mediaworker-test)
-# Extracted from live cluster with T17-deprecated `access_layer.fetch_segment_client` removed
-# (T17 deleted this field from the Go struct; keeping it would emit a deprecation Warn).
-# Adds the Deployment + PVC that the live cluster is missing -- control-plane logs show
-# `failed to find any peer in table` because no edge-node was running.
+# Aligned to the LIVE cluster reality: edge-node runs as a hand-created StatefulSet
+# (replicas: 2, Parallel, emptyDir data volume), NOT a Deployment+PVC.
+# A previous revision of this file declared a Deployment without CONTROL_PLANE_PUBKEY,
+# which created a CrashLoopBackOff pod alongside the healthy StatefulSet on apply.
+# The PVC document was removed from this manifest; the live `edge-node-data` PVC
+# still exists in the cluster but is now orphaned (unmanaged by apply) -- the
+# StatefulSet mounts an emptyDir, so nothing references it. Delete it manually if
+# reclaim is desired.
 # Do not edit by hand without consulting the live cluster state.
 ---
 apiVersion: v1
@@ -76,24 +80,8 @@ data:
       # QA token for test env — TODO: move to Secret before production
       token: "REPLACE_VIA_CLUSTER_LOCAL_SECRET"
 ---
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: edge-node-data
-  namespace: mediaworker-test
-  labels:
-    app.kubernetes.io/name: edge-node
-    app.kubernetes.io/part-of: mediaworker
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 2Gi
-  storageClassName: local-path
----
 apiVersion: apps/v1
-kind: Deployment
+kind: StatefulSet
 metadata:
   name: edge-node
   namespace: mediaworker-test
@@ -101,18 +89,30 @@ metadata:
     app.kubernetes.io/name: edge-node
     app.kubernetes.io/part-of: mediaworker
 spec:
-  replicas: 1
+  # Mirrors the live StatefulSet (see `kubectl -n mediaworker-test get sts edge-node -o yaml`).
+  # The `kubectl.kubernetes.io/restartedAt` pod-template annotation is intentionally
+  # omitted -- it is a `kubectl rollout restart` runtime artifact, not config.
+  replicas: 2
+  serviceName: edge-node
+  podManagementPolicy: Parallel
   selector:
     matchLabels:
       app.kubernetes.io/name: edge-node
-  strategy:
-    type: Recreate
   template:
     metadata:
       labels:
         app.kubernetes.io/name: edge-node
         app.kubernetes.io/part-of: mediaworker
     spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - oci-sg
       securityContext:
         runAsNonRoot: true
         runAsUser: 100
@@ -125,7 +125,7 @@ spec:
           command:
             - sh
             - -c
-            - mkdir -p /data/identity /data/warm /data/prefix
+            - mkdir -p /data/identity /data/prefix /data/warm
           securityContext:
             runAsNonRoot: true
             runAsUser: 100
@@ -151,27 +151,35 @@ spec:
               containerPort: 9001
               protocol: UDP
           env:
+            - name: CONTROL_PLANE_PUBKEY
+              value: 6056ba353bff24e3c191d716bf091daa9207e7a996c23f9b729fcc3edd563151
             - name: GOMAXPROCS
               value: "2"
           resources:
             requests:
               cpu: 100m
-              memory: 256Mi
+              memory: 128Mi
             limits:
-              cpu: "2"
-              memory: 2Gi
+              cpu: 1000m
+              memory: 512Mi
           # cmd/edge-node/main.go only registers /blob/{hash} and /metrics on :8080 --
           # no /healthz endpoint, so use tcpSocket probe on the http port.
+          startupProbe:
+            tcpSocket:
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 60
           livenessProbe:
             tcpSocket:
               port: http
-            initialDelaySeconds: 15
             periodSeconds: 20
+            failureThreshold: 3
           readinessProbe:
             tcpSocket:
               port: http
-            initialDelaySeconds: 5
             periodSeconds: 10
+            failureThreshold: 6
           volumeMounts:
             - name: config
               mountPath: /etc/mediaworker
@@ -179,12 +187,12 @@ spec:
             - name: data
               mountPath: /data
       volumes:
+        # data is emptyDir in the live cluster -- the edge-node-data PVC is NOT used.
         - name: config
           configMap:
             name: edge-node-config
         - name: data
-          persistentVolumeClaim:
-            claimName: edge-node-data
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
