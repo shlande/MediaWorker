@@ -65,7 +65,11 @@ func run(configPath string) error {
 	}
 
 	// 4. Rate limiter + audit log.
-	rateLimiter := cpjwt.NewRateLimiter(cpjwt.DefaultRateLimitInterval)
+	rateLimitInterval, err := parseRateLimitInterval(cfg.JWT.RateLimitInterval)
+	if err != nil {
+		return err
+	}
+	rateLimiter := cpjwt.NewRateLimiter(rateLimitInterval)
 	auditLog := cpjwt.NewAuditLog(os.Stdout)
 
 	// 4b. Metrics (T20). Constructed once per process and shared across the
@@ -391,6 +395,24 @@ func run(configPath string) error {
 	}
 
 	return nil
+}
+
+// parseRateLimitInterval resolves jwt_http.rate_limit_interval. An empty
+// string yields cpjwt.DefaultRateLimitInterval; a non-empty but unparseable
+// or non-positive value is a startup error naming the field (same contract
+// as parseJWTHTTPDuration).
+func parseRateLimitInterval(s string) (time.Duration, error) {
+	if s == "" {
+		return cpjwt.DefaultRateLimitInterval, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, fmt.Errorf("parse jwt_http.rate_limit_interval %q: %w", s, err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("jwt_http.rate_limit_interval must be positive, got %q", s)
+	}
+	return d, nil
 }
 
 // parseJWTHTTPDuration parses a JWTHTTPConfig duration string. An empty string

@@ -146,6 +146,10 @@ type JWTHTTPConfig struct {
 	Listen       string `yaml:"listen"`        // e.g. ":8443"
 	ReadTimeout  string `yaml:"read_timeout"`  // e.g. "10s"
 	WriteTimeout string `yaml:"write_timeout"` // e.g. "10s"
+	// RateLimitInterval is the per-IP JWT request rate-limit interval,
+	// e.g. "1m". Empty -> cpjwt.DefaultRateLimitInterval. Must sit well
+	// under the node refresh cadence (default 5m) or renewals starve.
+	RateLimitInterval string `yaml:"rate_limit_interval"`
 }
 
 // ---------------------------------------------------------------------------

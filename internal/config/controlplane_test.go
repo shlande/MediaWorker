@@ -147,6 +147,52 @@ identity:
 	}
 }
 
+// TestLoadControlPlaneConfig_JWTRateLimitInterval: Given a jwt_http stanza
+// carrying rate_limit_interval, when the config loads, then the value
+// round-trips verbatim; and given a stanza omitting the knob, when the
+// config loads, then the field stays empty so the consumer applies the
+// code default (F4a: default fixed in cpjwt.DefaultRateLimitInterval).
+func TestLoadControlPlaneConfig_JWTRateLimitInterval(t *testing.T) {
+	const yamlWith = `
+jwt_http:
+  listen: ":8443"
+  rate_limit_interval: "2m"
+dht_bootstrap:
+  namespace: "edge"
+metadata:
+  pg_dsn: "postgres://localhost/mw"
+identity:
+  priv_key_path: "/key"
+  libp2p_priv_key_path: "/key2"
+`
+	cfg, err := LoadControlPlaneConfig(writeTempControlPlaneYAML(t, yamlWith))
+	if err != nil {
+		t.Fatalf("load with rate_limit_interval: %v", err)
+	}
+	if cfg.JWT.RateLimitInterval != "2m" {
+		t.Errorf("JWT.RateLimitInterval = %q, want %q", cfg.JWT.RateLimitInterval, "2m")
+	}
+
+	const yamlWithout = `
+jwt_http:
+  listen: ":8443"
+dht_bootstrap:
+  namespace: "edge"
+metadata:
+  pg_dsn: "postgres://localhost/mw"
+identity:
+  priv_key_path: "/key"
+  libp2p_priv_key_path: "/key2"
+`
+	cfg, err = LoadControlPlaneConfig(writeTempControlPlaneYAML(t, yamlWithout))
+	if err != nil {
+		t.Fatalf("load without rate_limit_interval: %v", err)
+	}
+	if cfg.JWT.RateLimitInterval != "" {
+		t.Errorf("JWT.RateLimitInterval = %q, want empty (consumer applies code default)", cfg.JWT.RateLimitInterval)
+	}
+}
+
 func TestLoadControlPlaneConfig_MissingDHTNamespace(t *testing.T) {
 	const yaml = `
 jwt_http:

@@ -151,8 +151,16 @@ spec:
               containerPort: 9001
               protocol: UDP
           env:
+            # Hex-encoded Ed25519 public key of the CP JWT signing key persisted
+            # at /data/controlplane/ed25519-jwt.key on the control-plane-data PVC.
+            # Derive after any CP key (re)generation with:
+            #   kubectl -n mediaworker-test exec deploy/control-plane -c control-plane -- \
+            #     cat /data/controlplane/ed25519-jwt.key | tail -n +2 | head -n -1 | base64 -d | \
+            #     openssl pkey -inform DER -pubout -outform DER | tail -c 32 | xxd -p -c 64
+            # F4b: the previous value (6056ba35...) was stale vs the persisted key,
+            # which made /v1/status report jwt.exp=null despite valid JWTs.
             - name: CONTROL_PLANE_PUBKEY
-              value: 6056ba353bff24e3c191d716bf091daa9207e7a996c23f9b729fcc3edd563151
+              value: 2457cb230c29f9cbec3dd0a2a3770580785a994d5d967b1ef7155e5a8ee9dcb6
             - name: GOMAXPROCS
               value: "2"
           resources:

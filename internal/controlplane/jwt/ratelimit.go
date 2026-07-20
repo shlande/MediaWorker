@@ -7,8 +7,8 @@ import (
 
 // RateLimiter tracks per-IP request times to enforce a simple rate limit.
 // Not designed for high-throughput (>10k concurrent) — for a control-plane
-// JWT endpoint that receives one request per node per hour, a mutex is
-// perfectly adequate.
+// JWT endpoint that receives one request per node per refresh cadence, a
+// mutex is perfectly adequate.
 type RateLimiter struct {
 	mu       sync.Mutex
 	lastSeen map[string]time.Time
@@ -39,5 +39,12 @@ func (r *RateLimiter) Allow(ip string) bool {
 	return false
 }
 
-// DefaultRateLimitInterval is the control-plane per-IP rate limit: 1 request per hour.
-const DefaultRateLimitInterval = 1 * time.Hour
+// DefaultRateLimitInterval is the default control-plane per-IP rate limit.
+// Nodes refresh their JWT every 5 minutes (see cmd/edge-node
+// runJWTRefreshLoop), so the interval must sit well under that cadence or
+// every renewal after the first issuance is starved with HTTP 429 (F4a: a
+// 1h interval against the 5m cadence broke all renewals in the test
+// cluster). 1/min per IP allows the documented cadence with ample jitter
+// headroom while still bounding abuse to 60 req/hour per source IP.
+// Operators can tune it via jwt_http.rate_limit_interval.
+const DefaultRateLimitInterval = 1 * time.Minute
