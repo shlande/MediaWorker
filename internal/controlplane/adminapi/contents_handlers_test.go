@@ -598,6 +598,60 @@ func TestContentsDetail_NotDeleted(t *testing.T) {
 	}
 }
 
+func TestContentsDetail_MalformedID_Returns404(t *testing.T) {
+	// Simulate the real GetContentDetail code path: when a non-existent
+	// content ID is queried, GetContentMeta returns sql.ErrNoRows which
+	// GetContentDetail wraps as ErrContentNotFound. But if the error
+	// chain somehow loses ErrContentNotFound (e.g. a different code path),
+	// the handler must still return 404, not 500.
+	//
+	// This test sends a non-UUID-ish string that is long enough to pass
+	// the contentIDMinLen guard (len >= 4) and verifies the handler
+	// returns 404 regardless of the error wrapping.
+	t.Run("non_existent_malformed_id", func(t *testing.T) {
+		mc := struct {
+			ContentsListReader
+			ContentsDetailReader
+			ContentMetaReader
+		}{
+			ContentsDetailReader: &mockContentsDetailReader{
+				// Simulate: real GetContentMeta returns sql.ErrNoRows,
+				// GetContentDetail wraps it as ErrContentNotFound.
+				err: fmt.Errorf("metadata: content %q: %w", "nonexistent123", metadata.ErrContentNotFound),
+			},
+		}
+		dlog := &mockPinCountReader{}
+		srv := makeContentsServer(mc, dlog, nil)
+		resp := contentsGet(t, srv, "/v1/admin/contents/nonexistent123", contentsAuthToken(t))
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("status = %d, want 404 for malformed/non-existent content ID", resp.StatusCode)
+		}
+	})
+
+	// This test is the defensive catch: if the storage layer fails to
+	// wrap ErrContentNotFound (e.g. a raw sql.ErrNoRows leaks through),
+	// the handler must still return 404, not 500.
+	t.Run("raw_sql_ErrNoRows_fallback", func(t *testing.T) {
+		mc := struct {
+			ContentsListReader
+			ContentsDetailReader
+			ContentMetaReader
+		}{
+			ContentsDetailReader: &mockContentsDetailReader{
+				// Simulate a bug where sql.ErrNoRows is not wrapped
+				// as ErrContentNotFound — the handler must catch it.
+				err: fmt.Errorf("metadata: get content meta %q: %w", "nonexistent456", sql.ErrNoRows),
+			},
+		}
+		dlog := &mockPinCountReader{}
+		srv := makeContentsServer(mc, dlog, nil)
+		resp := contentsGet(t, srv, "/v1/admin/contents/nonexistent456", contentsAuthToken(t))
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("status = %d, want 404 for raw sql.ErrNoRows (defensive fallback)", resp.StatusCode)
+		}
+	})
+}
+
 func TestContentsDetail_MetadataError(t *testing.T) {
 	mc := struct {
 		ContentsListReader

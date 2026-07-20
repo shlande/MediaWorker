@@ -209,7 +209,7 @@ func getContentDetail(w http.ResponseWriter, r *http.Request, mc ContentsDetailR
 
 	detail, err := mc.GetContentDetail(r.Context(), id)
 	if err != nil {
-		if errors.Is(err, metadata.ErrContentNotFound) {
+		if errors.Is(err, metadata.ErrContentNotFound) || errors.Is(err, sql.ErrNoRows) {
 			WriteError(w, http.StatusNotFound, "content not found")
 			return
 		}
