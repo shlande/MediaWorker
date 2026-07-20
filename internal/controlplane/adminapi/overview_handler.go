@@ -22,11 +22,9 @@ import (
 // pin counts, and PG alert_events + dispatch-log Stats1h.
 //
 // PARTIAL-FAILURE CONTRACT (locked in overview_handler_test.go): no single
-// source failure may 500 the page. A failing source degrades its own fields
-// to null (hot_contents / alerts degrade to null arrays) and flips the
-// top-level "partial" marker to true. A source that is merely absent
-// (Prometheus not configured, no account_health rows yet) yields null fields
-// WITHOUT setting partial — absence is not a failure.
+// source failure may 500 the page. A source that is degraded (errored OR
+// absent — Prometheus not configured, no account_health rows yet) yields null
+// fields for its own data and flips the top-level "partial" marker to true.
 //
 // Scope exclusions (docs/ui-adjustments.md §2): no graylist, no score, no
 // community-node fields; the "community" card is served by nodes.non_l4 and
@@ -122,6 +120,7 @@ type overviewSpaceBuckets struct {
 	Sufficient int `json:"sufficient"`
 	Tight      int `json:"tight"`
 	Exhausted  int `json:"exhausted"`
+	Unknown    int `json:"unknown"`
 }
 
 type overviewNodes struct {
@@ -206,9 +205,13 @@ func overviewHandler(deps OverviewDeps) http.Handler {
 					promFailed.Store(true)
 					return nil
 				}
-				if ok {
-					*dst = &v
+				if !ok {
+					// Absent source (Prom not configured, empty query result)
+					// degrades the field to null AND marks partial.
+					promFailed.Store(true)
+					return nil
 				}
+				*dst = &v
 				return nil
 			}
 		}
@@ -230,9 +233,13 @@ func overviewHandler(deps OverviewDeps) http.Handler {
 				healthFailed = true
 				return nil
 			}
-			if ok {
-				resp.SLO.AccountHealthRate = &rate
+			if !ok {
+				// Absent account_health (empty table) degrades to null AND
+				// marks partial; the operator should know the data is absent.
+				healthFailed = true
+				return nil
 			}
+			resp.SLO.AccountHealthRate = &rate
 			return nil
 		})
 
@@ -329,7 +336,12 @@ func aggregateNodes(views []noderegistry.NodeView, now time.Time) overviewNodes 
 		if !caps.L4Backhaul {
 			out.NonL4++
 		}
-		free := v.PrefixSpace.TotalBytes - v.PrefixSpace.UsedBytes
+		total := v.PrefixSpace.TotalBytes
+		if total == 0 {
+			out.SpaceBuckets.Unknown++
+			continue
+		}
+		free := total - v.PrefixSpace.UsedBytes
 		switch {
 		case free > spaceBucketSufficientBytes:
 			out.SpaceBuckets.Sufficient++

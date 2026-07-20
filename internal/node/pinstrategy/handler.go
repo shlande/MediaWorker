@@ -26,7 +26,7 @@ func HandlePinPlan(plan types.PinPlan, ps *pinstore.PinStore, blobs []types.Blob
 			}
 		} else {
 			for _, pinHash := range update.PinBlobs {
-				ps.ApplyPin(pinHash, findBlobType(pinHash, blobs), findRole(pinHash, roles), findBlobSize(pinHash, blobs), "")
+				ps.ApplyPin(pinHash, findBlobType(pinHash, blobs), findRole(pinHash, roles), findBlobSize(pinHash, blobs), update.ContentID)
 			}
 		}
 		for _, unpinHash := range update.UnpinBlobs {

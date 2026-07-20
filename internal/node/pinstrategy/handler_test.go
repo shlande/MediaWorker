@@ -113,14 +113,17 @@ func TestHandlePinPlan_MetasPathPassesContentID(t *testing.T) {
 	}
 }
 
-// Given an old-payload plan (no metas), When handled, Then the stored pin
-// entry carries an empty content id.
-func TestHandlePinPlan_LegacyPathLeavesContentIDEmpty(t *testing.T) {
+// Given an old-payload plan (no metas) that carries a content_id on the wire,
+// When handled, Then the stored pin entry carries that content id (F6 fix).
+func TestHandlePinPlan_LegacyPathPassesContentID(t *testing.T) {
 	ps := newTestStore(t)
 
 	plan := types.PinPlan{
 		Seq: 5, TargetNode: "node_a",
-		Updates: []types.PinUpdate{{PinBlobs: []string{"h_init"}}},
+		Updates: []types.PinUpdate{{
+			ContentID: "cont_legacy",
+			PinBlobs:  []string{"h_init"},
+		}},
 	}
 	HandlePinPlan(plan, ps, nil, nil)
 
@@ -128,8 +131,46 @@ func TestHandlePinPlan_LegacyPathLeavesContentIDEmpty(t *testing.T) {
 	if !ok {
 		t.Fatal("h_init should be pinned via legacy path")
 	}
-	if entry.ContentID != "" {
-		t.Errorf("ContentID = %q, want empty for legacy path", entry.ContentID)
+	if entry.ContentID != "cont_legacy" {
+		t.Errorf("ContentID = %q, want %q", entry.ContentID, "cont_legacy")
+	}
+}
+
+// Given an old-payload plan with content_id AND local metadata blobs, When
+// handled, Then the content_id reaches the store alongside the blob-type/role/size
+// lookups from findBlob*.
+func TestHandlePinPlan_LegacyPathPassesContentIDWithMetadata(t *testing.T) {
+	ps := newTestStore(t)
+
+	plan := types.PinPlan{
+		Seq: 6, TargetNode: "node_a",
+		Updates: []types.PinUpdate{{
+			ContentID: "cont_meta",
+			PinBlobs:  []string{"h_seg2"},
+		}},
+	}
+	blobs := []types.BlobDescriptor{
+		{BlobHash: "h_seg2", BlobType: "m4s_media_segment", Size: 300},
+	}
+	roles := []types.BlobRole{{BlobHash: "h_seg2", Role: "media"}}
+
+	HandlePinPlan(plan, ps, blobs, roles)
+
+	entry, ok := ps.Get("h_seg2")
+	if !ok {
+		t.Fatal("h_seg2 should be pinned via legacy path")
+	}
+	if entry.ContentID != "cont_meta" {
+		t.Errorf("ContentID = %q, want %q", entry.ContentID, "cont_meta")
+	}
+	if entry.BlobType != "m4s_media_segment" {
+		t.Errorf("BlobType = %q, want %q", entry.BlobType, "m4s_media_segment")
+	}
+	if entry.Role != "media" {
+		t.Errorf("Role = %q, want %q", entry.Role, "media")
+	}
+	if entry.Size != 300 {
+		t.Errorf("Size = %d, want %d", entry.Size, 300)
 	}
 }
 

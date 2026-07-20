@@ -412,9 +412,9 @@ func TestOverview_PromDownDegrades(t *testing.T) {
 	}
 }
 
-// TestOverview_PromDisabledIsAbsenceNotFailure locks the distinction: a
+// TestOverview_PromDisabledIsAbsenceNotFailure locks the contract: a
 // disabled Prometheus (all queries ok=false, no error) nulls the Prom fields
-// WITHOUT setting partial.
+// AND sets partial=true because absent means the dashboard is degraded.
 func TestOverview_PromDisabledIsAbsenceNotFailure(t *testing.T) {
 	deps := happyDeps()
 	deps.Prom = &fakeOverviewProm{} // everything ok=false, err=nil
@@ -428,14 +428,14 @@ func TestOverview_PromDisabledIsAbsenceNotFailure(t *testing.T) {
 	if slo["ttfb_p95"] != nil {
 		t.Fatalf("ttfb_p95 = %v, want null", slo["ttfb_p95"])
 	}
-	if body["partial"] != false {
-		t.Fatalf("partial = %v, want false (absence is not failure)", body["partial"])
+	if body["partial"] != true {
+		t.Fatalf("partial = %v, want true (absent Prometheus degrades the dashboard)", body["partial"])
 	}
 }
 
 // TestOverview_HealthRateDivisionByZero locks the empty-table case:
-// AccountHealthRate ok=false → account_health_rate null, NOT an error,
-// partial stays false.
+// AccountHealthRate ok=false → account_health_rate null, AND partial=true
+// because absent data means the dashboard is degraded.
 func TestOverview_HealthRateDivisionByZero(t *testing.T) {
 	deps := happyDeps()
 	deps.Metadata = &fakeOverviewMetadata{
@@ -452,8 +452,8 @@ func TestOverview_HealthRateDivisionByZero(t *testing.T) {
 	if body["slo"].(map[string]any)["account_health_rate"] != nil {
 		t.Fatalf("account_health_rate = %v, want null", body["slo"])
 	}
-	if body["partial"] != false {
-		t.Fatalf("partial = %v, want false", body["partial"])
+	if body["partial"] != true {
+		t.Fatalf("partial = %v, want true (absent account_health degrades the dashboard)", body["partial"])
 	}
 }
 
@@ -523,6 +523,44 @@ func TestOverview_PGErrorDegradesAlerts(t *testing.T) {
 	}
 	if body["partial"] != true {
 		t.Fatalf("partial = %v, want true", body["partial"])
+	}
+}
+
+// TestOverview_PrefixSpaceTotalZero_UnknownBucket: a node with total==0
+// (uninitialized prefix space) is bucketed as "unknown" rather than
+// "exhausted".
+func TestOverview_PrefixSpaceTotalZero_UnknownBucket(t *testing.T) {
+	deps := happyDeps()
+	deps.Registry = &fakeOverviewNodes{views: []noderegistry.NodeView{
+		{ // total==0, used==0 (uninitialized)
+			PeerID:       "peer-z",
+			Capabilities: types.NodeCapabilities{Edge: true},
+			PrefixSpace:  types.PartitionStatus{TotalBytes: 0, UsedBytes: 0},
+			ReceivedAt:   overviewNow.Add(-10 * time.Second),
+		},
+	}}
+	rec := serveOverview(t, deps, true)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d", rec.Code)
+	}
+	body := decodeOverview(t, rec)
+	nodes := body["nodes"].(map[string]any)
+	sb := nodes["space_buckets"].(map[string]any)
+	if got := sb["sufficient"]; got != 0.0 {
+		t.Errorf("sufficient = %v, want 0", got)
+	}
+	if got := sb["tight"]; got != 0.0 {
+		t.Errorf("tight = %v, want 0", got)
+	}
+	if got := sb["exhausted"]; got != 0.0 {
+		t.Errorf("exhausted = %v, want 0 (total==0 should not be exhausted)", got)
+	}
+	if got := sb["unknown"]; got != 1.0 {
+		t.Errorf("unknown = %v, want 1", got)
+	}
+	// Partial stays false — this is not a source failure.
+	if body["partial"] != false {
+		t.Fatalf("partial = %v, want false", body["partial"])
 	}
 }
 
