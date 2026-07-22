@@ -215,13 +215,17 @@ func main() {
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
 
-	a.CloseStores()
+	if err := a.CloseStores(); err != nil {
+		logger.Error("closing stores", "err", err)
+	}
 
 	if err := httpSrv.Shutdown(shutdownCtx); err != nil {
 		logger.Error("HTTP server shutdown error", "err", err)
 	}
 
-	a.CloseHost()
+	if err := a.CloseHost(); err != nil {
+		logger.Error("closing host", "err", err)
+	}
 
 	logger.Info("shutdown complete")
 }
