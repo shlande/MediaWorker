@@ -1,0 +1,64 @@
+# node-cli.local.yaml -- mwcli 内嵌节点本地配置样本
+# 非 L4 节点; DHT 客户端模式; 不开数据面、不开 admin server.
+# 集群 DNS 域名从本机可能不可解析: 把下面所有 control-plane.mediaworker-test.svc.cluster.local
+# 替换为 control-plane pod IP 即可 (用 /ip4/<pod-ip> 替换 /dns4/<service-name>)。
+#
+# Usage:
+#   CONTROL_PLANE_PUBKEY=2457cb230c29f9cbec3dd0a2a3770580785a994d5d967b1ef7155e5a8ee9dcb6 \
+#   mwcli download -config configs/node-cli.local.yaml -blob sha256:<hex> -out /tmp/out.png
+node:
+  identity:
+    priv_key_path: "./.mwcli/data/identity/ed25519.key"
+
+  declared_capabilities:
+    edge: true
+    l4_backhaul: false
+    relay_provider: false
+    peer_icp: true
+
+  libp2p:
+    listen:
+      - "/ip4/0.0.0.0/tcp/0"        # OS-assign port (dev machine, no fixed port needed)
+    private_network:
+      enabled: false
+    dht:
+      mode: client
+      namespace: "edge"
+      advertise_ttl: "2m"
+      advertise_interval: "30s"
+      bootstrap_peers:
+        # 如果本机 DNS 解析不了 k8s Service 域名, 替换为:
+        # /ip4/<control-plane-pod-ip>/tcp/9001/p2p/12D3KooWSjSukohQ1Wkohcq21z3FoQ6iikANHRvs1i11yWfUBTLQ
+        - "/dns4/control-plane.mediaworker-test.svc.cluster.local/tcp/9001/p2p/12D3KooWSjSukohQ1Wkohcq21z3FoQ6iikANHRvs1i11yWfUBTLQ"
+    nat_traversal:
+      autonat: false
+      auto_relay: false
+      dcutr: false
+    peer_store:
+      path: "./.mwcli/data/peerstore.db"
+      gc_interval: "1h"
+    conn_gater:
+      ip_rate_limit: 50
+
+  jwt_service:
+    # 如果本机 DNS 解析不了 k8s Service 域名, 替换为:
+    # http://<control-plane-pod-ip>:8443/v1/node/jwt
+    endpoint: "http://control-plane.mediaworker-test.svc.cluster.local:8443/v1/node/jwt"
+    refresh_interval: "5m"
+    refresh_before_expiry: "5m"
+
+edge:
+  prefix_cache: { enabled: true, path: "./.mwcli/data/prefix", size_gb: 1 }
+  warm_cache:   { enabled: true, path: "./.mwcli/data/warm",   size_gb: 1 }
+
+access_layer:
+  data_plane:
+    enabled: false
+
+hash_ring:
+  replicas: 150
+
+# admin_api 已禁用 (mwcli 内嵌节点不启管理接口)
+# admin_api:
+#   listen: "127.0.0.1:8081"
+#   token: ""
