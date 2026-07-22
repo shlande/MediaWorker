@@ -33,7 +33,11 @@ Thumbs.db
 # OpenCode internal state (plans, drafts, evidence, boulder)
 .omo/
 
+# mwcli embedded node runtime data
+.mwcli/
+
 # Private keys / identity
 *.key
 /data/
 /identity/ingest-worker
+/mwcli
