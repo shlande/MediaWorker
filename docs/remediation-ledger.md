@@ -8,7 +8,7 @@
 |---|---|---|---|
 | 哈希环路由 + 代理到主节点 | `internal/node/routing/edge_router.go` + `cmd/edge-node/main.go` | **已接线**：`EdgeRouter.HandleBlobRequest` 挂 HTTP mux，代理失败回退本地 backhaul | T11/T12 |
 | DNS+302 区域调度器 | `internal/node/routing/scheduler.go` | 模拟实现，未接入 main.go（设计探索，非生产路径） | — |
-| 非 L4 节点的 L4 流式回退取流 | `backhaul.HandleBlobNoL4` 中 `L4Fetcher` | **已接线**：`backhaulICPFetcher` 经 `ring.Get` + `icp.FetchFromPeer` 向主节点拉流，并写回本地 warmCache | T12 |
+| 非 L4 节点的 L4 流式回退取流 | `backhaul.HandleBlobNoL4` 中 `L4Fetcher` | **已接线（真实实现）**：T12 时以 `backhaulICPFetcher` 经 `ring.Get` + `icp.FetchFromPeer` 兜底；现由 `internal/node/l4fetch.Fetcher` 落地——经 libp2p 流协议 `/edge/l4/get/1.0.0` 向 peerstore 中 `L4Backhaul=true` 的活跃 peer 轮询拉流，服务端为 L4 节点的 `BackhaulManager.HandleBlobL4`（commit bd9fd41、2a2f078） | T12 → mwcli plan T1/T3 |
 | ingest 事件经 SyncBroadcaster 实时推送 | `internal/ingest/syncpub/`（T8） | **已接线**：`SyncPublisher` 经 libp2p `/edge/control/1.0.0` 直发控制面 `SyncBroadcaster`，事件类型 `CONTENT_INGESTED`；启动 `CheckConnectivity` fail-closed | T8 |
 | IngestOrchestrator gRPC 任务派发 | 仅存在于 `docs/ingest/` 设计 | 未实现，当前为 HTTP 直推（独立部署模式） | — |
 | ingest 冗余度配置生效 | `pipeline.go` + `NewIngestPipeline` | **已生效**：`ingest.redundancy` 经 `NewIngestPipeline(... redundancy)` 传入 `uploadAllBlobs`，`<=0` 规范化为 `2` | T3 |

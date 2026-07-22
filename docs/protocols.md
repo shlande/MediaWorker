@@ -10,17 +10,19 @@
 | `/edge/jwt-refresh/1.0.0` | 节点 → 节点 | 推送更新的 JWT（按 Exp 去重） |
 | `/edge/blob/head/1.0.0` | 节点 → 节点 | ICP 存在性探测（0x01/0x00） |
 | `/edge/blob/get/1.0.0` | 节点 → 节点 | ICP 拉取 blob 原始字节流 |
+| `/edge/l4/get/1.0.0` | 非 L4 节点 → L4 节点 | L4 流式回源：非 L4 节点向 `L4Backhaul=true` 的 peer 拉取 blob 原始字节流 |
 | `/edge/control/1.0.0` | 双向 | 控制面下发 PinPlan/凭据/快照；节点上报状态/入库事件 |
 
 ## 2. 流协议明细（节点侧实现）
 
-节点注册 5 个流协议处理器，这是节点间与节点↔控制面的全部内部通信。
+节点注册 5 个基础流协议处理器，这是节点间与节点↔控制面的全部内部通信；L4 节点（`access_layer.data_plane.enabled: true`）额外注册第 6 个 `/edge/l4/get/1.0.0`（§2.6）。
 
 ### 2.1 `/edge/auth/1.0.0` —— JWT 鉴权握手
 
 - 处理：`libp2phost.HandleAuth()`（`internal/node/libp2phost/gater.go:155`）；出站侧 `PresentAuth()`。
 - 线格式：一行 = JWT 字符串 + `\n`。
 - 行为：校验对端 JWT（Ed25519 签名、PeerID 绑定、有效期），通过后将该 peer 写入 `PeerEntryStore`，初始中立分 0。
+- 发起时机：连接建立时由双方各自发起（`internal/node/app` 的 on-peer-connected 回调：本端持有 JWT 则异步 `PresentAuth`，每 peer 60s 去抖、5s 超时）。此前 handler 虽已存在，但生产路径从未主动调用 `PresentAuth`，peerstore 的能力字段只能靠被动接收，哈希环因此恒空；现已由连接事件驱动完成双向能力交换。对端运行旧代码时只是收不到回礼，协议本身无变更，向后兼容。
 
 ### 2.2 `/edge/jwt-refresh/1.0.0` —— JWT 推送刷新
 
@@ -43,6 +45,13 @@
 - 处理：`nodesync.Client.handleStream()`（`internal/node/syncbroadcaster/client.go:103`）。
 - 线格式：varint 前缀 JSON `WireMessage{type, payload}`。
 - 行为：解码 `PIN_PLAN_UPDATE` → `pinstrategy.HandlePinPlan()` → `PinStore.ApplyPin/ApplyUnpin`；其余事件转发 `OnEvent` 回调。反向经 `SendToControlPlane()` 上报 `NodeStatusReport`。
+
+### 2.6 `/edge/l4/get/1.0.0` —— L4 流式回源
+
+- 处理：`l4fetch.RegisterHandler()`（`internal/node/l4fetch/protocol.go`），仅 L4 节点（`access_layer.data_plane.enabled: true`）注册；fetch 回调 = `BackhaulManager.HandleBlobL4`（本地缓存 → 本地数据面直连网盘）。客户端：`l4fetch.Fetcher.FetchFromL4Node()`，由非 L4 节点的 `BackhaulManager.HandleBlobNoL4` 在本地缓存与 ICP 兄弟节点均未命中时调用。
+- 线格式：与 ICP GET（§2.4）完全一致——客户端发 varint 前缀的 blob 哈希；服务端直接流式回写原始字节（无长度前缀，读到 EOF）。
+- 候选筛选：从 `PeerEntryStore.ActivePeers()`（已过滤 Stale 与 Score < -20）中再筛 `Capabilities.L4Backhaul=true` 的 peer，轮询选择，每个候选最多试一次；无候选时返回哨兵错误 `ErrNoL4NodeAvailable`，全部失败时返回含各候选原因的聚合错误。
+- 错误语义：服务端 fetch 失败时 `stream.Reset()`——客户端表现为流错误而非干净 EOF（与 §2.4 ICP GET 语义一致，调用方不会把空响应误当成空 blob）。
 
 ## 3. 控制通道 `/edge/control/1.0.0`（控制面侧）
 
