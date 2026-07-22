@@ -365,14 +365,15 @@ func TestRun_UnknownSubcommand(t *testing.T) {
 	}
 }
 
-func TestRun_DownloadNotImplemented(t *testing.T) {
+func TestRun_DownloadMissingFlags(t *testing.T) {
+	// Without -config/-blob/-out, runDownload returns exitUsage (2).
 	var stdout, stderr strings.Builder
 	code := run([]string{"download"}, &stdout, &stderr)
-	if code != exitRuntime {
-		t.Errorf("expected exit 1, got %d", code)
+	if code != exitUsage {
+		t.Errorf("expected exit 2 (missing required flags), got %d", code)
 	}
-	if !strings.Contains(stderr.String(), "not implemented") {
-		t.Errorf("expected 'not implemented', got: %s", stderr.String())
+	if !strings.Contains(stderr.String(), "missing required flag") {
+		t.Errorf("expected missing flag message, got: %s", stderr.String())
 	}
 }
 

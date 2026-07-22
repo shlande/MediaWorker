@@ -686,6 +686,18 @@ func New(ctx context.Context, cfg *config.Config, opts Options) (*App, error) {
 }
 
 // ---------------------------------------------------------------------------
+// FetchBlob — production router path for blob downloads
+// ---------------------------------------------------------------------------
+
+// FetchBlob routes a blob download request through the EdgeRouter, which
+// handles hash-ring routing, proxy fallback, and the backhaul pipeline (cache →
+// ICP → L4 stream). This is the canonical path used by mwcli download and is
+// exported so integration tests can exercise the full stack without shelling out.
+func (a *App) FetchBlob(ctx context.Context, w io.Writer, blobHash string) error {
+	return a.Router.HandleBlobRequest(ctx, w, blobHash)
+}
+
+// ---------------------------------------------------------------------------
 // Close* — teardown in original main.go shutdown order
 // ---------------------------------------------------------------------------
 

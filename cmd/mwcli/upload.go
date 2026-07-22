@@ -3,7 +3,6 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -163,7 +162,3 @@ Optional flags:
 	fmt.Fprintf(stdout, "content_id: %s\nblob_hash: %s\n", result.ContentID, blobHash)
 	return exitSuccess
 }
-
-// Ensure stdlib-only — compilation will fail if any third-party import creeps
-// in.
-var _ = errors.New
