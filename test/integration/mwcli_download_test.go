@@ -61,12 +61,12 @@ func minCliConfig(t *testing.T) *config.Config {
 			},
 			Libp2p: config.Libp2pConfig{
 				Listen: []string{"/ip4/127.0.0.1/tcp/0"},
-			DHT: config.DHTConfig{
-				Mode:           "client",
-				Namespace:      "test",
-				AdvertiseTTL:   "2m",
-				AdvertiseInterval: "30s",
-			},
+				DHT: config.DHTConfig{
+					Mode:              "client",
+					Namespace:         "test",
+					AdvertiseTTL:      "2m",
+					AdvertiseInterval: "30s",
+				},
 				PeerStore: config.PeerStoreConfig{Path: filepath.Join(td, "peerstore.db")},
 			},
 			JWTService: config.JWTServiceConfig{
@@ -273,15 +273,3 @@ func TestMwcliDownload_NoPeerWaitTimeout(t *testing.T) {
 	}
 	t.Logf("no-peer error (expected): %v", err)
 }
-
-// ═══════════════════════════════════════════════════════════════════════════
-// Test: runDownload with missing CONTROL_PLANE_PUBKEY env → exit 1
-// ═══════════════════════════════════════════════════════════════════════════
-//
-// This is defined in the integration_test package but tests the CLI-level
-// exit code. Since runDownload is unexported, we test the env-check behavior
-// indirectly: we know app.New requires CONTROL_PLANE_PUBKEY, so the test
-// asserts that runDownload exits 1 when the env var is missing. But we
-// cannot call runDownload from integration_test. Instead, we test the
-// app.New side directly — it's already covered by isolation_test and the
-// env-check is one line in download.go. We skip a separate test for it.

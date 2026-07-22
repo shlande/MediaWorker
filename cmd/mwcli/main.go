@@ -11,7 +11,7 @@
 //	mwcli upload  -addr <url> -type <image|dash_video> -file <path> [-content-id <id>] [-metadata <json>]
 //	mwcli download -config <yaml> -blob <sha256:hex> -out <path> [-wait-timeout 60s] [-req-timeout 120s]
 //
-// Exit codes: 0 = success, 1 = runtime/API error, 2 = usage error, 3 = hash mismatch.
+// Exit codes: 0 = success, 1 = runtime/API error, 2 = usage error or no usable peer discovered, 3 = hash mismatch.
 package main
 
 import (

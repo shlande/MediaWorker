@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	blobHashRx     = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	blobHashRx      = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 	errHashMismatch = errors.New("hash mismatch")
 )
 

@@ -104,8 +104,8 @@ func TestL4Backhaul_EndToEnd(t *testing.T) {
 	_ = nl4PS.Put(
 		peerstore.PeerIdFromPeerID(l4Host.ID()),
 		types.PeerStoreEntry{
-			PeerID:  peerstore.PeerIdFromPeerID(l4Host.ID()),
-			Addrs:   l4Addrs,
+			PeerID: peerstore.PeerIdFromPeerID(l4Host.ID()),
+			Addrs:  l4Addrs,
 			Capabilities: types.NodeCapabilities{
 				L4Backhaul: true,
 				PeerICP:    true,

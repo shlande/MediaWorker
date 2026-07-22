@@ -116,7 +116,7 @@ type App struct {
 // New assembles the full edge-node stack. ctx governs the lifetime of
 // background goroutines (JWT refresh, DHT advertise, gossipsub, reporter,
 // popularity loops) — the caller should cancel ctx at shutdown.
-func New(ctx context.Context, cfg *config.Config, opts Options) (*App, error) {
+func New(ctx context.Context, cfg *config.Config, opts Options) (app *App, err error) {
 	startedAt := time.Now()
 	logger := opts.Logger
 	if logger == nil {
@@ -145,9 +145,7 @@ func New(ctx context.Context, cfg *config.Config, opts Options) (*App, error) {
 	if err := ps.Restore(); err != nil {
 		return nil, fmt.Errorf("restore peerstore: %w", err)
 	}
-	gcCtx, gcCancel := context.WithCancel(context.Background())
-	defer gcCancel()
-	ps.StartValueLogGC(gcCtx, cfg.Node.Libp2p.PeerStore.ParsedGCInterval)
+	ps.StartValueLogGC(ctx, cfg.Node.Libp2p.PeerStore.ParsedGCInterval)
 	logger.Info("peerstore restored",
 		"path", cfg.Node.Libp2p.PeerStore.Path,
 		"gc_interval", cfg.Node.Libp2p.PeerStore.ParsedGCInterval.String(),
@@ -231,6 +229,29 @@ func New(ctx context.Context, cfg *config.Config, opts Options) (*App, error) {
 		"addrs", logAddrs(h),
 		"nat_explicit", natOpts.Explicit,
 	)
+
+	// Deferred cleanup: on any error return after the host exists, close
+	// the host, peerstore, and pinstore (if constructed) in reverse order.
+	var pinStore *pinstore.PinStore
+	defer func() {
+		if err != nil {
+			if pinStore != nil {
+				if cerr := pinStore.Close(); cerr != nil {
+					logger.Error("pin store close during error cleanup", "err", cerr)
+				}
+			}
+			if ps != nil {
+				if cerr := ps.Close(); cerr != nil {
+					logger.Error("peerstore close during error cleanup", "err", cerr)
+				}
+			}
+			if h != nil {
+				if cerr := h.Close(); cerr != nil {
+					logger.Error("libp2p host close during error cleanup", "err", cerr)
+				}
+			}
+		}
+	}()
 
 	// -------------------------------------------------------------------
 	// 9. Auth stream handler (/edge/auth/1.0.0)
@@ -465,7 +486,6 @@ func New(ctx context.Context, cfg *config.Config, opts Options) (*App, error) {
 	// -------------------------------------------------------------------
 	// 17d. Pin store
 	// -------------------------------------------------------------------
-	var pinStore *pinstore.PinStore
 	if cfg.Edge.PrefixCache.Enabled {
 		var warmGet func(string) ([]byte, bool)
 		if warmCache != nil {
@@ -534,15 +554,15 @@ func New(ctx context.Context, cfg *config.Config, opts Options) (*App, error) {
 	} else {
 		collectReport := func() types.NodeStatusReport {
 			report := types.NodeStatusReport{
-				NodeID: h.ID().String(),
-				PeerID: nodeIdentity.PeerID,
+				NodeID:       h.ID().String(),
+				PeerID:       nodeIdentity.PeerID,
 				Capabilities: capabilities,
-				LastUpdate: time.Now().Unix(),
-				Region:     cfg.Node.Region,
-				Version:    opts.BuildVersion,
-				StartedAt:  startedAt.Unix(),
-				ConnCount:  len(h.Network().Conns()),
-				ColdSpace:  nil,
+				LastUpdate:   time.Now().Unix(),
+				Region:       cfg.Node.Region,
+				Version:      opts.BuildVersion,
+				StartedAt:    startedAt.Unix(),
+				ConnCount:    len(h.Network().Conns()),
+				ColdSpace:    nil,
 			}
 			if jwtClient != nil {
 				report.Healthy = !jwtClient.IsDegraded()
