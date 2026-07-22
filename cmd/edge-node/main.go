@@ -61,6 +61,7 @@ import (
 	"github.com/shlande/mediaworker/internal/node/hashring"
 	"github.com/shlande/mediaworker/internal/node/icp"
 	nodejwt "github.com/shlande/mediaworker/internal/node/jwt"
+	"github.com/shlande/mediaworker/internal/node/l4fetch"
 	"github.com/shlande/mediaworker/internal/node/libp2phost"
 	"github.com/shlande/mediaworker/internal/node/netstats"
 	"github.com/shlande/mediaworker/internal/node/peerstore"
@@ -477,15 +478,24 @@ func main() {
 
 	default:
 		// Non-L4 edge node: no data plane. HandleBlobNoL4 uses cache → ICP →
-		// L4 stream fallback.
-		// l4Fetcher is nil for now — L4 stream protocol not yet defined.
+		// L4 stream fallback via l4fetch.Fetcher (peered with L4-capable nodes).
 		backhaulMgr = backhaul.NewBackhaulManager(
 			backhaulWarmCache{warmCache},
 			nil, // dataPlane — disabled
 			backhaulICPFetcher{h: h, ring: ring, self: nodeIdentity.PeerID},
-			nil, // l4Fetcher — not yet implemented
+			l4fetch.NewFetcher(h, ps),
 		)
-		logger.Info("backhaul manager created (edge mode, no L4)")
+		logger.Info("backhaul manager created (edge mode, L4 stream fallback wired)")
+	}
+
+	// T21 — L4 stream protocol handler: register on L4 nodes so non-L4 peers
+	// can pull blobs via /edge/l4/get/1.0.0. Non-L4 nodes already have the
+	// client-side Fetcher wired above (via NewFetcher).
+	if cfg.Access.DataPlane.Enabled {
+		l4fetch.RegisterHandler(h, func(ctx context.Context, w io.Writer, hash string) error {
+			return backhaulMgr.HandleBlobL4(ctx, w, hash)
+		})
+		logger.Info("L4 stream protocol handler registered", "proto", l4fetch.L4GetProtocol)
 	}
 
 	// T20 — wire the metrics instance into the backhaul manager so
