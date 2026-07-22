@@ -101,13 +101,15 @@ func newTestIdentity(t *testing.T) *sharedid.NodeIdentity {
 }
 
 // testJWTService creates a JWTService for signing test JWTs.
+// Uses a 1ms rate-limit interval so multiple JWTs can be signed from the
+// same IP in a single test run.
 func testJWTService(t *testing.T) (*cpjwt.JWTService, ed25519.PublicKey) {
 	t.Helper()
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("generate control-plane key: %v", err)
 	}
-	svc := cpjwt.NewJWTService(priv, cpjwt.NewPeerIdSet(), cpjwt.NewRateLimiter(60*time.Minute),
+	svc := cpjwt.NewJWTService(priv, cpjwt.NewPeerIdSet(), cpjwt.NewRateLimiter(1*time.Millisecond),
 		cpjwt.NewAuditLog(nil), config.JWTPolicyConfig{})
 	return svc, pub
 }

@@ -40,6 +40,7 @@ import (
 	"net/netip"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -304,6 +305,36 @@ func main() {
 		refreshDurations,
 		logger,
 		metrics)
+
+	// -------------------------------------------------------------------
+	// 11c. On-peer-connected auth exchange. When two peers connect, each
+	// side fires PresentAuth so both peerstores gain peer capabilities.
+	// Debounce: one PresentAuth per peer per 60s minimum interval.
+	// TODO: When JWT is refreshed, push the new JWT to connected peers
+	// (PushJWT broadcast) — out of scope for this wave.
+	// -------------------------------------------------------------------
+	var authDebounce sync.Map
+	libp2phost.SetOnPeerConnectedCallback(h, func(_ peer.ID, remote peer.ID) {
+		jwt := jwtClient.CurrentJWT()
+		if jwt == "" {
+			return
+		}
+		now := time.Now()
+		if last, ok := authDebounce.Load(remote); ok {
+			if now.Sub(last.(time.Time)) < 60*time.Second {
+				return
+			}
+		}
+		authDebounce.Store(remote, now)
+		go func() {
+			ctx, cancel := context.WithTimeout(rootCtx, 5*time.Second)
+			defer cancel()
+			if err := libp2phost.PresentAuth(ctx, h, remote, jwt); err != nil {
+				logger.Debug("on-peer-connected PresentAuth failed", "peer", remote.ShortString(), "err", err)
+				authDebounce.Delete(remote)
+			}
+		}()
+	})
 
 	// -------------------------------------------------------------------
 	// 12. JWT refresh push handler (/edge/jwt-refresh/1.0.0)

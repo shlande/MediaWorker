@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/libp2p/go-libp2p"
 	"github.com/libp2p/go-libp2p/core/connmgr"
@@ -201,26 +202,80 @@ func peerSourceFunc(_ context.Context, _ int) <-chan peer.AddrInfo {
 	return ch
 }
 
+// OnPeerConnectedCallback is the signature for peer-connected hooks.
+// local is the peer ID of the host that fired the event; remote is the
+// connected peer. The callback MUST NOT block — the caller should launch
+// its own goroutine when the hook requires I/O or significant work.
+type OnPeerConnectedCallback func(local peer.ID, remote peer.ID)
+
+// connNotifeeRegistry maps host peer IDs to their connNotifee instances.
+// Per-host keying avoids cross-app contamination: when two node apps run in
+// one process (e.g. integration tests), each calls SetOnPeerConnectedCallback
+// with its OWN host handle and callback; the setter only targets that host's
+// notifee.
+var (
+	connNotifeeRegistryMu sync.Mutex
+	connNotifeeRegistry   = map[peer.ID]*connNotifee{}
+)
+
+// SetOnPeerConnectedCallback registers cb to be invoked on every Connected
+// event for the given host. Only the notifee belonging to h is affected;
+// other hosts in the same process are untouched. If h was not created by
+// NewEdgeHost* (not in the registry), the call is silently ignored. cb must
+// be safe to invoke from any goroutine.
+func SetOnPeerConnectedCallback(h host.Host, cb OnPeerConnectedCallback) {
+	connNotifeeRegistryMu.Lock()
+	defer connNotifeeRegistryMu.Unlock()
+	if n, ok := connNotifeeRegistry[h.ID()]; ok {
+		n.setCallback(cb)
+	} else {
+		slog.Default().Debug("SetOnPeerConnectedCallback: host not in registry (not created by NewEdgeHost*)",
+			"host", h.ID().ShortString())
+	}
+}
+
 // registerConnNotifee wires a network.Notifee that logs peer connect/disconnect
 // events at Info level. This is the primary signal for diagnosing peer mesh
 // formation — when two edge nodes discover each other via DHT, a Connected
 // event fires here.
 func registerConnNotifee(h host.Host) {
 	logger := slog.Default().With("component", "libp2p_host", "self", h.ID().ShortString())
-	h.Network().Notify(&connNotifee{logger: logger})
+	n := &connNotifee{logger: logger}
+	h.Network().Notify(n)
+
+	connNotifeeRegistryMu.Lock()
+	connNotifeeRegistry[h.ID()] = n
+	connNotifeeRegistryMu.Unlock()
 }
 
 type connNotifee struct {
 	logger *slog.Logger
+
+	mu       sync.RWMutex
+	onPeerCB OnPeerConnectedCallback
+}
+
+func (n *connNotifee) setCallback(cb OnPeerConnectedCallback) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.onPeerCB = cb
 }
 
 func (n *connNotifee) Connected(_ network.Network, conn network.Conn) {
 	remote := conn.RemotePeer()
+	local := conn.LocalPeer()
 	dir := "inbound"
 	if conn.Stat().Direction == network.DirOutbound {
 		dir = "outbound"
 	}
 	n.logger.Info("peer connected", "peer", remote.ShortString(), "direction", dir)
+
+	n.mu.RLock()
+	cb := n.onPeerCB
+	n.mu.RUnlock()
+	if cb != nil {
+		cb(local, remote)
+	}
 }
 
 func (n *connNotifee) Disconnected(_ network.Network, conn network.Conn) {
