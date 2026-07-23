@@ -9,9 +9,11 @@ import (
 	"net/http"
 
 	"github.com/libp2p/go-libp2p/core/host"
+	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
 
+	"github.com/shlande/mediaworker/internal/node/dialassist"
 	"github.com/shlande/mediaworker/internal/types"
 )
 
@@ -52,6 +54,7 @@ type EdgeRouter struct {
 	isL4        bool
 	host        host.Host
 	prefixCache PrefixCache
+	addrSrc     dialassist.AddrSource
 }
 
 // NewEdgeRouter creates an EdgeRouter wired to a hash ring, backhaul
@@ -62,6 +65,7 @@ func NewEdgeRouter(
 	self types.PeerId,
 	isL4 bool,
 	h host.Host,
+	addrSrc dialassist.AddrSource,
 ) *EdgeRouter {
 	return &EdgeRouter{
 		hashRing: ring,
@@ -69,6 +73,7 @@ func NewEdgeRouter(
 		selfPeer: self,
 		isL4:     isL4,
 		host:     h,
+		addrSrc:  addrSrc,
 	}
 }
 
@@ -118,14 +123,20 @@ func (er *EdgeRouter) serveAsPrimary(ctx context.Context, w io.Writer, blobHash 
 }
 
 // proxyToPeer opens a libp2p stream to the target peer, sends the blob
-// hash, and pipes the response back to the writer. This is used when the
-// current node is not primary for the requested blob.
+// hash, and pipes the response back to the writer.
+//
+// On dial failure, the libp2p peerstore is reseeded from the persistent
+// AddrSource and retried once.
 func (er *EdgeRouter) proxyToPeer(ctx context.Context, w io.Writer, targetPeer peer.ID, blobHash string) error {
 	if er.host == nil {
 		return fmt.Errorf("no libp2p host for proxy to %s", targetPeer.ShortString())
 	}
 
-	s, err := er.host.NewStream(ctx, targetPeer, blobGetProtoID)
+	s, err := dialassist.ReseedAndRetry(ctx, er.host, targetPeer, er.addrSrc,
+		func(dialCtx context.Context) (network.Stream, error) {
+			return er.host.NewStream(dialCtx, targetPeer, blobGetProtoID)
+		},
+	)
 	if err != nil {
 		return fmt.Errorf("open stream to %s: %w", targetPeer.ShortString(), err)
 	}

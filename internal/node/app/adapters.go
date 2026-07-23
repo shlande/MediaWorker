@@ -9,12 +9,14 @@ import (
 	"crypto/ed25519"
 	"fmt"
 	"io"
+	"time"
 
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/shlande/mediaworker/internal/node/backhaul"
 	"github.com/shlande/mediaworker/internal/node/cache"
+	"github.com/shlande/mediaworker/internal/node/dialassist"
 	"github.com/shlande/mediaworker/internal/node/gossippop"
 	"github.com/shlande/mediaworker/internal/node/hashring"
 	"github.com/shlande/mediaworker/internal/node/icp"
@@ -192,29 +194,74 @@ func (c backhaulWarmCache) Put(blobHash string, data []byte, bitrate int) error 
 //     (single ICP request, no retry storm per plan line 203) and return
 //     its (io.ReadCloser, bool, error) as-is.
 type backhaulICPFetcher struct {
-	h    host.Host
-	ring *hashring.HashRing
-	self types.PeerId
+	h       host.Host
+	ring    *hashring.HashRing
+	self    types.PeerId
+	addrSrc dialassist.AddrSource
 }
 
 var _ backhaul.ICPFetcher = backhaulICPFetcher{}
 
 func (f backhaulICPFetcher) FetchFromPeer(ctx context.Context, blobHash string) (interface{}, bool, error) {
 	if f.ring == nil {
-		// Ring not wired — preserve legacy stub behaviour: fall back to local.
 		return nil, false, nil
 	}
 	target := f.ring.Get(blobHash)
 	if target == "" || target == f.self {
 		return nil, false, nil
 	}
-	// types.PeerId is the base58-encoded string form; peer.Decode reverses
-	// the encoding to recover the raw-multihash peer.ID that libp2p APIs
-	// expect. A plain peer.ID(target) cast would treat the ASCII bytes of
-	// the base58 string as the peer ID and produce a different identity.
 	targetID, err := peer.Decode(string(target))
 	if err != nil {
 		return nil, false, fmt.Errorf("backhaul icp: decode target peer %q: %w", target, err)
 	}
-	return icp.FetchFromPeer(ctx, f.h, targetID, blobHash)
+
+	has, headErr := f.fetchHeadWithReseed(ctx, targetID, blobHash)
+	if headErr != nil {
+		return nil, false, fmt.Errorf("backhaul icp: head probe to %s: %w", targetID, headErr)
+	}
+	if !has {
+		return nil, false, nil
+	}
+
+	stream, getErr := f.fetchGetWithReseed(ctx, targetID, blobHash)
+	if getErr != nil {
+		return nil, false, fmt.Errorf("backhaul icp: get fetch from %s: %w", targetID, getErr)
+	}
+	return stream, true, nil
+}
+
+func (f backhaulICPFetcher) fetchHeadWithReseed(ctx context.Context, pid peer.ID, blobHash string) (bool, error) {
+	has, err := icp.FetchFromPeerHead(ctx, f.h, pid, blobHash)
+	if err == nil {
+		return has, nil
+	}
+
+	if f.addrSrc == nil {
+		return false, err
+	}
+	if addrs, ok := f.addrSrc.AddrsOf(pid); ok && len(addrs) > 0 {
+		if mas := dialassist.ParseAddrs(addrs); len(mas) > 0 {
+			f.h.Peerstore().AddAddrs(pid, mas, 10*time.Minute)
+			return icp.FetchFromPeerHead(ctx, f.h, pid, blobHash)
+		}
+	}
+	return false, err
+}
+
+func (f backhaulICPFetcher) fetchGetWithReseed(ctx context.Context, pid peer.ID, blobHash string) (io.ReadCloser, error) {
+	rc, err := icp.FetchFromPeerGet(ctx, f.h, pid, blobHash)
+	if err == nil {
+		return rc, nil
+	}
+
+	if f.addrSrc == nil {
+		return nil, err
+	}
+	if addrs, ok := f.addrSrc.AddrsOf(pid); ok && len(addrs) > 0 {
+		if mas := dialassist.ParseAddrs(addrs); len(mas) > 0 {
+			f.h.Peerstore().AddAddrs(pid, mas, 10*time.Minute)
+			return icp.FetchFromPeerGet(ctx, f.h, pid, blobHash)
+		}
+	}
+	return nil, err
 }

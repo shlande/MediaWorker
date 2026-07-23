@@ -129,6 +129,16 @@ func (s *PeerEntryStore) Has(peerID types.PeerId) bool {
 	return ok
 }
 
+// AddrsOf returns the stored multiaddr strings for the given libp2p peer ID.
+// It implements dialassist.AddrSource for dial-retry reseed operations.
+func (s *PeerEntryStore) AddrsOf(pid peer.ID) ([]string, bool) {
+	entry, ok := s.Get(types.PeerId(pid.String()))
+	if !ok {
+		return nil, false
+	}
+	return entry.Addrs, true
+}
+
 // Delete removes an entry from BadgerDB and the in-memory index.
 func (s *PeerEntryStore) Delete(peerID types.PeerId) error {
 	key := makeKey(peerID)

@@ -133,7 +133,7 @@ func TestL4Backhaul_EndToEnd(t *testing.T) {
 		nl4Cache,
 		nil, // dataPlane — disabled
 		nil, // icpFetcher — no sibling ICP
-		l4fetch.NewFetcher(nl4Host, nl4PS),
+		l4fetch.NewFetcher(nl4Host, nl4PS, nil),
 	)
 
 	// ── ACT: non-L4 node fetches blob via HandleBlobNoL4 ─────────────────
@@ -185,7 +185,7 @@ func TestL4Backhaul_NoL4Candidate(t *testing.T) {
 		nl4Cache,
 		nil, // dataPlane
 		nil, // icpFetcher
-		l4fetch.NewFetcher(nl4Host, nl4PS),
+		l4fetch.NewFetcher(nl4Host, nl4PS, nil),
 	)
 
 	var buf bytes.Buffer

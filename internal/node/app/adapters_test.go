@@ -166,7 +166,7 @@ func TestBackhaulICPFetcher_SiblingHit(t *testing.T) {
 	icp.RegisterHandlers(hostB, storeB)
 
 	warmA := tempWarmCache(t)
-	fetcher := backhaulICPFetcher{h: hostA, ring: ring, self: pidA}
+	fetcher := backhaulICPFetcher{h: hostA, ring: ring, self: pidA, addrSrc: nil}
 	bm := backhaul.NewBackhaulManager(
 		backhaulWarmCache{warmA},
 		nil, // no data plane
@@ -207,7 +207,7 @@ func TestBackhaulICPFetcher_EmptyRingFallsBackLocal(t *testing.T) {
 		t.Fatalf("expected empty ring to return \"\", got %q", got)
 	}
 
-	fetcher := backhaulICPFetcher{h: hostA, ring: ring, self: pidA}
+	fetcher := backhaulICPFetcher{h: hostA, ring: ring, self: pidA, addrSrc: nil}
 
 	reader, ok, err := fetcher.FetchFromPeer(context.Background(), "any-blob")
 	if err != nil {
@@ -243,7 +243,7 @@ func TestBackhaulICPFetcher_SelfTargetSkipsNetwork(t *testing.T) {
 	// Use a host that has NO ICP handlers registered. If the fetcher were to
 	// accidentally open a stream to itself, the stream would error. We assert
 	// no error and (nil, false, nil) — i.e. no stream was opened.
-	fetcher := backhaulICPFetcher{h: hostA, ring: ring, self: pidA}
+	fetcher := backhaulICPFetcher{h: hostA, ring: ring, self: pidA, addrSrc: nil}
 
 	reader, ok, err := fetcher.FetchFromPeer(context.Background(), blobHash)
 	if err != nil {

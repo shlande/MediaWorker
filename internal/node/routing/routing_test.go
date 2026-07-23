@@ -250,7 +250,7 @@ func TestEdgeRouter_IsPrimary(t *testing.T) {
 		selfPeer: self,
 	}
 	bh := &mockBackhaul{}
-	er := NewEdgeRouter(ring, bh, self, false, nil)
+	er := NewEdgeRouter(ring, bh, self, false, nil, nil)
 
 	// Given blob-abc primary is self
 	// When checking isPrimaryNode("blob-abc")
@@ -269,7 +269,7 @@ func TestEdgeRouter_ServeAsPrimary_L4(t *testing.T) {
 	self := types.PeerId("self-peer")
 	ring := &mockPrimaryChecker{isPrimary: true, selfPeer: self}
 	bh := &mockBackhaul{l4Data: []byte("from L4 data plane")}
-	er := NewEdgeRouter(ring, bh, self, true, nil)
+	er := NewEdgeRouter(ring, bh, self, true, nil, nil)
 
 	// Given a primary node with L4 capability
 	// When handling a blob request
@@ -295,7 +295,7 @@ func TestEdgeRouter_ServeAsPrimary_NoL4(t *testing.T) {
 	self := types.PeerId("self-peer")
 	ring := &mockPrimaryChecker{isPrimary: true, selfPeer: self}
 	bh := &mockBackhaul{noL4Data: []byte("from L4 peer proxy")}
-	er := NewEdgeRouter(ring, bh, self, false, nil)
+	er := NewEdgeRouter(ring, bh, self, false, nil, nil)
 
 	// Given a primary node without L4 capability
 	// When handling a blob request
@@ -321,7 +321,7 @@ func TestEdgeRouter_HandlePrefixPull(t *testing.T) {
 	self := types.PeerId("self-peer")
 	ring := &mockPrimaryChecker{isPrimary: true, selfPeer: self}
 	bh := &mockBackhaul{}
-	er := NewEdgeRouter(ring, bh, self, false, nil)
+	er := NewEdgeRouter(ring, bh, self, false, nil, nil)
 	cache := newMockPrefixCache()
 	cache.store["prefix-001"] = []byte("prefix blob data")
 	er.SetPrefixCache(cache)
@@ -344,7 +344,7 @@ func TestEdgeRouter_HandlePrefixPull_Miss(t *testing.T) {
 	self := types.PeerId("self-peer")
 	ring := &mockPrimaryChecker{isPrimary: true, selfPeer: self}
 	bh := &mockBackhaul{}
-	er := NewEdgeRouter(ring, bh, self, false, nil)
+	er := NewEdgeRouter(ring, bh, self, false, nil, nil)
 	cache := newMockPrefixCache()
 	er.SetPrefixCache(cache)
 
@@ -454,7 +454,7 @@ func TestEdgeRouter_ProxyToPeer(t *testing.T) {
 		selfPeer: self,
 	}
 	bh := &mockBackhaul{}
-	er := NewEdgeRouter(ring, bh, self, false, h2)
+	er := NewEdgeRouter(ring, bh, self, false, h2, nil)
 
 	// Verify h2 knows h1's addresses for dialing.
 	cachedAddrs := h2.Peerstore().Addrs(h1.ID())
@@ -504,7 +504,7 @@ func TestEdgeRouter_ProxyFallbackToLocal(t *testing.T) {
 	// Local backhaul has the bytes — fallback path must serve them.
 	localPayload := []byte("served from local fallback path")
 	bh := &mockBackhaul{noL4Data: localPayload}
-	er := NewEdgeRouter(ring, bh, self, false, h2)
+	er := NewEdgeRouter(ring, bh, self, false, h2, nil)
 
 	// Capture slog.Warn output to verify the warn was emitted.
 	var logBuf bytes.Buffer
@@ -535,5 +535,74 @@ func TestEdgeRouter_ProxyFallbackToLocal(t *testing.T) {
 	}
 	if !strings.Contains(logOut, "blob-fallback") {
 		t.Errorf("expected warn log to include blobHash, got: %q", logOut)
+	}
+}
+
+// ─── Proxy reseed test ────────────────────────────────────────────
+
+// fakeAddrSource implements dialassist.AddrSource for routing reseed tests.
+type fakeAddrSource struct {
+	addrs map[peer.ID][]string
+}
+
+func (s *fakeAddrSource) AddrsOf(pid peer.ID) ([]string, bool) {
+	addrs, ok := s.addrs[pid]
+	return addrs, ok
+}
+
+func TestEdgeRouter_ProxyToPeer_ReseedFromStore(t *testing.T) {
+	// Given: two hosts (h1 primary, h2 non-primary). h2's libp2p peerstore
+	// has NO addrs for h1. Our fake AddrSource has h1's real addrs.
+	psk := genTestPSK(t)
+
+	h1 := genTestHost(t, psk)
+	store := &memoryBlobStore{blobs: map[string][]byte{
+		"blob-reseed": []byte("reseed proxy works"),
+	}}
+	icp.RegisterHandlers(h1, store)
+
+	h2 := genTestHost(t, psk)
+
+	// Build the AddrSource with h1's real addrs.
+	addrStrs := make([]string, len(h1.Addrs()))
+	for i, a := range h1.Addrs() {
+		addrStrs[i] = a.String()
+	}
+	addrSrc := &fakeAddrSource{addrs: map[peer.ID][]string{h1.ID(): addrStrs}}
+
+	// Confirm precondition: h2 has zero addrs for h1.
+	if len(h2.Peerstore().Addrs(h1.ID())) > 0 {
+		t.Fatal("precondition: h2 peerstore should be empty for h1 before reseed test")
+	}
+
+	self := types.PeerId(h2.ID())
+	primary := types.PeerId(h1.ID())
+	ring := &mockPrimaryChecker{
+		primaries: map[string]types.PeerId{
+			"blob-reseed": primary,
+		},
+		selfPeer: self,
+	}
+	bh := &mockBackhaul{}
+	er := NewEdgeRouter(ring, bh, self, false, h2, addrSrc)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	// When: h2 proxies to h1 — first dial fails (no addrs), reseed happens, retry succeeds.
+	var buf bytes.Buffer
+	err := er.HandleBlobRequest(ctx, &buf, "blob-reseed")
+
+	// Then: data arrives from h1 via the reseed+retry proxy path.
+	if err != nil {
+		t.Fatalf("unexpected error after reseed proxy: %v", err)
+	}
+	if buf.String() != "reseed proxy works" {
+		t.Errorf("expected 'reseed proxy works', got %q", buf.String())
+	}
+
+	// And: h2's peerstore now has h1's addrs (proof reseed happened).
+	if len(h2.Peerstore().Addrs(h1.ID())) == 0 {
+		t.Error("after reseed, h2 peerstore should have addrs for h1")
 	}
 }
