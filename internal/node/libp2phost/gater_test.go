@@ -530,3 +530,110 @@ func TestAuthProtocol(t *testing.T) {
 		t.Error("entry JWT should match presented JWT")
 	}
 }
+
+// TestAuthProtocol_PreservesAddrsAndScore verifies that HandleAuth merges
+// Addrs and Score from a pre-existing discovery-sourced entry instead of
+// clobbering them with zero values.
+//
+// Given: a peerstore entry for h1 with known Addrs and non-zero Score
+// When:  h1 presents Auth to h2 (HandleAuth calls Put with Score=0, Addrs=empty)
+// Then:  the resulting entry has the new JWTExp AND preserved Addrs AND preserved Score
+func TestAuthProtocol_PreservesAddrsAndScore(t *testing.T) {
+	jwtSvc, cpPub := testJWTService(t)
+	verifier := jwt.NewJWTVerifier(cpPub)
+
+	psk := genTestPSK(t)
+
+	id1 := newTestIdentity(t)
+	id2 := newTestIdentity(t)
+
+	store1 := newTestStore(t)
+	gater1 := NewEdgeConnectionGater(store1, verifier, rate.Limit(1000), 1000, nil)
+
+	store2 := newTestStore(t)
+	gater2 := NewEdgeConnectionGater(store2, verifier, rate.Limit(1000), 1000, nil)
+
+	preSeededAddrs := []string{"/ip4/10.1.2.3/tcp/9001", "/ip4/10.1.2.4/tcp/9001"}
+	preSeededScore := float64(42.5)
+
+	// Given: store2 already has a discovery-sourced entry for h1 with Addrs + Score
+	if err := store2.Put(id1.PeerID, types.PeerStoreEntry{
+		PeerID:   id1.PeerID,
+		Addrs:    preSeededAddrs,
+		Score:    preSeededScore,
+		LastSeen: time.Now().Unix() - 60,
+		Stale:    false,
+	}); err != nil {
+		t.Fatalf("pre-seed store2: %v", err)
+	}
+
+	h1, err := NewEdgeHost(id1, []string{"/ip4/127.0.0.1/tcp/0"}, psk, gater1)
+	if err != nil {
+		t.Fatalf("create host1: %v", err)
+	}
+	defer func() { _ = h1.Close() }()
+
+	h2, err := NewEdgeHost(id2, []string{"/ip4/127.0.0.1/tcp/0"}, psk, gater2)
+	if err != nil {
+		t.Fatalf("create host2: %v", err)
+	}
+	defer func() { _ = h2.Close() }()
+
+	authDone := make(chan struct{})
+	h2.SetStreamHandler(AuthProtocol, func(s network.Stream) {
+		defer close(authDone)
+		if err := HandleAuth(s, gater2); err != nil {
+			t.Logf("HandleAuth error: %v", err)
+		}
+	})
+
+	host1JWT := signJWTForPeer(t, jwtSvc, id1.PeerID, id1.PrivKey)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	pi := peer.AddrInfo{ID: h2.ID(), Addrs: h2.Addrs()}
+	if err := h1.Connect(ctx, pi); err != nil {
+		t.Fatalf("connect: %v", err)
+	}
+
+	// When: h1 authenticates to h2
+	if err := PresentAuth(ctx, h1, h2.ID(), host1JWT); err != nil {
+		t.Fatalf("PresentAuth: %v", err)
+	}
+
+	select {
+	case <-authDone:
+	case <-ctx.Done():
+		t.Fatal("timed out waiting for HandleAuth")
+	}
+
+	// Then: entry has new auth data AND preserved Addrs AND preserved Score
+	entry, ok := store2.Get(id1.PeerID)
+	if !ok {
+		t.Fatal("store2 should contain h1's entry after PresentAuth")
+	}
+	if entry.Stale {
+		t.Error("entry should not be stale after successful auth")
+	}
+	if entry.JWT != host1JWT {
+		t.Error("entry JWT should match presented JWT")
+	}
+
+	// Fail-first assertion: Addrs must be preserved (the bug this test catches)
+	if len(entry.Addrs) == 0 {
+		t.Error("Addrs clobbered: pre-seeded Addrs lost after HandleAuth — merge bug")
+	}
+	if len(entry.Addrs) != len(preSeededAddrs) {
+		t.Errorf("Addrs count mismatch: got %d, want %d", len(entry.Addrs), len(preSeededAddrs))
+	}
+	for i, want := range preSeededAddrs {
+		if i >= len(entry.Addrs) || entry.Addrs[i] != want {
+			t.Errorf("Addrs[%d] = %q, want %q", i, entry.Addrs[i], want)
+		}
+	}
+
+	if entry.Score != preSeededScore {
+		t.Errorf("Score clobbered: got %f, want %f (merge bug)", entry.Score, preSeededScore)
+	}
+}

@@ -196,6 +196,19 @@ func HandleAuth(stream network.Stream, gater *EdgeConnectionGater) error {
 		Stale:        false,
 	}
 
+	// Merge Addrs and Score from any existing (discovery-sourced) entry so
+	// auth does not clobber DHT discoverer's pod-IP Addrs or accumulated ICP
+	// scoring. New JWT/Capabilities/JWTExp/LastSeen always win; Stale=false
+	// revives the peer on successful auth.
+	if existing, ok := gater.peerStore.Get(remotePeerID); ok {
+		if len(existing.Addrs) > 0 {
+			entry.Addrs = existing.Addrs
+		}
+		if existing.Score != 0 {
+			entry.Score = existing.Score
+		}
+	}
+
 	if err := gater.peerStore.Put(remotePeerID, entry); err != nil {
 		logger.Debug("auth handler: peerstore put failed", "err", err)
 		return fmt.Errorf("auth handler: put peer store: %w", err)
