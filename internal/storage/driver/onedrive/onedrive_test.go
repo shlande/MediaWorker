@@ -533,7 +533,6 @@ func Test_Put_exactly_4MB_uses_small_path(t *testing.T) {
 	}
 }
 
-// -----------------------------------------------------------------------
 // helpers
 // -----------------------------------------------------------------------
 
@@ -548,5 +547,88 @@ func assertAuth(t *testing.T, r *http.Request) {
 	t.Helper()
 	if ah := r.Header.Get("Authorization"); ah != "Bearer test-token" {
 		t.Errorf("expected Bearer auth, got %q", ah)
+	}
+}
+
+// -----------------------------------------------------------------------
+// Path-style dirID tests (BUG-B)
+// -----------------------------------------------------------------------
+
+func Test_PutSmall_when_dirID_is_root_colon_path_expect_path_style_URL(t *testing.T) {
+	const content = "Hello, path-style!"
+	var urlPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assertAuth(t, r)
+		urlPath = r.URL.Path
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"pc123","name":"test.bin","size":20,"file":{},"fileSystemInfo":{}}`))
+	}))
+	defer server.Close()
+
+	d, ctx := newTestDriver(t, server)
+	fi, err := d.Put(ctx, "root:/mediaworker", "test.bin", strings.NewReader(content), int64(len(content)))
+	if err != nil {
+		t.Fatalf("Put() error: %v", err)
+	}
+	if fi.ID != "pc123" {
+		t.Errorf("expected ID pc123, got %s", fi.ID)
+	}
+	expected := "/v1.0/me/drive/root:/mediaworker/test.bin:/content"
+	if urlPath != expected {
+		t.Errorf("expected URL path %q, got %q", expected, urlPath)
+	}
+}
+
+func Test_PutSmall_when_400_response_expect_error_with_status(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"code":"invalidRequest","message":"Invalid path"}}`))
+	}))
+	defer server.Close()
+
+	d, ctx := newTestDriver(t, server)
+	_, err := d.Put(ctx, "root:/badpath", "test.bin", strings.NewReader("data"), 4)
+	if err == nil {
+		t.Fatal("expected error for 400 response")
+	}
+	errStr := err.Error()
+	if !strings.Contains(errStr, "400") {
+		t.Errorf("error should contain status 400: %v", errStr)
+	}
+	if strings.Contains(errStr, "BanSignalError") {
+		t.Error("400 should NOT be a BanSignalError")
+	}
+}
+
+func Test_PutLarge_when_chunk_upload_returns_500_expect_error(t *testing.T) {
+	const totalSize = uploadChunkSize + 100
+	content := bytes.Repeat([]byte("B"), totalSize)
+
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && strings.Contains(r.URL.Path, "createUploadSession") {
+			assertAuth(t, r)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = fmt.Fprintf(w, `{"uploadUrl":"%s/upload"}`, server.URL)
+			return
+		}
+		if r.URL.Path == "/upload" {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = w.Write([]byte(`{"error":"internal server error"}`))
+			return
+		}
+	}))
+	defer server.Close()
+
+	d, ctx := newTestDriver(t, server)
+	reader := bytes.NewReader(content)
+	_, err := d.Put(ctx, "root", "large-fail.bin", reader, totalSize)
+	if err == nil {
+		t.Fatal("expected error for 500 chunk response")
+	}
+	errStr := err.Error()
+	if !strings.Contains(errStr, "500") {
+		t.Errorf("error should contain status 500: %v", errStr)
 	}
 }

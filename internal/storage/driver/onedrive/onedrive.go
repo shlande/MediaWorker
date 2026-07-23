@@ -124,6 +124,21 @@ type graphCreateUploadSessionResponse struct {
 	UploadURL string `json:"uploadUrl"`
 }
 
+// itemURL builds a Graph API URL for addressing an item by dirID + suffix.
+// "root" or "" → "/root" + suffix
+// "root:<path>" → "/root:<path>" + suffix (path-style addressing)
+// anything else → "/items/<dirID>" + suffix (real item ID)
+func itemURL(baseURL, dirID, suffix string) string {
+	switch {
+	case dirID == "root" || dirID == "":
+		return baseURL + "/root" + suffix
+	case strings.HasPrefix(dirID, "root:"):
+		return baseURL + "/" + dirID + suffix
+	default:
+		return baseURL + "/items/" + dirID + suffix
+	}
+}
+
 // ─── helpers ──────────────────────────────────────────────────────────
 
 func (d *OneDriveDriver) newRequest(ctx context.Context, method, urlStr string, body io.Reader) (*http.Request, error) {
@@ -153,6 +168,11 @@ func (d *OneDriveDriver) do(req *http.Request) (*http.Response, error) {
 			Code: resp.StatusCode,
 			Msg:  "onedrive: api returned " + resp.Status,
 		}
+	}
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		_ = resp.Body.Close()
+		return nil, fmt.Errorf("onedrive: api status %d: %s", resp.StatusCode, string(body))
 	}
 	return resp, nil
 }
@@ -284,7 +304,7 @@ func (d *OneDriveDriver) Put(ctx context.Context, dirID string, name string, rea
 }
 
 func (d *OneDriveDriver) putSmall(ctx context.Context, dirID, name string, reader io.Reader) (*types.FileInfo, error) {
-	urlStr := fmt.Sprintf("%s/items/%s/%s:/content", d.baseURL(), dirID, url.PathEscape(name))
+	urlStr := itemURL(d.baseURL(), dirID, "/"+url.PathEscape(name)+":/content")
 	req, err := d.newRequest(ctx, http.MethodPut, urlStr, reader)
 	if err != nil {
 		return nil, err
@@ -307,7 +327,7 @@ func (d *OneDriveDriver) putSmall(ctx context.Context, dirID, name string, reade
 
 func (d *OneDriveDriver) putLarge(ctx context.Context, dirID, name string, reader io.Reader, size int64) (*types.FileInfo, error) {
 	// Step 1: Create upload session.
-	sessionURL := fmt.Sprintf("%s/items/%s:/%s:/createUploadSession", d.baseURL(), dirID, url.PathEscape(name))
+	sessionURL := itemURL(d.baseURL(), dirID, "/"+url.PathEscape(name)+":/createUploadSession")
 	createBody := bytes.NewReader([]byte(`{}`))
 	req, err := d.newRequest(ctx, http.MethodPost, sessionURL, createBody)
 	if err != nil {
@@ -350,6 +370,11 @@ func (d *OneDriveDriver) putLarge(ctx context.Context, dirID, name string, reade
 		chunkResp, err := d.httpc.Do(chunkReq)
 		if err != nil {
 			return nil, fmt.Errorf("onedrive: chunk upload: %w", err)
+		}
+		if chunkResp.StatusCode != http.StatusOK && chunkResp.StatusCode != http.StatusAccepted && chunkResp.StatusCode != http.StatusCreated {
+			body, _ := io.ReadAll(io.LimitReader(chunkResp.Body, 4096))
+			_ = chunkResp.Body.Close()
+			return nil, fmt.Errorf("onedrive: chunk upload status %d: %s", chunkResp.StatusCode, string(body))
 		}
 
 		// On the last chunk, the server returns the completed file item.
