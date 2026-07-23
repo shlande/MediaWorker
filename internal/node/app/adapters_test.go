@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"testing"
@@ -406,4 +407,119 @@ func TestPopSourceAdapter_EmptySnapshotReturnsEmptySlice(t *testing.T) {
 	if len(got) != 0 {
 		t.Fatalf("expected 0 videos, got %d", len(got))
 	}
+}
+
+// TestIdentifyPersistence_PersistsAddrsAfterConnect verifies the warm-restart
+// fix: after two hosts connect and identify completes, host A's BadgerDB
+// PeerEntryStore has an entry for host B with non-empty Addrs. This covers the
+// root cause where DHT FindPeers returns empty Addrs in this cluster, so
+// PutDiscovery never populates addresses. The identify protocol is the only
+// source of real addresses, and this test proves they are persisted.
+func TestIdentifyPersistence_PersistsAddrsAfterConnect(t *testing.T) {
+	// Given two hosts on the same PSK
+	psk := genPSK(t)
+	hostA, _ := genHost(t, psk)
+	hostB, _ := genHost(t, psk)
+
+	ps := tempPeerStore(t)
+	logger := slog.New(slog.DiscardHandler)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	// Wire identify persistence on host A.
+	subscribeIdentifyPersistence(ctx, hostA, ps, logger)
+
+	// When hosts connect and identify runs
+	connectHosts(t, ctx, hostA, hostB)
+
+	// Then host B's addrs are persisted in BadgerDB
+	bID := peerstore.PeerIdFromPeerID(hostB.ID())
+	var entry types.PeerStoreEntry
+	var found bool
+	for range 50 {
+		entry, found = ps.Get(bID)
+		if found && len(entry.Addrs) > 0 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !found {
+		t.Fatalf("peer store has no entry for B (%s) after identify", bID)
+	}
+	if len(entry.Addrs) == 0 {
+		t.Fatalf("peer store entry for B has empty Addrs after identify")
+	}
+	t.Logf("persisted %d addr(s) for B: %v", len(entry.Addrs), entry.Addrs)
+}
+
+// TestIdentifyPersistence_DurabilityAfterRestart verifies that addresses
+// persisted by the identify subscription survive a PeerEntryStore close/reopen
+// cycle, proving durability for warm-restart scenarios.
+func TestIdentifyPersistence_DurabilityAfterRestart(t *testing.T) {
+	// Given two connected hosts with identify persistence wired
+	psk := genPSK(t)
+	hostA, _ := genHost(t, psk)
+	hostB, _ := genHost(t, psk)
+
+	dir, err := os.MkdirTemp("", "app-identify-dur-*")
+	if err != nil {
+		t.Fatalf("mkdirtemp: %v", err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+
+	ps, err := peerstore.NewPeerEntryStore(dir)
+	if err != nil {
+		t.Fatalf("new peerstore: %v", err)
+	}
+	if err := ps.Restore(); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+
+	logger := slog.New(slog.DiscardHandler)
+
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	subscribeIdentifyPersistence(ctx, hostA, ps, logger)
+
+	// When identify completes and addresses are persisted
+	connectHosts(t, ctx, hostA, hostB)
+
+	bID := peerstore.PeerIdFromPeerID(hostB.ID())
+	var entry types.PeerStoreEntry
+	var found bool
+	for range 50 {
+		entry, found = ps.Get(bID)
+		if found && len(entry.Addrs) > 0 {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	if !found || len(entry.Addrs) == 0 {
+		t.Fatal("peer store did not persist B's addrs before close")
+	}
+
+	// Then close and reopen: addrs survive the restart
+	if err := ps.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	ps2, err := peerstore.NewPeerEntryStore(dir)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer func() { _ = ps2.Close() }()
+	if err := ps2.Restore(); err != nil {
+		t.Fatalf("restore after reopen: %v", err)
+	}
+
+	entry2, found := ps2.Get(bID)
+	if !found {
+		t.Fatalf("peer store lost entry for B after close/reopen cycle")
+	}
+	if len(entry2.Addrs) == 0 {
+		t.Fatalf("peer store entry for B has empty Addrs after close/reopen cycle")
+	}
+	t.Logf("durability OK: %d addr(s) for B survived close/reopen: %v", len(entry2.Addrs), entry2.Addrs)
 }

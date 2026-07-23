@@ -22,6 +22,7 @@ import (
 	"time"
 
 	kaddht "github.com/libp2p/go-libp2p-kad-dht"
+	"github.com/libp2p/go-libp2p/core/event"
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
@@ -269,6 +270,16 @@ func New(ctx context.Context, cfg *config.Config, opts Options) (app *App, err e
 	if err := netstats.Subscribe(ctx, netTracker, h.EventBus()); err != nil {
 		logger.Warn("netstats event-bus subscription failed (reachability stays unknown)", "err", err)
 	}
+
+	// -------------------------------------------------------------------
+	// 10b. Persist peer addresses from identify (warm-restart fix).
+	// DHT rendezvous FindPeers returns empty Addrs in this cluster, so
+	// PutDiscovery never populates BadgerDB addresses. libp2p's in-memory
+	// peerstore has them (populated by identify) but dies with the process.
+	// This subscriber persists addresses from EvtPeerIdentificationCompleted
+	// so warm restarts have addresses to dial.
+	// -------------------------------------------------------------------
+	subscribeIdentifyPersistence(ctx, h, ps, logger)
 
 	// -------------------------------------------------------------------
 	// 10a. Metrics (T20). Constructed once per process.
@@ -766,6 +777,55 @@ func (a *App) CloseHost() error {
 		}
 	}
 	return nil
+}
+
+// ---------------------------------------------------------------------------
+// identify-persistence subscription (warm-restart fix)
+// ---------------------------------------------------------------------------
+
+// subscribeIdentifyPersistence wires the host event bus so that every completed
+// identify round persists the discovered multiaddrs into the BadgerDB
+// PeerEntryStore. DHT FindPeers returns empty Addrs in this cluster, so
+// PutDiscovery never populates addresses; the only authoritative source is the
+// libp2p identify protocol, whose addresses live in the in-memory peerstore
+// (pstoremem) and die at process exit. This subscriber makes them durable so
+// warm restarts (l4fetch reseed, hash ring rebuild) have addresses to dial.
+func subscribeIdentifyPersistence(ctx context.Context, h host.Host, ps *peerstore.PeerEntryStore, logger *slog.Logger) {
+	sub, err := h.EventBus().Subscribe(new(event.EvtPeerIdentificationCompleted))
+	if err != nil {
+		logger.Warn("identify persistence subscription failed (warm restarts may lack addresses)", "err", err)
+		return
+	}
+	go func() {
+		defer func() { _ = sub.Close() }()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ev, ok := <-sub.Out():
+				if !ok {
+					return
+				}
+				e, ok := ev.(event.EvtPeerIdentificationCompleted)
+				if !ok {
+					continue
+				}
+				addrs := h.Peerstore().Addrs(e.Peer)
+				if len(addrs) == 0 {
+					continue
+				}
+				strs := make([]string, len(addrs))
+				for i, a := range addrs {
+					strs[i] = a.String()
+				}
+				if err := ps.PutDiscovery(peerstore.PeerIdFromPeerID(e.Peer), strs); err != nil {
+					logger.Debug("identify persistence put failed", "peer", e.Peer.ShortString(), "err", err)
+					continue
+				}
+				logger.Debug("identify persistence stored addrs", "peer", e.Peer.ShortString(), "n", len(strs))
+			}
+		}
+	}()
 }
 
 // ---------------------------------------------------------------------------
