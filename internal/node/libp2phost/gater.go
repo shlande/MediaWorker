@@ -137,7 +137,7 @@ func (g *EdgeConnectionGater) InterceptUpgraded(conn network.Conn) (bool, contro
 	}
 
 	now := time.Now().Unix()
-	if entry.JWTExp < now {
+	if entry.JWTExp != 0 && entry.JWTExp < now {
 		g.logger.Warn("upgraded rejected: JWT expired, marking peer stale",
 			"peer", p, "jwt_exp", entry.JWTExp, "now", now)
 		_ = g.peerStore.MarkStale(types.PeerId(p.String()), "jwt_expired_intercept_upgraded")

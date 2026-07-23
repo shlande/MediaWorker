@@ -416,6 +416,43 @@ func TestInterceptUpgraded_HealthyPeer(t *testing.T) {
 	}
 }
 
+func TestInterceptUpgraded_when_JWTExp_is_zero_expect_allow(t *testing.T) {
+	gater, store := newTestGater(t)
+
+	id := newTestIdentity(t)
+	pid, err := peer.Decode(string(id.PeerID))
+	if err != nil {
+		t.Fatalf("decode peer ID: %v", err)
+	}
+
+	// Given: discovery-state entry with JWTExp=0 (no JWT yet, not expired)
+	if err := store.Put(id.PeerID, types.PeerStoreEntry{
+		PeerID: id.PeerID,
+		Stale:  false,
+		Score:  0.0,
+		JWTExp: 0,
+	}); err != nil {
+		t.Fatalf("put entry: %v", err)
+	}
+
+	// When: InterceptUpgraded — must NOT reject + NOT mark stale
+	allow, reason := gater.InterceptUpgraded(dummyConn{remotePeer: pid})
+	if !allow {
+		t.Error("peer with JWTExp=0 should be allowed (no JWT yet, not expired)")
+	}
+	if reason != 0 {
+		t.Errorf("reason should be 0, got %d", reason)
+	}
+
+	entry, ok := store.Get(id.PeerID)
+	if !ok {
+		t.Fatal("entry should still exist")
+	}
+	if entry.Stale {
+		t.Error("JWTExp=0 peer must NOT be marked stale")
+	}
+}
+
 // ─── Auth protocol ──────────────────────────────────────────────────────────
 
 func TestAuthProtocol(t *testing.T) {
