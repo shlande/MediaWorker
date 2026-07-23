@@ -325,16 +325,16 @@ func run(configPath string) error {
 			// propagate into the quota allocator. The wrapper decorates the
 			// registry without touching handler logic.
 			accountsWriter := quotaAwareAccountsWriter{AdminAccountsWriter: registry, qa: qa}
-			adminapi.RegisterAccountsRoutes(adminSrv, mc, mc, accountsWriter, sb, auditRec)      // todos 20/26/27/37
-			adminapi.RegisterPinRoutes(adminSrv, mc, nodeReg, po, auditRec)                      // todo 29
-			adminapi.RegisterContentsRoutes(adminSrv, struct {                                   // todos 28/30
+			adminapi.RegisterAccountsRoutes(adminSrv, mc, mc, accountsWriter, sb, auditRec) // todos 20/26/27/37
+			adminapi.RegisterPinRoutes(adminSrv, mc, nodeReg, po, auditRec)                 // todo 29
+			adminapi.RegisterContentsRoutes(adminSrv, struct {                              // todos 28/30
 				adminapi.ContentsListReader
 				adminapi.ContentsDetailReader
 				adminapi.ContentMetaReader
 			}{mc, mc, mc}, dispatchLog, mc, auditRec)
-			adminapi.RegisterAlertsRoutes(adminSrv, mc, cfg.AdminAPI.AlertWebhookToken)          // todo 51
+			adminapi.RegisterAlertsRoutes(adminSrv, mc, cfg.AdminAPI.AlertWebhookToken)                                 // todo 51
 			adminapi.RegisterAccountTestRoutes(adminSrv, accounttester.NewTester(registry, adminapi.ValidateAuth, nil)) // todo 57
-			adminapi.RegisterOverviewRoutes(adminSrv, adminapi.OverviewDeps{ // todo 52
+			adminapi.RegisterOverviewRoutes(adminSrv, adminapi.OverviewDeps{                                            // todo 52
 				Prom:     adminapi.NewPromClient(cfg.AdminAPI.PrometheusURL),
 				Metadata: mc,
 				Registry: nodeReg,

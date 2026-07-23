@@ -504,10 +504,14 @@ func (f *cpPinOrchestrator) SendManualPlan(contentID string, targets []string, p
 // cpPromReader is the mock OverviewPromReader (no real Prometheus).
 type cpPromReader struct{}
 
-func (cpPromReader) TTFBP95(context.Context) (float64, bool, error)             { return 123.0, true, nil }
-func (cpPromReader) CacheHitRate(context.Context) (float64, bool, error)        { return 0.75, true, nil }
-func (cpPromReader) BackhaulBandwidthBps(context.Context) (float64, bool, error) { return 1e6, true, nil }
-func (cpPromReader) QueryScalar(context.Context, string) (float64, bool, error) { return 0.99, true, nil }
+func (cpPromReader) TTFBP95(context.Context) (float64, bool, error)      { return 123.0, true, nil }
+func (cpPromReader) CacheHitRate(context.Context) (float64, bool, error) { return 0.75, true, nil }
+func (cpPromReader) BackhaulBandwidthBps(context.Context) (float64, bool, error) {
+	return 1e6, true, nil
+}
+func (cpPromReader) QueryScalar(context.Context, string) (float64, bool, error) {
+	return 0.99, true, nil
+}
 
 // cpBroadcaster records broadcast event types (SyncBroadcaster seam for the
 // circuit handler + QuotaAllocator).

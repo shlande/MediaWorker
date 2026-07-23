@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/shlande/mediaworker/internal/config"
+	"github.com/shlande/mediaworker/internal/node/peerstore"
 	sharedid "github.com/shlande/mediaworker/internal/shared/identity"
 )
 
@@ -59,7 +60,14 @@ func TestNew_PostHostError_ClosesHost(t *testing.T) {
 	}
 	t.Logf("New() error (expected): %v", err)
 
-	// The error should come from the pinstore creation (badger fails because
-	// the path exists as a file, not a directory), proving the host was
-	// created and the deferred cleanup path was reached.
+	// Then: prove cleanup actually released resources.
+	// The deferred cleanup in New() closes the peerstore, which closes its
+	// badger DB. Re-opening the same path should succeed without a lock error.
+	ps, psErr := peerstore.NewPeerEntryStore(peerstorePath)
+	if psErr != nil {
+		t.Fatalf("failed to re-open peerstore after cleanup: %v — badger lock was not released", psErr)
+	}
+	if closeErr := ps.Close(); closeErr != nil {
+		t.Fatalf("close re-opened peerstore: %v", closeErr)
+	}
 }

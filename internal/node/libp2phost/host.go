@@ -234,6 +234,23 @@ func SetOnPeerConnectedCallback(h host.Host, cb OnPeerConnectedCallback) {
 	}
 }
 
+// DeregisterConnNotifee removes the host's connNotifee from the registry and
+// unregisters it from the host's network.Notifiee list. Callers should invoke
+// this BEFORE closing the host so the registry does not leak entries and stale
+// callbacks for a closed host never fire.
+func DeregisterConnNotifee(h host.Host) {
+	connNotifeeRegistryMu.Lock()
+	n, ok := connNotifeeRegistry[h.ID()]
+	if !ok {
+		connNotifeeRegistryMu.Unlock()
+		return
+	}
+	delete(connNotifeeRegistry, h.ID())
+	connNotifeeRegistryMu.Unlock()
+
+	h.Network().StopNotify(n)
+}
+
 // registerConnNotifee wires a network.Notifee that logs peer connect/disconnect
 // events at Info level. This is the primary signal for diagnosing peer mesh
 // formation — when two edge nodes discover each other via DHT, a Connected

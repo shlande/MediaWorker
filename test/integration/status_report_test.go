@@ -15,8 +15,8 @@ import (
 	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 
-	sb "github.com/shlande/mediaworker/internal/controlplane/syncbroadcaster"
 	"github.com/shlande/mediaworker/internal/controlplane/noderegistry"
+	sb "github.com/shlande/mediaworker/internal/controlplane/syncbroadcaster"
 	"github.com/shlande/mediaworker/internal/node/libp2phost"
 	"github.com/shlande/mediaworker/internal/node/reporter"
 	sbnode "github.com/shlande/mediaworker/internal/node/syncbroadcaster"
@@ -101,11 +101,11 @@ func stubReport(nodeID types.PeerId) types.NodeStatusReport {
 			UsedBytes:  256,
 			BlobCount:  3,
 		},
-		Region:    "us-east-1",
-		Version:   "test-v1",
-		ConnCount: 5,
+		Region:     "us-east-1",
+		Version:    "test-v1",
+		ConnCount:  5,
 		LastUpdate: time.Now().Unix(),
-		StartedAt: time.Now().Unix() - 3600,
+		StartedAt:  time.Now().Unix() - 3600,
 	}
 }
 

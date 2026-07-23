@@ -69,22 +69,22 @@ func genTestIdentity(t *testing.T) *sharedid.NodeIdentity {
 
 // clusterNode wraps all per-node components needed for integration tests.
 type clusterNode struct {
-	identity     *sharedid.NodeIdentity
-	host         host.Host
-	peerStore    *peerstore.PeerEntryStore
-	jwtVerifier  *jwt.JWTVerifier
-	gater        *libp2phost.EdgeConnectionGater
-	dhtDisc      *dht.EdgeDiscovery
-	scorer       *gossippop.PeerScorer
-	gs           *pubsub.PubSub
-	gsTopic      *pubsub.Topic
-	mergedPop    *gossippop.MergedPopularity
-	memIndex     *cache.MemoryIndex
-	warmCache    *cache.WarmCache
-	blobStore    *memoryBlobStore
-	hashRing     *hashring.HashRing
-	pinStore     *pinstore.PinStore
-	backhaulMgr  *backhaul.BackhaulManager
+	identity    *sharedid.NodeIdentity
+	host        host.Host
+	peerStore   *peerstore.PeerEntryStore
+	jwtVerifier *jwt.JWTVerifier
+	gater       *libp2phost.EdgeConnectionGater
+	dhtDisc     *dht.EdgeDiscovery
+	scorer      *gossippop.PeerScorer
+	gs          *pubsub.PubSub
+	gsTopic     *pubsub.Topic
+	mergedPop   *gossippop.MergedPopularity
+	memIndex    *cache.MemoryIndex
+	warmCache   *cache.WarmCache
+	blobStore   *memoryBlobStore
+	hashRing    *hashring.HashRing
+	pinStore    *pinstore.PinStore
+	backhaulMgr *backhaul.BackhaulManager
 
 	// Ed25519 keys (convenience copies).
 	edPub  ed25519.PublicKey

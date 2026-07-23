@@ -778,3 +778,35 @@ func TestSetOnPeerConnectedCallback_NoCrossFire(t *testing.T) {
 		t.Error("h2's callback did not fire for h1 connect")
 	}
 }
+
+// TestDeregisterConnNotifee_RemovesFromRegistry verifies that after
+// DeregisterConnNotifee + host.Close, the registry no longer holds the host
+// entry.  The stale-entry leak (m1) causes callbacks to silently never fire
+// for a new host if a peer ID is reused; removing on close prevents it.
+func TestDeregisterConnNotifee_RemovesFromRegistry(t *testing.T) {
+	psk := genTestPSK(t)
+
+	id1 := genIdentity(t)
+
+	h1, err := NewEdgeHost(id1, []string{"/ip4/127.0.0.1/tcp/0"}, psk, nil)
+	if err != nil {
+		t.Fatalf("create host1: %v", err)
+	}
+
+	// Given: a callback is set on h1
+	SetOnPeerConnectedCallback(h1, func(local peer.ID, remote peer.ID) {})
+
+	// When: deregister then close
+	DeregisterConnNotifee(h1)
+	if err := h1.Close(); err != nil {
+		t.Fatalf("close host1: %v", err)
+	}
+
+	// Then: the registry no longer holds h1's entry
+	connNotifeeRegistryMu.Lock()
+	_, inRegistry := connNotifeeRegistry[h1.ID()]
+	connNotifeeRegistryMu.Unlock()
+	if inRegistry {
+		t.Error("registry still holds h1 entry after DeregisterConnNotifee")
+	}
+}
