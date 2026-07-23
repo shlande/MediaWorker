@@ -462,6 +462,80 @@ func TestFetchFromL4Node_EmptyLister(t *testing.T) {
 
 // ─── Tests: All candidates fail ────────────────────────────────────────────
 
+func TestFetchFromL4Node_ReseedFromStoreWhenPeerstoreExpired(t *testing.T) {
+	// Given: a server host (with L4 handler) and a client host that has NEVER
+	// been connected to the server. The client's libp2p peerstore has zero
+	// knowledge of the server — no AddAddrs, no Connect. But our fake lister
+	// (standing in for BadgerDB PeerEntryStore) has the server's real addrs.
+	// After ~90s of idle, libp2p's internal peerstore expires addresses while
+	// our store still holds them; the reseed+retry path handles this gap.
+	psk := genTestPSK(t)
+	srvHost := genTestHost(t, psk)
+	clientHost := genTestHost(t, psk)
+
+	const blobHash = "sha256:reseed-test-blob"
+	wantData := []byte("reseed from store works")
+
+	RegisterHandler(srvHost, func(ctx context.Context, w io.Writer, hash string) error {
+		if hash != blobHash {
+			return fmt.Errorf("unexpected blob hash: %q", hash)
+		}
+		_, err := w.Write(wantData)
+		return err
+	})
+
+	// Build a fake lister with the server's real listen addrs — this is what
+	// our BadgerDB store provides.
+	srvAddrs := func() []string {
+		as := srvHost.Addrs()
+		strs := make([]string, len(as))
+		for i, a := range as {
+			strs[i] = a.String()
+		}
+		return strs
+	}()
+	if len(srvAddrs) == 0 {
+		t.Fatal("server host has no listen addrs")
+	}
+
+	entry := types.PeerStoreEntry{
+		PeerID:       types.PeerId(srvHost.ID().String()),
+		Addrs:        srvAddrs,
+		Capabilities: types.NodeCapabilities{L4Backhaul: true},
+		Score:        0,
+	}
+	lister := &fakePeerLister{entries: []types.PeerStoreEntry{entry}}
+
+	fetcher := NewFetcher(clientHost, lister)
+
+	// Confirm: the client has NO addrs for the server in its libp2p peerstore.
+	clientPeerstoredAddrs := clientHost.Peerstore().Addrs(srvHost.ID())
+	if len(clientPeerstoredAddrs) > 0 {
+		t.Fatalf("precondition failed: client peerstore unexpectedly has addrs for server: %v", clientPeerstoredAddrs)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	// When: FetchFromL4Node is called.
+	result, err := fetcher.FetchFromL4Node(ctx, blobHash)
+	if err != nil {
+		t.Fatalf("FetchFromL4Node: unexpected error (reseed should have succeeded): %v", err)
+	}
+
+	// Then: the return contains the blob data — proof that reseed+retry worked.
+	rc := result.(io.ReadCloser)
+	defer func() { _ = rc.Close() }()
+
+	got, readErr := io.ReadAll(rc)
+	if readErr != nil {
+		t.Fatalf("read stream: %v", readErr)
+	}
+	if string(got) != string(wantData) {
+		t.Fatalf("data mismatch: got %q, want %q", string(got), string(wantData))
+	}
+}
+
 func TestFetchFromL4Node_AllCandidatesUnreachable(t *testing.T) {
 	// Given: the lister has L4 peers, but none are reachable (no hosts listening).
 	psk := genTestPSK(t)

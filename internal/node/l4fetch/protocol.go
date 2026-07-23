@@ -23,6 +23,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/network"
 	"github.com/libp2p/go-libp2p/core/peer"
 	"github.com/libp2p/go-libp2p/core/protocol"
+	"github.com/multiformats/go-multiaddr"
 
 	"github.com/shlande/mediaworker/internal/types"
 )
@@ -131,8 +132,22 @@ func (f *Fetcher) FetchFromL4Node(ctx context.Context, blobHash string) (interfa
 
 		stream, fetchErr := f.openStream(ctx, pid)
 		if fetchErr != nil {
-			errs = append(errs, fmt.Errorf("peer %s: %w", pid, fetchErr))
-			continue
+			// Reseed libp2p peerstore from our BadgerDB entry: after ~90s idle,
+			// the internal peerstore expires addresses while our store still has
+			// fresh addrs (refreshed ~30s by DHT discovery). One retry.
+			if len(entry.Addrs) > 0 {
+				if mas := parseEntryAddrs(entry.Addrs); len(mas) > 0 {
+					f.h.Peerstore().AddAddrs(pid, mas, 10*time.Minute)
+					if stream2, err2 := f.openStream(ctx, pid); err2 == nil {
+						stream = stream2
+						fetchErr = nil
+					}
+				}
+			}
+			if fetchErr != nil {
+				errs = append(errs, fmt.Errorf("peer %s: %w", pid, fetchErr))
+				continue
+			}
 		}
 
 		if err := writeBlobHash(stream, blobHash); err != nil {
@@ -163,6 +178,23 @@ func (f *Fetcher) openStream(ctx context.Context, pid peer.ID) (network.Stream, 
 	defer cancel()
 
 	return f.h.NewStream(dialCtx, pid, L4GetProtocol)
+}
+
+// parseEntryAddrs parses a []string of multiaddr representations into
+// []multiaddr.Multiaddr. Invalid addrs are skipped with a logged warning.
+func parseEntryAddrs(addrs []string) []multiaddr.Multiaddr {
+	mas := make([]multiaddr.Multiaddr, 0, len(addrs))
+	for _, a := range addrs {
+		ma, err := multiaddr.NewMultiaddr(a)
+		if err != nil {
+			slog.Default().Warn("l4fetch: skipping unparseable multiaddr in peer entry",
+				"addr", a, "error", err,
+			)
+			continue
+		}
+		mas = append(mas, ma)
+	}
+	return mas
 }
 
 // l4Candidates returns ActivePeers filtered to those with L4Backhaul capability.
