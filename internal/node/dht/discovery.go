@@ -119,9 +119,8 @@ func (d *EdgeDiscovery) Start(ctx context.Context) error {
 				addrs = append(addrs, a.String())
 			}
 			isNew := !d.peerEntryStore.Has(peerstore.PeerIdFromPeerID(p.ID))
-			if err := d.peerEntryStore.Put(
-				peerstore.PeerIdFromPeerID(p.ID),
-				peerstore.PeerStoreEntryFromDiscovery(p.ID, addrs),
+			if err := d.peerEntryStore.PutDiscovery(
+				peerstore.PeerIdFromPeerID(p.ID), addrs,
 			); err != nil {
 				d.logger.Warn("failed to store discovered peer", "peer", p.ID, "err", err)
 			} else if isNew {
@@ -215,9 +214,8 @@ func (d *EdgeDiscovery) discoverLoop(ctx context.Context) {
 					addrs = append(addrs, a.String())
 				}
 				isNew := !d.peerEntryStore.Has(peerstore.PeerIdFromPeerID(p.ID))
-				if err := d.peerEntryStore.Put(
-					peerstore.PeerIdFromPeerID(p.ID),
-					peerstore.PeerStoreEntryFromDiscovery(p.ID, addrs),
+				if err := d.peerEntryStore.PutDiscovery(
+					peerstore.PeerIdFromPeerID(p.ID), addrs,
 				); err != nil {
 					d.logger.Warn("discover loop: failed to store peer", "peer", p.ID, "err", err)
 				} else if isNew {
@@ -252,9 +250,8 @@ func (d *EdgeDiscovery) OnGossipSubPruneWithPX(p peer.ID, pxPeers []peer.PeerRec
 		for _, a := range rec.Addrs {
 			addrs = append(addrs, a.String())
 		}
-		if err := d.peerEntryStore.Put(
-			peerstore.PeerIdFromPeerID(rec.PeerID),
-			peerstore.PeerStoreEntryFromDiscovery(rec.PeerID, addrs),
+		if err := d.peerEntryStore.PutDiscovery(
+			peerstore.PeerIdFromPeerID(rec.PeerID), addrs,
 		); err != nil {
 			d.logger.Warn("PeX: failed to store peer", "peer", rec.PeerID, "err", err)
 			continue

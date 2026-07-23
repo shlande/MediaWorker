@@ -433,3 +433,124 @@ func TestPeerEntryStore_List(t *testing.T) {
 		t.Fatalf("empty store List len = %d, want 0", len(got))
 	}
 }
+
+// ─── TestPeerEntryStore_PutDiscovery ───
+
+func TestPutDiscovery_when_store_is_empty_expect_zero_value_entry(t *testing.T) {
+	store := openStore(t)
+
+	if err := store.PutDiscovery("peer-x", []string{"/ip4/10.0.0.1/tcp/9001"}); err != nil {
+		t.Fatalf("PutDiscovery: %v", err)
+	}
+
+	entry, ok := store.Get("peer-x")
+	if !ok {
+		t.Fatal("entry should exist after PutDiscovery")
+	}
+	if entry.PeerID != "peer-x" {
+		t.Errorf("PeerID = %q, want peer-x", entry.PeerID)
+	}
+	if entry.JWT != "" {
+		t.Error("JWT should be empty for discovery entry")
+	}
+	if entry.JWTExp != 0 {
+		t.Errorf("JWTExp = %d, want 0", entry.JWTExp)
+	}
+	if entry.Score != 0 {
+		t.Errorf("Score = %f, want 0", entry.Score)
+	}
+	if entry.Stale {
+		t.Error("Stale should be false")
+	}
+	if len(entry.Addrs) != 1 {
+		t.Errorf("Addrs len = %d, want 1", len(entry.Addrs))
+	}
+}
+
+func TestPutDiscovery_when_auth_entry_exists_preserves_auth_and_refreshes_addrs(t *testing.T) {
+	store := openStore(t)
+	now := time.Now().Unix()
+
+	authEntry := types.PeerStoreEntry{
+		PeerID:       "peer-auth",
+		Addrs:        []string{"/ip4/10.0.0.1/tcp/9001"},
+		JWT:          "signed-jwt-string",
+		Capabilities: types.NodeCapabilities{L4Backhaul: true, PeerICP: true},
+		JWTExp:       now + 3600,
+		LastSeen:     now - 120,
+		Score:        5.0,
+		Stale:        false,
+	}
+	if err := store.Put("peer-auth", authEntry); err != nil {
+		t.Fatalf("Put auth entry: %v", err)
+	}
+
+	// When: PutDiscovery with new addrs
+	if err := store.PutDiscovery("peer-auth", []string{"/ip4/192.168.0.1/tcp/9002"}); err != nil {
+		t.Fatalf("PutDiscovery: %v", err)
+	}
+
+	entry, ok := store.Get("peer-auth")
+	if !ok {
+		t.Fatal("entry should still exist")
+	}
+	// Auth fields preserved.
+	if entry.JWT != "signed-jwt-string" {
+		t.Errorf("JWT clobbered: %q", entry.JWT)
+	}
+	if entry.JWTExp != now+3600 {
+		t.Errorf("JWTExp = %d, want %d", entry.JWTExp, now+3600)
+	}
+	if entry.Score != 5.0 {
+		t.Errorf("Score = %f, want 5.0", entry.Score)
+	}
+	if !entry.Capabilities.L4Backhaul || !entry.Capabilities.PeerICP {
+		t.Errorf("Capabilities clobbered: %+v", entry.Capabilities)
+	}
+	if entry.Stale {
+		t.Error("Stale flag clobbered")
+	}
+	// Addrs refreshed.
+	if len(entry.Addrs) != 1 || entry.Addrs[0] != "/ip4/192.168.0.1/tcp/9002" {
+		t.Errorf("Addrs not refreshed: %v", entry.Addrs)
+	}
+	// LastSeen refreshed.
+	if entry.LastSeen <= now-120 {
+		t.Errorf("LastSeen not refreshed: %d (was %d, now %d)", entry.LastSeen, now-120, time.Now().Unix())
+	}
+}
+
+func TestPutDiscovery_when_empty_addrs_keeps_existing_addrs(t *testing.T) {
+	store := openStore(t)
+	now := time.Now().Unix()
+
+	existingEntry := types.PeerStoreEntry{
+		PeerID:   "peer-existing",
+		Addrs:    []string{"/ip4/10.0.0.2/tcp/9001"},
+		JWTExp:   now + 3600,
+		LastSeen: now - 60,
+	}
+	if err := store.Put("peer-existing", existingEntry); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	// When: PutDiscovery with empty addrs
+	if err := store.PutDiscovery("peer-existing", nil); err != nil {
+		t.Fatalf("PutDiscovery: %v", err)
+	}
+
+	entry, ok := store.Get("peer-existing")
+	if !ok {
+		t.Fatal("entry should still exist")
+	}
+	if len(entry.Addrs) == 0 {
+		t.Error("Addrs should not be emptied by PutDiscovery")
+	}
+	if entry.Addrs[0] != "/ip4/10.0.0.2/tcp/9001" {
+		t.Errorf("Addrs changed: %v", entry.Addrs)
+	}
+	// LastSeen still refreshed even when addrs empty.
+	if entry.LastSeen <= now-60 {
+		t.Errorf("LastSeen not refreshed: %d", entry.LastSeen)
+	}
+}

@@ -90,6 +90,26 @@ func (s *PeerEntryStore) Put(peerID types.PeerId, entry types.PeerStoreEntry) er
 	return nil
 }
 
+// PutDiscovery writes a discovery-sourced entry (no JWT / capabilities).
+// It differs from Put: if the peer already exists in the store, PutDiscovery
+// preserves existing auth fields (JWT, Capabilities, JWTExp, Score, Stale)
+// and only refreshes Addrs (when non-empty) and LastSeen. For new peers it
+// inserts a zero-value discovery entry (same as Put+FromDiscovery).
+func (s *PeerEntryStore) PutDiscovery(peerID types.PeerId, addrs []string) error {
+	if existing, ok := s.Get(peerID); ok {
+		existing.LastSeen = time.Now().Unix()
+		if len(addrs) > 0 {
+			existing.Addrs = addrs
+		}
+		return s.Put(peerID, existing)
+	}
+	return s.Put(peerID, types.PeerStoreEntry{
+		PeerID:   peerID,
+		Addrs:    addrs,
+		LastSeen: time.Now().Unix(),
+	})
+}
+
 // Get reads an entry from the in-memory index (fast path, no DB read).
 func (s *PeerEntryStore) Get(peerID types.PeerId) (types.PeerStoreEntry, bool) {
 	val, ok := s.index.Load(string(peerID))
