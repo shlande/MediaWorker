@@ -78,7 +78,7 @@ func TestReseedAndRetry_AddrSourceHasAddrs_Success(t *testing.T) {
 
 	testProto := protocol.ID("/test/dialassist/1.0.0")
 	h1.SetStreamHandler(testProto, func(s network.Stream) {
-		s.Close()
+		_ = s.Close()
 	})
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -94,7 +94,7 @@ func TestReseedAndRetry_AddrSourceHasAddrs_Success(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReseedAndRetry: expected success after reseed, got: %v", err)
 	}
-	stream.Close()
+	_ = stream.Close()
 
 	if len(h2.Peerstore().Addrs(h1.ID())) == 0 {
 		t.Error("after reseed, h2 peerstore should have addrs for h1")
@@ -179,7 +179,7 @@ func TestReseedAndRetry_FirstDialSucceeds_NoReseed(t *testing.T) {
 
 	testProto := protocol.ID("/test/dialassist/happy/1.0.0")
 	h1.SetStreamHandler(testProto, func(s network.Stream) {
-		s.Close()
+		_ = s.Close()
 	})
 
 	src := &fakeAddrSource{
@@ -196,7 +196,7 @@ func TestReseedAndRetry_FirstDialSucceeds_NoReseed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success on first dial, got: %v", err)
 	}
-	stream.Close()
+	_ = stream.Close()
 }
 
 func TestParseAddrs_AllValid(t *testing.T) {
