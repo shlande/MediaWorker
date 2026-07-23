@@ -159,6 +159,6 @@ Optional flags:
 
 	blobHash := fmt.Sprintf("sha256:%x", hasher.Sum(nil))
 
-	fmt.Fprintf(stdout, "content_id: %s\nblob_hash: %s\n", result.ContentID, blobHash)
+	_, _ = fmt.Fprintf(stdout, "content_id: %s\nblob_hash: %s\n", result.ContentID, blobHash)
 	return exitSuccess
 }

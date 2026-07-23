@@ -179,6 +179,6 @@ func fetchToFile(ctx context.Context, node *app.App, blobHash, blobPath, outPath
 		return err
 	}
 
-	fmt.Fprintf(stdout, "downloaded: %s (%d bytes, sha256 verified)\n", outPath, fi.Size())
+	_, _ = fmt.Fprintf(stdout, "downloaded: %s (%d bytes, sha256 verified)\n", outPath, fi.Size())
 	return nil
 }
