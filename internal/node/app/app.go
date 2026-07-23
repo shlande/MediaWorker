@@ -322,7 +322,8 @@ func New(ctx context.Context, cfg *config.Config, opts Options) (app *App, err e
 	go runJWTRefreshLoop(ctx, jwtClient, ed25519.PublicKey(cpPubKey),
 		refreshDurations,
 		logger,
-		metrics)
+		metrics,
+		h, ps)
 
 	// -------------------------------------------------------------------
 	// 11c. On-peer-connected auth exchange.
@@ -467,7 +468,7 @@ func New(ctx context.Context, cfg *config.Config, opts Options) (app *App, err e
 		backhaulMgr = backhaul.NewBackhaulManager(
 			backhaulWarmCache{warmCache},
 			dataPlane,
-			backhaulICPFetcher{h: h, ring: ring, self: nodeIdentity.PeerID},
+			backhaulICPFetcher{h: h, ring: ring, self: nodeIdentity.PeerID, addrSrc: ps},
 			nil, // l4Fetcher — this IS an L4 node
 		)
 		logger.Info("backhaul manager created (L4 mode, data plane wired)")
@@ -477,8 +478,8 @@ func New(ctx context.Context, cfg *config.Config, opts Options) (app *App, err e
 		backhaulMgr = backhaul.NewBackhaulManager(
 			backhaulWarmCache{warmCache},
 			nil, // dataPlane — disabled
-			backhaulICPFetcher{h: h, ring: ring, self: nodeIdentity.PeerID},
-			l4fetch.NewFetcher(h, ps),
+			backhaulICPFetcher{h: h, ring: ring, self: nodeIdentity.PeerID, addrSrc: ps},
+			l4fetch.NewFetcher(h, ps, ps),
 		)
 		logger.Info("backhaul manager created (edge mode, L4 stream fallback wired)")
 	}
@@ -682,7 +683,7 @@ func New(ctx context.Context, cfg *config.Config, opts Options) (app *App, err e
 	// -------------------------------------------------------------------
 	// 21. Edge router — hash-ring routing with proxy fallback
 	// -------------------------------------------------------------------
-	router := routing.NewEdgeRouter(ring, backhaulMgr, nodeIdentity.PeerID, cfg.Access.DataPlane.Enabled, h)
+	router := routing.NewEdgeRouter(ring, backhaulMgr, nodeIdentity.PeerID, cfg.Access.DataPlane.Enabled, h, ps)
 	logger.Info("edge router created",
 		"self_peer", nodeIdentity.PeerID,
 		"is_l4", cfg.Access.DataPlane.Enabled,
@@ -772,6 +773,7 @@ func (a *App) CloseHost() error {
 		return nil
 	}
 	if a.Host != nil {
+		libp2phost.DeregisterConnNotifee(a.Host)
 		if err := a.Host.Close(); err != nil {
 			slog.Error("libp2p host close error", "err", err)
 		}

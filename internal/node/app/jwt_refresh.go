@@ -6,8 +6,11 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/host"
+
 	nodejwt "github.com/shlande/mediaworker/internal/node/jwt"
 	"github.com/shlande/mediaworker/internal/node/monitor"
+	"github.com/shlande/mediaworker/internal/node/peerstore"
 
 	"github.com/shlande/mediaworker/internal/config"
 	sjwt "github.com/shlande/mediaworker/internal/shared/jwt"
@@ -33,8 +36,11 @@ import (
 // On request failure: logs at Error, increments edge_jwt_refresh_failure_total,
 // and continues the loop (NO panic/Fatal — consistent with the initial-failure
 // degraded mode). On success, increments edge_jwt_refresh_success_total and
-// updates edge_jwt_refresh_last_success_timestamp. The goroutine exits when
-// ctx is cancelled (process shutdown via rootCtx).
+// updates edge_jwt_refresh_last_success_timestamp. After a successful refresh
+// the new JWT is pushed to every connected peer that has already completed
+// mutual auth (has a non-expired JWT entry in the PeerEntryStore). Per-peer
+// 5s timeout; failures at Debug only, never block the refresh loop.
+// The goroutine exits when ctx is cancelled (process shutdown via rootCtx).
 func runJWTRefreshLoop(
 	ctx context.Context,
 	jwtClient *nodejwt.JWTClient,
@@ -42,6 +48,8 @@ func runJWTRefreshLoop(
 	durations *config.RefreshDurations,
 	logger *slog.Logger,
 	metrics *monitor.Metrics,
+	h host.Host,
+	ps *peerstore.PeerEntryStore,
 ) {
 	for {
 		// Read the live cadence each round; zero (e.g. loader path bypassed)
@@ -92,5 +100,50 @@ func runJWTRefreshLoop(
 			metrics.RecordJWTRefreshSuccess()
 			metrics.SetJWTRefreshLastTS(time.Now().Unix())
 		}
+
+		// Push refreshed JWT to already-authenticated connected peers.
+		pushRefreshedJWT(ctx, jwtClient, h, ps, logger)
 	}
+}
+
+// pushRefreshedJWT sends the current JWT to every connected peer that has a
+// non-expired JWT entry in the PeerEntryStore (i.e. mutual auth previously
+// completed). Unauthenticated peers (JWTExp==0) and expired peers are skipped.
+// Per-peer 5s timeout; failures at Debug only. Each peer is pushed at most once
+// per refresh cycle — HandleJWTPush already deduplicates by Exp on the
+// receiving side.
+func pushRefreshedJWT(
+	ctx context.Context,
+	jwtClient *nodejwt.JWTClient,
+	h host.Host,
+	ps *peerstore.PeerEntryStore,
+	logger *slog.Logger,
+) {
+	jwt := jwtClient.CurrentJWT()
+	if jwt == "" {
+		return
+	}
+
+	now := time.Now().Unix()
+	for _, pid := range h.Network().Peers() {
+		entry, ok := ps.Get(peerstore.PeerIdFromPeerID(pid))
+		if !ok {
+			continue
+		}
+		// JWTExp==0 means never authenticated; JWTExp <= now means expired.
+		if entry.JWTExp == 0 || entry.JWTExp <= now {
+			continue
+		}
+
+		pushCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		if err := nodejwt.PushJWT(h, pid, jwt); err != nil {
+			logger.Debug("jwt-push to peer failed",
+				"peer", pid.ShortString(),
+				"err", err,
+			)
+		}
+		cancel()
+		<-pushCtx.Done()
+	}
+
 }
