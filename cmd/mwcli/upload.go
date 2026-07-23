@@ -43,7 +43,7 @@ func runUpload(args []string, stdout, stderr io.Writer) int {
 	metadataJSON := fs.String("metadata", "", "metadata JSON string (optional)")
 
 	fs.Usage = func() {
-		fmt.Fprintf(stderr, `Usage: mwcli upload -addr <url> -type <image|dash_video> -file <path> [-content-id <id>] [-metadata <json>]
+		_, _ = fmt.Fprintf(stderr, `Usage: mwcli upload -addr <url> -type <image|dash_video> -file <path> [-content-id <id>] [-metadata <json>]
 
 Upload a file to an ingest-worker.
 
@@ -64,22 +64,22 @@ Optional flags:
 
 	switch {
 	case *addr == "":
-		fmt.Fprintln(stderr, "missing required flag: -addr")
+		_, _ = fmt.Fprintln(stderr, "missing required flag: -addr")
 		return exitUsage
 	case *ct == "":
-		fmt.Fprintln(stderr, "missing required flag: -type")
+		_, _ = fmt.Fprintln(stderr, "missing required flag: -type")
 		return exitUsage
 	case *ct != "image" && *ct != "dash_video":
-		fmt.Fprintf(stderr, "invalid -type %q: must be image or dash_video\n", *ct)
+		_, _ = fmt.Fprintf(stderr, "invalid -type %q: must be image or dash_video\n", *ct)
 		return exitUsage
 	case *filePath == "":
-		fmt.Fprintln(stderr, "missing required flag: -file")
+		_, _ = fmt.Fprintln(stderr, "missing required flag: -file")
 		return exitUsage
 	}
 
 	f, err := os.Open(*filePath)
 	if err != nil {
-		fmt.Fprintf(stderr, "open file: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "open file: %v\n", err)
 		return exitRuntime
 	}
 	defer func() { _ = f.Close() }()
@@ -133,27 +133,27 @@ Optional flags:
 	url := fmt.Sprintf("%s/ingest/%s", *addr, *ct)
 	req, err := http.NewRequest(http.MethodPost, url, pr)
 	if err != nil {
-		fmt.Fprintf(stderr, "create request: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "create request: %v\n", err)
 		return exitRuntime
 	}
 	req.Header.Set("Content-Type", mw.FormDataContentType())
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		fmt.Fprintf(stderr, "request failed: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "request failed: %v\n", err)
 		return exitRuntime
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
-		fmt.Fprintf(stderr, "server returned %d %s: %s\n", resp.StatusCode, http.StatusText(resp.StatusCode), body)
+		_, _ = fmt.Fprintf(stderr, "server returned %d %s: %s\n", resp.StatusCode, http.StatusText(resp.StatusCode), body)
 		return exitRuntime
 	}
 
 	var result ingest.IngestResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		fmt.Fprintf(stderr, "decode response: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "decode response: %v\n", err)
 		return exitRuntime
 	}
 

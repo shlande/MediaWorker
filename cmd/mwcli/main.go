@@ -40,7 +40,7 @@ func main() {
 // Factored for testability: callers supply their own stdout/stderr writers.
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprint(stderr, usageText)
+		_, _ = fmt.Fprint(stderr, usageText)
 		return 2
 	}
 
@@ -53,7 +53,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 	case "download":
 		return runDownload(cmdArgs, stdout, stderr)
 	default:
-		fmt.Fprintf(stderr, "unknown command %q\n\n%s", cmd, usageText)
+		_, _ = fmt.Fprintf(stderr, "unknown command %q\n\n%s", cmd, usageText)
 		return 2
 	}
 }

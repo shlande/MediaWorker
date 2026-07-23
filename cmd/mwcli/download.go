@@ -31,7 +31,7 @@ func runDownload(args []string, stdout, stderr io.Writer) int {
 	reqTimeout := fs.Duration("req-timeout", 120*time.Second, "max time for the download request")
 
 	fs.Usage = func() {
-		fmt.Fprintf(stderr, `Usage: mwcli download -config <yaml> -blob <sha256:hex> -out <path> [-wait-timeout <d>] [-req-timeout <d>]
+		_, _ = fmt.Fprintf(stderr, `Usage: mwcli download -config <yaml> -blob <sha256:hex> -out <path> [-wait-timeout <d>] [-req-timeout <d>]
 
 Download a blob via embedded edge node.
 
@@ -52,16 +52,16 @@ Optional flags:
 
 	switch {
 	case *configPath == "":
-		fmt.Fprintln(stderr, "missing required flag: -config")
+		_, _ = fmt.Fprintln(stderr, "missing required flag: -config")
 		return exitUsage
 	case *blob == "":
-		fmt.Fprintln(stderr, "missing required flag: -blob")
+		_, _ = fmt.Fprintln(stderr, "missing required flag: -blob")
 		return exitUsage
 	case !blobHashRx.MatchString(*blob):
-		fmt.Fprintln(stderr, `-blob must be in sha256:<hex> format (e.g. sha256:1a2b3c... — 64 lowercase hex chars)`)
+		_, _ = fmt.Fprintln(stderr, `-blob must be in sha256:<hex> format (e.g. sha256:1a2b3c... — 64 lowercase hex chars)`)
 		return exitUsage
 	case *outPath == "":
-		fmt.Fprintln(stderr, "missing required flag: -out")
+		_, _ = fmt.Fprintln(stderr, "missing required flag: -out")
 		return exitUsage
 	}
 
@@ -70,13 +70,13 @@ Optional flags:
 
 	cfg, err := config.LoadConfig(*configPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "load config: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "load config: %v\n", err)
 		return exitRuntime
 	}
 
 	cpPubKeyHex := os.Getenv("CONTROL_PLANE_PUBKEY")
 	if cpPubKeyHex == "" {
-		fmt.Fprintln(stderr, "CONTROL_PLANE_PUBKEY environment variable is required — must be hex-encoded Ed25519 public key")
+		_, _ = fmt.Fprintln(stderr, "CONTROL_PLANE_PUBKEY environment variable is required — must be hex-encoded Ed25519 public key")
 		return exitRuntime
 	}
 
@@ -85,13 +85,13 @@ Optional flags:
 
 	node, err := app.New(ctx, cfg, app.Options{JWTRequestTimeout: 10 * time.Second})
 	if err != nil {
-		fmt.Fprintf(stderr, "start embedded node: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "start embedded node: %v\n", err)
 		return exitRuntime
 	}
 	defer func() { _ = node.Close() }()
 
 	if err := waitForUsablePeer(ctx, node, *waitTimeout); err != nil {
-		fmt.Fprintf(stderr, "%v\n", err)
+		_, _ = fmt.Fprintf(stderr, "%v\n", err)
 		return exitUsage
 	}
 
@@ -137,7 +137,7 @@ func fetchToFile(ctx context.Context, node *app.App, blobHash, blobPath, outPath
 	tmpPath := outPath + ".part"
 	tmp, err := os.Create(tmpPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "create temp file: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "create temp file: %v\n", err)
 		return err
 	}
 	tmpClosed := false
@@ -152,30 +152,30 @@ func fetchToFile(ctx context.Context, node *app.App, blobHash, blobPath, outPath
 	w := io.MultiWriter(tmp, hasher)
 
 	if err := node.FetchBlob(ctx, w, blobPath); err != nil {
-		fmt.Fprintf(stderr, "download failed: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "download failed: %v\n", err)
 		return err
 	}
 
 	if err := tmp.Close(); err != nil {
-		fmt.Fprintf(stderr, "close temp file: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "close temp file: %v\n", err)
 		return err
 	}
 	tmpClosed = true
 
 	if got := fmt.Sprintf("%x", hasher.Sum(nil)); got != blobHash {
 		_ = os.Remove(tmpPath)
-		fmt.Fprintf(stderr, "hash mismatch: expected %s, got %s\n", blobHash, got)
+		_, _ = fmt.Fprintf(stderr, "hash mismatch: expected %s, got %s\n", blobHash, got)
 		return errHashMismatch
 	}
 
 	if err := os.Rename(tmpPath, outPath); err != nil {
-		fmt.Fprintf(stderr, "rename temp to output: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "rename temp to output: %v\n", err)
 		return err
 	}
 
 	fi, err := os.Stat(outPath)
 	if err != nil {
-		fmt.Fprintf(stderr, "stat output: %v\n", err)
+		_, _ = fmt.Fprintf(stderr, "stat output: %v\n", err)
 		return err
 	}
 
