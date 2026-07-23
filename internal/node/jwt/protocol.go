@@ -51,8 +51,8 @@ func (v *JWTVerifier) Verify(jwtStr types.CapabilityJWT) (*types.NodeJWTPayload,
 
 // PushJWT opens a /edge/jwt-refresh/1.0.0 stream to the given peer and writes
 // the JWT as a single line, then closes the write side.
-func PushJWT(h host.Host, peerID peer.ID, jwt types.CapabilityJWT) error {
-	ctx := network.WithNoDial(context.Background(), "jwt-push")
+func PushJWT(ctx context.Context, h host.Host, peerID peer.ID, jwt types.CapabilityJWT) error {
+	ctx = network.WithNoDial(ctx, "jwt-push")
 	s, err := h.NewStream(ctx, peerID, JWTRefreshProtocolID)
 	if err != nil {
 		return fmt.Errorf("jwt push: open stream to %s: %w", peerID.ShortString(), err)

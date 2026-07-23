@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -162,6 +163,55 @@ func TestReseedAndRetry_NilSource_ReturnsOriginalError(t *testing.T) {
 	}
 	if !errors.Is(err, dialErr) {
 		t.Errorf("expected original dial error, got: %v", err)
+	}
+}
+
+func TestReseedAndRetry_ReseedRetryFails_EncapsulatesBothErrors(t *testing.T) {
+	psk := genTestPSK(t)
+	h := genTestHost(t, psk)
+
+	priv, _, err := crypto.GenerateEd25519Key(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	targetID, err := peer.IDFromPrivateKey(priv)
+	if err != nil {
+		t.Fatalf("derive peer id: %v", err)
+	}
+
+	// Source has addrs → reseed WILL fire, retry WILL attempt.
+	src := &fakeAddrSource{
+		addrs: map[peer.ID][]string{targetID: {"/ip4/127.0.0.1/tcp/1"}},
+	}
+
+	firstErr := errors.New("first dial failed")
+	retryErr := errors.New("retry dial also failed")
+
+	callCount := 0
+	dial := func(ctx context.Context) (network.Stream, error) {
+		callCount++
+		if callCount == 1 {
+			return nil, firstErr
+		}
+		return nil, retryErr
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err = ReseedAndRetry(ctx, h, targetID, src, dial)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	errStr := err.Error()
+	if !errors.Is(err, firstErr) {
+		t.Errorf("error should wrap firstErr, got: %v", err)
+	}
+	if !strings.Contains(errStr, firstErr.Error()) {
+		t.Errorf("error message missing firstErr %q: %s", firstErr.Error(), errStr)
+	}
+	if !strings.Contains(errStr, retryErr.Error()) {
+		t.Errorf("error message missing retryErr %q: %s", retryErr.Error(), errStr)
 	}
 }
 

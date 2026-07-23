@@ -136,14 +136,13 @@ func pushRefreshedJWT(
 		}
 
 		pushCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		if err := nodejwt.PushJWT(h, pid, jwt); err != nil {
+		if err := nodejwt.PushJWT(pushCtx, h, pid, jwt); err != nil {
 			logger.Debug("jwt-push to peer failed",
 				"peer", pid.ShortString(),
 				"err", err,
 			)
 		}
 		cancel()
-		<-pushCtx.Done()
 	}
 
 }

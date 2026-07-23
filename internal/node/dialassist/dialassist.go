@@ -10,6 +10,7 @@ package dialassist
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -30,8 +31,8 @@ type AddrSource interface {
 // ReseedAndRetry attempts dial(ctx). On failure, it reseeds h's libp2p
 // peerstore with addresses from src (to work around in-memory peerstore
 // expiry) and retries dial once. If the reseed succeeds and the retry
-// succeeds, the second stream is returned. Otherwise the original error
-// from dial is returned.
+// succeeds, the second stream is returned. Otherwise both the original
+// and retry errors are joined together.
 //
 // src may be nil; in that case the helper is a pass-through (no reseed).
 //
@@ -57,6 +58,8 @@ func ReseedAndRetry(
 				h.Peerstore().AddAddrs(pid, mas, 10*time.Minute)
 				if stream2, err2 := dial(ctx); err2 == nil {
 					return stream2, nil
+				} else {
+					return nil, fmt.Errorf("%w (reseed retry: %v)", err, err2)
 				}
 			}
 		}

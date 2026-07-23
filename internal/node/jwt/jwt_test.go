@@ -487,7 +487,7 @@ func TestJWT_Dedup(t *testing.T) {
 			}
 
 			// Push from host2 to host1
-			if err := PushJWT(host2, host1.ID(), jwtStr); err != nil {
+			if err := PushJWT(context.Background(), host2, host1.ID(), jwtStr); err != nil {
 				t.Fatalf("PushJWT: %v", err)
 			}
 
@@ -574,7 +574,7 @@ func TestJWT_PushProtocol(t *testing.T) {
 	}
 
 	// A pushes JWT to B
-	if err := PushJWT(hostA, hostB.ID(), resp.JWT); err != nil {
+		if err := PushJWT(context.Background(), hostA, hostB.ID(), resp.JWT); err != nil {
 		t.Fatalf("PushJWT A→B: %v", err)
 	}
 
