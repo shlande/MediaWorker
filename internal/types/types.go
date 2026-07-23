@@ -147,10 +147,12 @@ type DownloadLink struct {
 
 // HealthState describes the health status of a cloud drive account.
 type HealthState struct {
-	State     string        `json:"state"`
-	LastCheck time.Time     `json:"last_check"`
-	Latency   time.Duration `json:"latency"`
-	ErrorMsg  string        `json:"error_msg"`
+	State              string        `json:"state"`
+	LastCheck          time.Time     `json:"last_check"`
+	Latency            time.Duration `json:"latency"`
+	ErrorMsg           string        `json:"error_msg"`
+	ConsecutiveHealthy int           `json:"-"` // internal counter for auto-recovery, not persisted
+	Recoverable        bool          `json:"-"` // true when degraded by probe, auto-recoverable
 }
 
 // RateLimitConfig defines rate-limiting parameters for a cloud drive account.

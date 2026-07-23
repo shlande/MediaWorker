@@ -475,6 +475,14 @@ func (d *OneDriveDriver) HealthCheck(ctx context.Context) types.HealthState {
 			Latency:   latency,
 		}
 	}
+	if resp.StatusCode == http.StatusOK {
+		return types.HealthState{
+			State:     "degraded",
+			LastCheck: time.Now(),
+			Latency:   latency,
+			ErrorMsg:  fmt.Sprintf("latency %v > threshold 1s", latency),
+		}
+	}
 	// Any other status: degraded.
 	return types.HealthState{
 		State:     "degraded",

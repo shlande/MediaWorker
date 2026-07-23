@@ -3,6 +3,7 @@ package healthcheck
 
 import (
 	"context"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -18,17 +19,22 @@ type MetadataWriter interface {
 
 // HealthChecker periodically checks health of all accounts in the pool.
 type HealthChecker struct {
-	pool     *accountpool.AccountPool
-	interval time.Duration
-	writer   MetadataWriter
+	pool             *accountpool.AccountPool
+	interval         time.Duration
+	writer           MetadataWriter
+	log              *slog.Logger
+	recoverThreshold int // consecutive healthy probes required to auto-recover from degraded
 }
+
+const defaultRecoverThreshold = 3
 
 // NewHealthChecker creates a new HealthChecker.
 func NewHealthChecker(pool *accountpool.AccountPool, interval time.Duration, writer MetadataWriter) *HealthChecker {
 	return &HealthChecker{
-		pool:     pool,
-		interval: interval,
-		writer:   writer,
+		pool:             pool,
+		interval:         interval,
+		writer:           writer,
+		recoverThreshold: defaultRecoverThreshold,
 	}
 }
 
@@ -62,13 +68,44 @@ func (hc *HealthChecker) checkAll(ctx context.Context) {
 
 // checkOne probes a single account and records its health state.
 func (hc *HealthChecker) checkOne(ctx context.Context, acct *accountpool.Account) {
+	log := hc.log
+	if log == nil {
+		log = slog.Default()
+	}
+
 	start := time.Now()
-	state := acct.Driver.HealthCheck(ctx)
-	state.LastCheck = time.Now()
-	state.Latency = time.Since(start)
-	acct.Health.Store(state)
+	newState := acct.Driver.HealthCheck(ctx)
+	newState.LastCheck = time.Now()
+	newState.Latency = time.Since(start)
+
+	prev, _ := acct.Health.Load().(types.HealthState)
+
+	if prev.State == "degraded" && prev.Recoverable && newState.State == "healthy" {
+		newState.ConsecutiveHealthy = prev.ConsecutiveHealthy + 1
+		newState.Recoverable = true
+
+		if newState.ConsecutiveHealthy >= hc.recoverThreshold {
+			log.Info("health check: account recovered to healthy after consecutive good probes",
+				"vendor", acct.Vendor, "account", acct.AccountID,
+				"consecutive_healthy", newState.ConsecutiveHealthy)
+			newState.ErrorMsg = ""
+		} else {
+			newState.State = "degraded"
+			newState.ErrorMsg = prev.ErrorMsg
+		}
+	} else if newState.State == "degraded" {
+		newState.Recoverable = true
+
+		log.Info("health check: account degraded",
+			"vendor", acct.Vendor, "account", acct.AccountID,
+			"error_msg", newState.ErrorMsg)
+	} else if prev.State == "banned" || (prev.State == "degraded" && !prev.Recoverable) {
+		return
+	}
+
+	acct.Health.Store(newState)
 
 	if hc.writer != nil {
-		_ = hc.writer.ReportAccountHealth(ctx, acct.Vendor, acct.AccountID, state)
+		_ = hc.writer.ReportAccountHealth(ctx, acct.Vendor, acct.AccountID, newState)
 	}
 }

@@ -1,7 +1,10 @@
 package healthcheck
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -243,4 +246,218 @@ func TestHealthCheck_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()      // already cancelled
 	hc.Start(ctx) // should return immediately without panic
+}
+
+func TestRecover_when_degraded_and_three_consecutive_healthy_probes_expect_healthy_and_log(t *testing.T) {
+	pool := accountpool.NewAccountPool(nil)
+	d := mock.NewMockDriver(types.Vendor("mock"), mock.MockDriverConfig{
+		Health: types.HealthState{State: "healthy"},
+	})
+	acct := &accountpool.Account{
+		Vendor:    types.Vendor("mock"),
+		AccountID: "acct_1",
+		Driver:    d,
+	}
+	// Seed as probe-degraded
+	acct.Health.Store(types.HealthState{
+		State:       "degraded",
+		ErrorMsg:    "latency 2.2s > threshold 1s",
+		Recoverable: true,
+	})
+	pool.AddAccount(acct)
+
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+	hc := NewHealthChecker(pool, time.Hour, &mockWriter{})
+	hc.log = log
+
+	// Probe 1: still degraded (1 consecutive)
+	hc.checkAll(context.Background())
+	snap := pool.SnapshotAccounts()
+	h := snap[0].Health.Load().(types.HealthState)
+	if h.State != "degraded" {
+		t.Fatalf("probe 1: expected degraded, got %s", h.State)
+	}
+	if h.ConsecutiveHealthy != 1 {
+		t.Fatalf("probe 1: expected consecutive=1, got %d", h.ConsecutiveHealthy)
+	}
+
+	// Probe 2: still degraded (2 consecutive)
+	hc.checkAll(context.Background())
+	snap = pool.SnapshotAccounts()
+	h = snap[0].Health.Load().(types.HealthState)
+	if h.State != "degraded" {
+		t.Fatalf("probe 2: expected degraded, got %s", h.State)
+	}
+	if h.ConsecutiveHealthy != 2 {
+		t.Fatalf("probe 2: expected consecutive=2, got %d", h.ConsecutiveHealthy)
+	}
+
+	// Probe 3: recovered to healthy
+	hc.checkAll(context.Background())
+	snap = pool.SnapshotAccounts()
+	h = snap[0].Health.Load().(types.HealthState)
+	if h.State != "healthy" {
+		t.Fatalf("probe 3: expected healthy, got %s", h.State)
+	}
+	if h.ConsecutiveHealthy != 3 {
+		t.Fatalf("probe 3: expected consecutive=3, got %d", h.ConsecutiveHealthy)
+	}
+	if h.ErrorMsg != "" {
+		t.Errorf("expected empty error_msg after recovery, got %q", h.ErrorMsg)
+	}
+
+	logs := buf.String()
+	if !strings.Contains(logs, "account recovered to healthy") {
+		t.Errorf("expected recover log, got: %s", logs)
+	}
+}
+
+func TestRecover_when_degraded_and_healthy_probe_then_degraded_probe_expect_counter_resets(t *testing.T) {
+	pool := accountpool.NewAccountPool(nil)
+	d := mock.NewMockDriver(types.Vendor("mock"), mock.MockDriverConfig{
+		Health: types.HealthState{State: "healthy"},
+	})
+	acct := &accountpool.Account{
+		Vendor:    types.Vendor("mock"),
+		AccountID: "acct_1",
+		Driver:    d,
+	}
+	acct.Health.Store(types.HealthState{
+		State:       "degraded",
+		ErrorMsg:    "latency 2.2s > threshold 1s",
+		Recoverable: true,
+	})
+	pool.AddAccount(acct)
+
+	hc := NewHealthChecker(pool, time.Hour, &mockWriter{})
+
+	// Two consecutive healthy probes
+	hc.checkAll(context.Background())
+	hc.checkAll(context.Background())
+	snap := pool.SnapshotAccounts()
+	h := snap[0].Health.Load().(types.HealthState)
+	if h.ConsecutiveHealthy != 2 {
+		t.Fatalf("expected consecutive=2 after 2 healthy probes, got %d", h.ConsecutiveHealthy)
+	}
+
+	// Driver returns degraded on the third probe
+	degradedD := mock.NewMockDriver(types.Vendor("mock"), mock.MockDriverConfig{
+		Health: types.HealthState{State: "degraded", ErrorMsg: "api timeout"},
+	})
+	snap = pool.SnapshotAccounts()
+	snap[0].Driver = degradedD
+
+	hc.checkAll(context.Background())
+	snap = pool.SnapshotAccounts()
+	h = snap[0].Health.Load().(types.HealthState)
+	if h.State != "degraded" {
+		t.Fatalf("expected degraded after non-healthy probe, got %s", h.State)
+	}
+	if h.ConsecutiveHealthy != 0 {
+		t.Fatalf("expected counter reset to 0 after non-healthy probe, got %d", h.ConsecutiveHealthy)
+	}
+	if !h.Recoverable {
+		t.Error("expected Recoverable=true for fresh probe-driver degrade")
+	}
+}
+
+func TestRecover_when_banned_expect_not_auto_recovered(t *testing.T) {
+	pool := accountpool.NewAccountPool(nil)
+	d := mock.NewMockDriver(types.Vendor("mock"), mock.MockDriverConfig{
+		Health: types.HealthState{State: "healthy"},
+	})
+	acct := &accountpool.Account{
+		Vendor:    types.Vendor("mock"),
+		AccountID: "acct_1",
+		Driver:    d,
+	}
+	// Banned by external action — NOT Recoverable
+	acct.Health.Store(types.HealthState{
+		State:       "banned",
+		Recoverable: false,
+	})
+	pool.AddAccount(acct)
+
+	hc := NewHealthChecker(pool, time.Hour, &mockWriter{})
+
+	// Multiple healthy probes should NOT recover a banned account
+	for i := 0; i < 5; i++ {
+		hc.checkAll(context.Background())
+	}
+	snap := pool.SnapshotAccounts()
+	h := snap[0].Health.Load().(types.HealthState)
+	if h.State != "banned" {
+		t.Errorf("expected banned after 5 healthy probes, got %s", h.State)
+	}
+	if h.ConsecutiveHealthy != 0 {
+		t.Errorf("expected ConsecutiveHealthy=0 for non-recoverable account, got %d", h.ConsecutiveHealthy)
+	}
+}
+
+func TestRecover_when_manual_degraded_not_recoverable_expect_not_auto_recovered(t *testing.T) {
+	pool := accountpool.NewAccountPool(nil)
+	d := mock.NewMockDriver(types.Vendor("mock"), mock.MockDriverConfig{
+		Health: types.HealthState{State: "healthy"},
+	})
+	acct := &accountpool.Account{
+		Vendor:    types.Vendor("mock"),
+		AccountID: "acct_1",
+		Driver:    d,
+	}
+	// Manually degraded (e.g. via admin API) — NOT Recoverable
+	acct.Health.Store(types.HealthState{
+		State:       "degraded",
+		ErrorMsg:    "manual override",
+		Recoverable: false,
+	})
+	pool.AddAccount(acct)
+
+	hc := NewHealthChecker(pool, time.Hour, &mockWriter{})
+
+	for i := 0; i < 5; i++ {
+		hc.checkAll(context.Background())
+	}
+	snap := pool.SnapshotAccounts()
+	h := snap[0].Health.Load().(types.HealthState)
+	if h.State != "degraded" {
+		t.Errorf("expected degraded after 5 healthy probes (manual degrade), got %s", h.State)
+	}
+	if h.ConsecutiveHealthy != 0 {
+		t.Errorf("expected ConsecutiveHealthy=0 for non-recoverable manual degrade, got %d", h.ConsecutiveHealthy)
+	}
+}
+
+func TestRecover_when_healthy_then_probe_degraded_expect_degrade_log(t *testing.T) {
+	pool := accountpool.NewAccountPool(nil)
+	d := mock.NewMockDriver(types.Vendor("mock"), mock.MockDriverConfig{
+		Health: types.HealthState{State: "degraded", ErrorMsg: "latency 3s > threshold 2s"},
+	})
+	acct := &accountpool.Account{
+		Vendor:    types.Vendor("mock"),
+		AccountID: "acct_1",
+		Driver:    d,
+	}
+	acct.Health.Store(types.HealthState{State: "healthy"})
+	pool.AddAccount(acct)
+
+	var buf bytes.Buffer
+	log := slog.New(slog.NewTextHandler(&buf, nil))
+	hc := NewHealthChecker(pool, time.Hour, &mockWriter{})
+	hc.log = log
+
+	hc.checkAll(context.Background())
+	snap := pool.SnapshotAccounts()
+	h := snap[0].Health.Load().(types.HealthState)
+	if h.State != "degraded" {
+		t.Fatalf("expected degraded, got %s", h.State)
+	}
+	if !h.Recoverable {
+		t.Error("expected Recoverable=true for probe-driven degrade")
+	}
+
+	logs := buf.String()
+	if !strings.Contains(logs, "account degraded") {
+		t.Errorf("expected degrade log, got: %s", logs)
+	}
 }

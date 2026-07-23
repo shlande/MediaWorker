@@ -289,7 +289,7 @@ func (d *BaiduDriver) HealthCheck(ctx context.Context) types.HealthState {
 	if latency < 2*time.Second {
 		return types.HealthState{State: "healthy", LastCheck: start, Latency: latency}
 	}
-	return types.HealthState{State: "degraded", LastCheck: start, Latency: latency, ErrorMsg: fmt.Sprintf("high latency: %v", latency)}
+	return types.HealthState{State: "degraded", LastCheck: start, Latency: latency, ErrorMsg: fmt.Sprintf("latency %v > threshold 2s", latency)}
 }
 
 func degradedState(start time.Time, msg string) types.HealthState {
