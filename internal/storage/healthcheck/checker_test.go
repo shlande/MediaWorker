@@ -48,11 +48,12 @@ type concurrentTracker struct {
 	driver.Driver
 	maxConcurrent atomic.Int32
 	active        atomic.Int32
+	calls         atomic.Int32
 }
 
 func (ct *concurrentTracker) HealthCheck(ctx context.Context) types.HealthState {
+	ct.calls.Add(1)
 	v := ct.active.Add(1)
-	// track peak concurrency
 	for {
 		cur := ct.maxConcurrent.Load()
 		if v <= cur {
@@ -63,19 +64,40 @@ func (ct *concurrentTracker) HealthCheck(ctx context.Context) types.HealthState 
 		}
 	}
 	defer ct.active.Add(-1)
-	// small sleep to let other goroutines start
 	time.Sleep(5 * time.Millisecond)
 	return ct.Driver.HealthCheck(ctx)
 }
 
+func healthyDriver() driver.Driver {
+	return mock.NewMockDriver(types.Vendor("mock"), mock.MockDriverConfig{
+		Health: types.HealthState{State: "healthy"},
+	})
+}
+
+func failingDriver(msg string) driver.Driver {
+	return mock.NewMockDriver(types.Vendor("mock"), mock.MockDriverConfig{
+		Health: types.HealthState{State: "degraded", ErrorMsg: msg},
+	})
+}
+
+func addAccount(pool *accountpool.AccountPool, d driver.Driver, id string) *accountpool.Account {
+	acct := &accountpool.Account{
+		Vendor:    types.Vendor("mock"),
+		AccountID: id,
+		Driver:    d,
+	}
+	acct.Health.Store(types.HealthState{State: "healthy"})
+	pool.AddAccount(acct)
+	return acct
+}
+
+// Given never-used (idle) accounts, when checkAll runs, then every account is
+// probed and healthy results are stored and reported.
 func TestCheckAll_ProbesAllAccountsConcurrently(t *testing.T) {
 	pool := accountpool.NewAccountPool(nil)
 	for i := 0; i < 10; i++ {
 		aid := "acct_" + string(rune('0'+i))
-		d := mock.NewMockDriver(types.Vendor("mock"), mock.MockDriverConfig{
-			Health: types.HealthState{State: "healthy"},
-		})
-		ct := &concurrentTracker{Driver: d}
+		ct := &concurrentTracker{Driver: healthyDriver()}
 		pool.AddAccount(&accountpool.Account{
 			Vendor:    types.Vendor("mock"),
 			AccountID: aid,
@@ -84,16 +106,13 @@ func TestCheckAll_ProbesAllAccountsConcurrently(t *testing.T) {
 	}
 
 	writer := &mockWriter{}
-	hc := NewHealthChecker(pool, time.Hour, writer)
+	hc := NewHealthChecker(pool, time.Hour, time.Hour, writer)
 	hc.checkAll(context.Background())
 
-	// All 10 accounts probed
 	accounts := pool.SnapshotAccounts()
 	if len(accounts) != 10 {
 		t.Fatalf("expected 10 accounts, got %d", len(accounts))
 	}
-
-	// All health states stored
 	for _, acct := range accounts {
 		h, ok := acct.Health.Load().(types.HealthState)
 		if !ok {
@@ -104,10 +123,7 @@ func TestCheckAll_ProbesAllAccountsConcurrently(t *testing.T) {
 			t.Errorf("account %s: expected state healthy, got %s", acct.AccountID, h.State)
 		}
 	}
-
-	// All reported to writer
-	calls := writer.calls()
-	if len(calls) != 10 {
+	if calls := writer.calls(); len(calls) != 10 {
 		t.Fatalf("expected 10 writer calls, got %d", len(calls))
 	}
 }
@@ -116,10 +132,7 @@ func TestCheckAll_ConcurrentExecution(t *testing.T) {
 	pool := accountpool.NewAccountPool(nil)
 	for i := 0; i < 5; i++ {
 		aid := "acct_" + string(rune('0'+i))
-		d := mock.NewMockDriver(types.Vendor("mock"), mock.MockDriverConfig{
-			Health: types.HealthState{State: "healthy"},
-		})
-		ct := &concurrentTracker{Driver: d}
+		ct := &concurrentTracker{Driver: healthyDriver()}
 		pool.AddAccount(&accountpool.Account{
 			Vendor:    types.Vendor("mock"),
 			AccountID: aid,
@@ -127,101 +140,187 @@ func TestCheckAll_ConcurrentExecution(t *testing.T) {
 		})
 	}
 
-	hc := NewHealthChecker(pool, time.Hour, &mockWriter{})
+	hc := NewHealthChecker(pool, time.Hour, time.Hour, &mockWriter{})
 	hc.checkAll(context.Background())
-
-	// The tracker should have seen concurrency > 1 (at least 2 goroutines in flight)
-	// but we just check that it didn't deadlock — actual concurrency depends on
-	// go scheduler timing. If accounts are probed sequentially, this still passes.
 	_ = pool.SnapshotAccounts()
 }
 
 func TestHealthCheck_IntervalCallsCheckAll(t *testing.T) {
 	pool := accountpool.NewAccountPool(nil)
-	d := mock.NewMockDriver(types.Vendor("mock"), mock.MockDriverConfig{
-		Health: types.HealthState{State: "healthy"},
-	})
-	pool.AddAccount(&accountpool.Account{
-		Vendor:    types.Vendor("mock"),
-		AccountID: "acct_1",
-		Driver:    d,
-	})
+	addAccount(pool, healthyDriver(), "acct_1")
 
 	writer := &mockWriter{}
-	hc := NewHealthChecker(pool, 50*time.Millisecond, writer)
+	hc := NewHealthChecker(pool, 50*time.Millisecond, time.Hour, writer)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
-
 	hc.Start(ctx)
 
-	// Within 200ms with 50ms interval, checkAll should have run at least 1 time.
-	calls := writer.calls()
-	// 200ms / 50ms = at most 4 ticks. First tick fires at 50ms.
-	// Allow 0 in case scheduling is tight — but it should run at least once.
-	if len(calls) < 1 {
+	if calls := writer.calls(); len(calls) < 1 {
 		t.Errorf("expected at least 1 health check within 200ms, got %d", len(calls))
 	}
 }
 
-func TestHealthCheck_DegradedState(t *testing.T) {
+// Given a recently used account, when checkAll runs, then the account is
+// skipped entirely — usage itself is the health signal.
+func TestCheckOne_SkipsRecentlyUsed(t *testing.T) {
 	pool := accountpool.NewAccountPool(nil)
-	d := mock.NewMockDriver(types.Vendor("mock"), mock.MockDriverConfig{
-		Health: types.HealthState{State: "degraded", ErrorMsg: "api timeout"},
-	})
-	pool.AddAccount(&accountpool.Account{
-		Vendor:    types.Vendor("mock"),
-		AccountID: "acct_1",
-		Driver:    d,
-	})
+	ct := &concurrentTracker{Driver: failingDriver("should not be called")}
+	addAccount(pool, ct, "acct_1")
+	accts := pool.SnapshotAccounts()
+	accts[0].MarkUsed(time.Now())
 
 	writer := &mockWriter{}
-	hc := NewHealthChecker(pool, time.Hour, writer)
+	hc := NewHealthChecker(pool, time.Hour, time.Hour, writer)
 	hc.checkAll(context.Background())
 
+	if got := ct.calls.Load(); got != 0 {
+		t.Errorf("driver probed %d times, want 0 for recently used account", got)
+	}
+	if calls := writer.calls(); len(calls) != 0 {
+		t.Errorf("writer calls = %d, want 0", len(calls))
+	}
+}
+
+// Given an account used over idleThreshold ago, when checkAll runs, then it
+// is probed like an idle account.
+func TestCheckOne_ProbesStaleUsedAccount(t *testing.T) {
+	pool := accountpool.NewAccountPool(nil)
+	ct := &concurrentTracker{Driver: healthyDriver()}
+	addAccount(pool, ct, "acct_1")
 	accts := pool.SnapshotAccounts()
-	if len(accts) != 1 {
-		t.Fatalf("expected 1 account, got %d", len(accts))
+	accts[0].MarkUsed(time.Now().Add(-2 * time.Hour))
+
+	writer := &mockWriter{}
+	hc := NewHealthChecker(pool, time.Hour, time.Hour, writer)
+	hc.checkAll(context.Background())
+
+	if got := ct.calls.Load(); got != 1 {
+		t.Errorf("driver probed %d times, want 1", got)
 	}
-	h, ok := accts[0].Health.Load().(types.HealthState)
-	if !ok {
-		t.Fatal("health state not stored")
+	if calls := writer.calls(); len(calls) != 1 {
+		t.Errorf("writer calls = %d, want 1", len(calls))
 	}
-	if h.State != "degraded" {
-		t.Errorf("expected degraded state, got %s", h.State)
-	}
-	if h.ErrorMsg != "api timeout" {
-		t.Errorf("expected error msg 'api timeout', got %q", h.ErrorMsg)
+}
+
+// Given a tainted (banned) account, when checkAll runs, then the probe is
+// skipped and the banned state is never overwritten.
+func TestCheckOne_BannedNotProbed(t *testing.T) {
+	pool := accountpool.NewAccountPool(nil)
+	ct := &concurrentTracker{Driver: healthyDriver()}
+	acct := addAccount(pool, ct, "acct_1")
+	acct.Health.Store(types.HealthState{State: "banned", ErrorMsg: "vendor 403"})
+
+	writer := &mockWriter{}
+	hc := NewHealthChecker(pool, time.Hour, time.Hour, writer)
+	for i := 0; i < 3; i++ {
+		hc.checkAll(context.Background())
 	}
 
-	calls := writer.calls()
-	if len(calls) != 1 {
-		t.Fatalf("expected 1 writer call, got %d", len(calls))
+	if got := ct.calls.Load(); got != 0 {
+		t.Errorf("driver probed %d times, want 0 for banned account", got)
 	}
-	if calls[0].state.State != "degraded" {
-		t.Errorf("expected degraded in writer call, got %s", calls[0].state.State)
+	h := acct.Health.Load().(types.HealthState)
+	if h.State != "banned" || h.ErrorMsg != "vendor 403" {
+		t.Errorf("health = %+v, want banned state preserved", h)
+	}
+	if calls := writer.calls(); len(calls) != 0 {
+		t.Errorf("writer calls = %d, want 0", len(calls))
+	}
+}
+
+// Given consecutive probe failures, when the threshold is reached, then the
+// account is stored and reported as banned; failures below the threshold
+// leave state and writer untouched.
+func TestFailures_ThresholdTripsBan(t *testing.T) {
+	pool := accountpool.NewAccountPool(nil)
+	acct := addAccount(pool, failingDriver("token: invalid_client"), "acct_1")
+
+	writer := &mockWriter{}
+	hc := NewHealthChecker(pool, time.Hour, time.Hour, writer)
+
+	for i := 1; i <= 2; i++ {
+		hc.checkAll(context.Background())
+		h := acct.Health.Load().(types.HealthState)
+		if h.State != "healthy" {
+			t.Fatalf("probe %d: state = %s, want healthy (sub-threshold failure keeps state)", i, h.State)
+		}
+	}
+	if calls := writer.calls(); len(calls) != 0 {
+		t.Fatalf("writer calls = %d, want 0 before threshold", len(calls))
+	}
+
+	hc.checkAll(context.Background())
+	h := acct.Health.Load().(types.HealthState)
+	if h.State != "banned" {
+		t.Fatalf("state = %s, want banned after 3 consecutive failures", h.State)
+	}
+	if h.ErrorMsg != "token: invalid_client" {
+		t.Errorf("error_msg = %q, want probe failure reason", h.ErrorMsg)
+	}
+	calls := writer.calls()
+	if len(calls) != 1 || calls[0].state.State != "banned" {
+		t.Fatalf("writer calls = %+v, want exactly one banned report", calls)
+	}
+}
+
+// Given interleaved results, when a healthy probe lands between failures,
+// then the consecutive-failure counter resets.
+func TestFailures_ResetOnHealthy(t *testing.T) {
+	pool := accountpool.NewAccountPool(nil)
+	acct := addAccount(pool, failingDriver("net timeout"), "acct_1")
+
+	writer := &mockWriter{}
+	hc := NewHealthChecker(pool, time.Hour, time.Hour, writer)
+
+	hc.checkAll(context.Background()) // fail 1
+	hc.checkAll(context.Background()) // fail 2
+	acct.Driver = healthyDriver()
+	hc.checkAll(context.Background()) // healthy → reset, stored + reported
+	acct.Driver = failingDriver("net timeout")
+	hc.checkAll(context.Background()) // fail 1 again
+
+	h := acct.Health.Load().(types.HealthState)
+	if h.State != "healthy" {
+		t.Fatalf("state = %s, want healthy (threshold never reached)", h.State)
+	}
+	calls := writer.calls()
+	if len(calls) != 1 || calls[0].state.State != "healthy" {
+		t.Fatalf("writer calls = %+v, want exactly one healthy report", calls)
+	}
+}
+
+// Given a driver-reported ban (403), when the probe runs, then it is stored
+// and reported immediately without failure counting.
+func TestCheckOne_DriverBanSignal(t *testing.T) {
+	pool := accountpool.NewAccountPool(nil)
+	d := mock.NewMockDriver(types.Vendor("mock"), mock.MockDriverConfig{
+		Health: types.HealthState{State: "banned", ErrorMsg: "banned (HTTP 403)"},
+	})
+	acct := addAccount(pool, d, "acct_1")
+
+	writer := &mockWriter{}
+	hc := NewHealthChecker(pool, time.Hour, time.Hour, writer)
+	hc.checkAll(context.Background())
+
+	h := acct.Health.Load().(types.HealthState)
+	if h.State != "banned" {
+		t.Fatalf("state = %s, want banned", h.State)
+	}
+	calls := writer.calls()
+	if len(calls) != 1 || calls[0].state.State != "banned" {
+		t.Fatalf("writer calls = %+v, want exactly one banned report", calls)
 	}
 }
 
 func TestHealthCheck_NoWriter(t *testing.T) {
-	// When writer is nil, checkOne should not panic.
 	pool := accountpool.NewAccountPool(nil)
-	d := mock.NewMockDriver(types.Vendor("mock"), mock.MockDriverConfig{
-		Health: types.HealthState{State: "healthy"},
-	})
-	pool.AddAccount(&accountpool.Account{
-		Vendor:    types.Vendor("mock"),
-		AccountID: "acct_1",
-		Driver:    d,
-	})
+	addAccount(pool, healthyDriver(), "acct_1")
 
-	hc := NewHealthChecker(pool, time.Hour, nil)
+	hc := NewHealthChecker(pool, time.Hour, time.Hour, nil)
 	hc.checkAll(context.Background())
 
 	accts := pool.SnapshotAccounts()
-	if len(accts) != 1 {
-		t.Fatalf("expected 1 account, got %d", len(accts))
-	}
 	h, ok := accts[0].Health.Load().(types.HealthState)
 	if !ok {
 		t.Fatal("health state not stored")
@@ -233,231 +332,32 @@ func TestHealthCheck_NoWriter(t *testing.T) {
 
 func TestHealthCheck_ContextCancellation(t *testing.T) {
 	pool := accountpool.NewAccountPool(nil)
-	d := mock.NewMockDriver(types.Vendor("mock"), mock.MockDriverConfig{
-		Health: types.HealthState{State: "healthy"},
-	})
-	pool.AddAccount(&accountpool.Account{
-		Vendor:    types.Vendor("mock"),
-		AccountID: "acct_1",
-		Driver:    d,
-	})
+	addAccount(pool, healthyDriver(), "acct_1")
 
-	hc := NewHealthChecker(pool, time.Hour, &mockWriter{})
+	hc := NewHealthChecker(pool, time.Hour, time.Hour, &mockWriter{})
 	ctx, cancel := context.WithCancel(context.Background())
-	cancel()      // already cancelled
-	hc.Start(ctx) // should return immediately without panic
+	cancel()
+	hc.Start(ctx)
 }
 
-func TestRecover_when_degraded_and_three_consecutive_healthy_probes_expect_healthy_and_log(t *testing.T) {
+// Given a probe failure, when the first failure lands, then it is logged with
+// the consecutive count and the driver error message.
+func TestFailures_LogsProbeFailure(t *testing.T) {
 	pool := accountpool.NewAccountPool(nil)
-	d := mock.NewMockDriver(types.Vendor("mock"), mock.MockDriverConfig{
-		Health: types.HealthState{State: "healthy"},
-	})
-	acct := &accountpool.Account{
-		Vendor:    types.Vendor("mock"),
-		AccountID: "acct_1",
-		Driver:    d,
-	}
-	// Seed as probe-degraded
-	acct.Health.Store(types.HealthState{
-		State:       "degraded",
-		ErrorMsg:    "latency 2.2s > threshold 1s",
-		Recoverable: true,
-	})
-	pool.AddAccount(acct)
+	addAccount(pool, failingDriver("token: invalid_client"), "acct_1")
 
 	var buf bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&buf, nil))
-	hc := NewHealthChecker(pool, time.Hour, &mockWriter{})
-	hc.log = log
-
-	// Probe 1: still degraded (1 consecutive)
-	hc.checkAll(context.Background())
-	snap := pool.SnapshotAccounts()
-	h := snap[0].Health.Load().(types.HealthState)
-	if h.State != "degraded" {
-		t.Fatalf("probe 1: expected degraded, got %s", h.State)
-	}
-	if h.ConsecutiveHealthy != 1 {
-		t.Fatalf("probe 1: expected consecutive=1, got %d", h.ConsecutiveHealthy)
-	}
-
-	// Probe 2: still degraded (2 consecutive)
-	hc.checkAll(context.Background())
-	snap = pool.SnapshotAccounts()
-	h = snap[0].Health.Load().(types.HealthState)
-	if h.State != "degraded" {
-		t.Fatalf("probe 2: expected degraded, got %s", h.State)
-	}
-	if h.ConsecutiveHealthy != 2 {
-		t.Fatalf("probe 2: expected consecutive=2, got %d", h.ConsecutiveHealthy)
-	}
-
-	// Probe 3: recovered to healthy
-	hc.checkAll(context.Background())
-	snap = pool.SnapshotAccounts()
-	h = snap[0].Health.Load().(types.HealthState)
-	if h.State != "healthy" {
-		t.Fatalf("probe 3: expected healthy, got %s", h.State)
-	}
-	if h.ConsecutiveHealthy != 3 {
-		t.Fatalf("probe 3: expected consecutive=3, got %d", h.ConsecutiveHealthy)
-	}
-	if h.ErrorMsg != "" {
-		t.Errorf("expected empty error_msg after recovery, got %q", h.ErrorMsg)
-	}
-
-	logs := buf.String()
-	if !strings.Contains(logs, "account recovered to healthy") {
-		t.Errorf("expected recover log, got: %s", logs)
-	}
-}
-
-func TestRecover_when_degraded_and_healthy_probe_then_degraded_probe_expect_counter_resets(t *testing.T) {
-	pool := accountpool.NewAccountPool(nil)
-	d := mock.NewMockDriver(types.Vendor("mock"), mock.MockDriverConfig{
-		Health: types.HealthState{State: "healthy"},
-	})
-	acct := &accountpool.Account{
-		Vendor:    types.Vendor("mock"),
-		AccountID: "acct_1",
-		Driver:    d,
-	}
-	acct.Health.Store(types.HealthState{
-		State:       "degraded",
-		ErrorMsg:    "latency 2.2s > threshold 1s",
-		Recoverable: true,
-	})
-	pool.AddAccount(acct)
-
-	hc := NewHealthChecker(pool, time.Hour, &mockWriter{})
-
-	// Two consecutive healthy probes
-	hc.checkAll(context.Background())
-	hc.checkAll(context.Background())
-	snap := pool.SnapshotAccounts()
-	h := snap[0].Health.Load().(types.HealthState)
-	if h.ConsecutiveHealthy != 2 {
-		t.Fatalf("expected consecutive=2 after 2 healthy probes, got %d", h.ConsecutiveHealthy)
-	}
-
-	// Driver returns degraded on the third probe
-	degradedD := mock.NewMockDriver(types.Vendor("mock"), mock.MockDriverConfig{
-		Health: types.HealthState{State: "degraded", ErrorMsg: "api timeout"},
-	})
-	snap = pool.SnapshotAccounts()
-	snap[0].Driver = degradedD
-
-	hc.checkAll(context.Background())
-	snap = pool.SnapshotAccounts()
-	h = snap[0].Health.Load().(types.HealthState)
-	if h.State != "degraded" {
-		t.Fatalf("expected degraded after non-healthy probe, got %s", h.State)
-	}
-	if h.ConsecutiveHealthy != 0 {
-		t.Fatalf("expected counter reset to 0 after non-healthy probe, got %d", h.ConsecutiveHealthy)
-	}
-	if !h.Recoverable {
-		t.Error("expected Recoverable=true for fresh probe-driver degrade")
-	}
-}
-
-func TestRecover_when_banned_expect_not_auto_recovered(t *testing.T) {
-	pool := accountpool.NewAccountPool(nil)
-	d := mock.NewMockDriver(types.Vendor("mock"), mock.MockDriverConfig{
-		Health: types.HealthState{State: "healthy"},
-	})
-	acct := &accountpool.Account{
-		Vendor:    types.Vendor("mock"),
-		AccountID: "acct_1",
-		Driver:    d,
-	}
-	// Banned by external action — NOT Recoverable
-	acct.Health.Store(types.HealthState{
-		State:       "banned",
-		Recoverable: false,
-	})
-	pool.AddAccount(acct)
-
-	hc := NewHealthChecker(pool, time.Hour, &mockWriter{})
-
-	// Multiple healthy probes should NOT recover a banned account
-	for i := 0; i < 5; i++ {
-		hc.checkAll(context.Background())
-	}
-	snap := pool.SnapshotAccounts()
-	h := snap[0].Health.Load().(types.HealthState)
-	if h.State != "banned" {
-		t.Errorf("expected banned after 5 healthy probes, got %s", h.State)
-	}
-	if h.ConsecutiveHealthy != 0 {
-		t.Errorf("expected ConsecutiveHealthy=0 for non-recoverable account, got %d", h.ConsecutiveHealthy)
-	}
-}
-
-func TestRecover_when_manual_degraded_not_recoverable_expect_not_auto_recovered(t *testing.T) {
-	pool := accountpool.NewAccountPool(nil)
-	d := mock.NewMockDriver(types.Vendor("mock"), mock.MockDriverConfig{
-		Health: types.HealthState{State: "healthy"},
-	})
-	acct := &accountpool.Account{
-		Vendor:    types.Vendor("mock"),
-		AccountID: "acct_1",
-		Driver:    d,
-	}
-	// Manually degraded (e.g. via admin API) — NOT Recoverable
-	acct.Health.Store(types.HealthState{
-		State:       "degraded",
-		ErrorMsg:    "manual override",
-		Recoverable: false,
-	})
-	pool.AddAccount(acct)
-
-	hc := NewHealthChecker(pool, time.Hour, &mockWriter{})
-
-	for i := 0; i < 5; i++ {
-		hc.checkAll(context.Background())
-	}
-	snap := pool.SnapshotAccounts()
-	h := snap[0].Health.Load().(types.HealthState)
-	if h.State != "degraded" {
-		t.Errorf("expected degraded after 5 healthy probes (manual degrade), got %s", h.State)
-	}
-	if h.ConsecutiveHealthy != 0 {
-		t.Errorf("expected ConsecutiveHealthy=0 for non-recoverable manual degrade, got %d", h.ConsecutiveHealthy)
-	}
-}
-
-func TestRecover_when_healthy_then_probe_degraded_expect_degrade_log(t *testing.T) {
-	pool := accountpool.NewAccountPool(nil)
-	d := mock.NewMockDriver(types.Vendor("mock"), mock.MockDriverConfig{
-		Health: types.HealthState{State: "degraded", ErrorMsg: "latency 3s > threshold 2s"},
-	})
-	acct := &accountpool.Account{
-		Vendor:    types.Vendor("mock"),
-		AccountID: "acct_1",
-		Driver:    d,
-	}
-	acct.Health.Store(types.HealthState{State: "healthy"})
-	pool.AddAccount(acct)
-
-	var buf bytes.Buffer
-	log := slog.New(slog.NewTextHandler(&buf, nil))
-	hc := NewHealthChecker(pool, time.Hour, &mockWriter{})
+	hc := NewHealthChecker(pool, time.Hour, time.Hour, &mockWriter{})
 	hc.log = log
 
 	hc.checkAll(context.Background())
-	snap := pool.SnapshotAccounts()
-	h := snap[0].Health.Load().(types.HealthState)
-	if h.State != "degraded" {
-		t.Fatalf("expected degraded, got %s", h.State)
-	}
-	if !h.Recoverable {
-		t.Error("expected Recoverable=true for probe-driven degrade")
-	}
 
 	logs := buf.String()
-	if !strings.Contains(logs, "account degraded") {
-		t.Errorf("expected degrade log, got: %s", logs)
+	if !strings.Contains(logs, "idle probe failed") {
+		t.Errorf("expected probe failure log, got: %s", logs)
+	}
+	if !strings.Contains(logs, "token: invalid_client") {
+		t.Errorf("expected driver error in log, got: %s", logs)
 	}
 }

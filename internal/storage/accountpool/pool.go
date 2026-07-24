@@ -9,6 +9,7 @@ import (
 	"sort"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"golang.org/x/sync/errgroup"
 	"golang.org/x/time/rate"
@@ -56,6 +57,25 @@ type Account struct {
 	CB           CircuitBreaker
 	Health       atomic.Value // stores types.HealthState
 	VendorWeight float64
+	// LastUsed is the unix-second timestamp of the last successful use
+	// (upload/download); zero means never used. Drives idle probing.
+	LastUsed atomic.Int64
+}
+
+// MarkUsed records a successful use at t.
+func (a *Account) MarkUsed(t time.Time) { a.LastUsed.Store(t.Unix()) }
+
+// LastUsedAt returns the last successful use time; zero Time means never used.
+func (a *Account) LastUsedAt() time.Time { return time.Unix(a.LastUsed.Load(), 0) }
+
+// EffectiveWeight reports the scheduling weight: 0 while tainted (banned),
+// else VendorWeight.
+func (a *Account) EffectiveWeight() float64 {
+	h, _ := a.Health.Load().(types.HealthState)
+	if h.Taint() != nil {
+		return 0
+	}
+	return a.VendorWeight
 }
 
 // AccountPool manages a set of accounts indexed by key ("vendor:account_id")
@@ -101,7 +121,7 @@ func (ap *AccountPool) account(key string) *Account {
 // to obtain the download link.
 //
 // Selection criteria (all must pass):
-//   - HealthState.State == "healthy"
+//   - no scheduling taint (banned); latency is informational, never a filter
 //   - CircuitBreaker.State() != StateOpen
 //   - Limiter.Allow() returns true
 //   - Concurrent < Driver.RateLimitConfig().ConcurrentLimit
@@ -124,9 +144,10 @@ func (ap *AccountPool) SelectForRead(ctx context.Context, blobHash string) (*Acc
 			continue
 		}
 
-		// Health check
-		h, ok := acct.Health.Load().(types.HealthState)
-		if !ok || h.State != "healthy" {
+		// Tainted accounts (banned) are excluded; latency and transient
+		// probe failures are informational and never filter.
+		h, _ := acct.Health.Load().(types.HealthState)
+		if h.Taint() != nil {
 			continue
 		}
 
@@ -170,8 +191,8 @@ func (ap *AccountPool) SelectK(ctx context.Context, k int) ([]*Account, error) {
 
 	var candidates []*Account
 	for _, acct := range ap.accounts {
-		h, ok := acct.Health.Load().(types.HealthState)
-		if !ok || h.State != "healthy" {
+		h, _ := acct.Health.Load().(types.HealthState)
+		if h.Taint() != nil {
 			continue
 		}
 		if acct.CB != nil && acct.CB.State() == StateOpen {
@@ -269,6 +290,7 @@ func (ap *AccountPool) UploadBlob(ctx context.Context, blobHash string, data []b
 			continue
 		}
 		successCount++
+		accounts[r.idx].MarkUsed(time.Now())
 		_ = r.fi // metadata WriteSegmentLocations would use this
 	}
 

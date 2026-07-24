@@ -139,11 +139,9 @@ func run(configPath string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// 9. Account health checker — probes every 30s and writes to PG.
-	// HealthCheck() makes real HTTP calls to each vendor's drive API
-	// (Baidu: /rest/2.0/xpan/nas, OneDrive: graph API root) so the 30s
-	// period keeps per-account API cost at ~2 calls/min.
-	checker := healthcheck.NewHealthChecker(pool, 30*time.Second, mc)
+	// 9. Account health checker — probes only idle accounts (>1h without
+	// successful use) every 5min; recent traffic itself is the health signal.
+	checker := healthcheck.NewHealthChecker(pool, 5*time.Minute, time.Hour, mc)
 	go checker.Start(ctx)
 
 	sigCh := make(chan os.Signal, 1)

@@ -155,6 +155,34 @@ type HealthState struct {
 	Recoverable        bool          `json:"-"` // true when degraded by probe, auto-recoverable
 }
 
+// TaintKind identifies a scheduling taint on an account (k8s-taint-style):
+// any taint forces the account's effective scheduling weight to 0. Disabled
+// and banned are taint kinds; latency and transient probe failures are
+// informational only and never exclude an account from scheduling.
+type TaintKind string
+
+const (
+	// TaintDisabled marks a manually disabled account (enabled=false).
+	TaintDisabled TaintKind = "disabled"
+	// TaintBanned marks a vendor ban (403 signal) or a manual ban.
+	TaintBanned TaintKind = "banned"
+)
+
+// Taint is a single scheduling taint on an account.
+type Taint struct {
+	Kind   TaintKind `json:"kind"`
+	Reason string    `json:"reason,omitempty"`
+}
+
+// Taint returns the scheduling taint implied by the health state, or nil
+// when the account is untainted. Only "banned" taints.
+func (h HealthState) Taint() *Taint {
+	if h.State != "banned" {
+		return nil
+	}
+	return &Taint{Kind: TaintBanned, Reason: h.ErrorMsg}
+}
+
 // RateLimitConfig defines rate-limiting parameters for a cloud drive account.
 type RateLimitConfig struct {
 	QPS             float64 `json:"qps"`

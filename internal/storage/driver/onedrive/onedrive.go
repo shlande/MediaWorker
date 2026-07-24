@@ -468,19 +468,12 @@ func (d *OneDriveDriver) HealthCheck(ctx context.Context) types.HealthState {
 			ErrorMsg:  "429 Too Many Requests",
 		}
 	}
-	if resp.StatusCode == http.StatusOK && latency < time.Second {
+	if resp.StatusCode == http.StatusOK {
+		// 延迟仅作观测值记录，不判降级 —— 网盘类服务延迟不影响可用性
 		return types.HealthState{
 			State:     "healthy",
 			LastCheck: time.Now(),
 			Latency:   latency,
-		}
-	}
-	if resp.StatusCode == http.StatusOK {
-		return types.HealthState{
-			State:     "degraded",
-			LastCheck: time.Now(),
-			Latency:   latency,
-			ErrorMsg:  fmt.Sprintf("latency %v > threshold 1s", latency),
 		}
 	}
 	// Any other status: degraded.

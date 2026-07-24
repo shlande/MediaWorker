@@ -827,9 +827,9 @@ func TestBaiduDriver_List_errnoNonBan(t *testing.T) {
 	}
 }
 
-// ─── Test: HealthCheck high latency ───
+// ─── Test: HealthCheck high latency stays healthy ───
 
-func TestBaiduDriver_HealthCheck_degradedSlow(t *testing.T) {
+func TestBaiduDriver_HealthCheck_slowStaysHealthy(t *testing.T) {
 	srv := newMockBaiduServer()
 	defer srv.Close()
 
@@ -839,13 +839,15 @@ func TestBaiduDriver_HealthCheck_degradedSlow(t *testing.T) {
 	})
 
 	d := makeBaiduDriver(t, srv)
-	// Use a short timeout context
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	state := d.HealthCheck(ctx)
-	if state.State != "degraded" {
-		t.Errorf("HealthCheck.State = %q, want degraded (high latency)", state.State)
+	if state.State != "healthy" {
+		t.Errorf("HealthCheck.State = %q, want healthy (latency is informational)", state.State)
+	}
+	if state.Latency < 2500*time.Millisecond {
+		t.Errorf("HealthCheck.Latency = %v, want >= 2.5s recorded", state.Latency)
 	}
 }
 

@@ -237,7 +237,7 @@ func TestSelectForRead_allBanned_returnsError(t *testing.T) {
 	}
 }
 
-func TestSelectForRead_unhealthyState_skipsAccount(t *testing.T) {
+func TestSelectForRead_taintSemantics(t *testing.T) {
 	ctx := context.Background()
 
 	mc := &mockBlobLocationClient{
@@ -250,21 +250,33 @@ func TestSelectForRead_unhealthyState_skipsAccount(t *testing.T) {
 	}
 	pool := NewAccountPool(mc)
 
-	// degraded account → skipped
 	acct1 := newAccount(string(types.Vendor115), "acct1", mock.NewMockDriver(types.Vendor115, mock.MockDriverConfig{}), 3.0, rate.NewLimiter(10, 20), newMockCB(StateClosed))
 	acct1.Health.Store(types.HealthState{State: "degraded"})
 
 	acct2 := newAccount(string(types.VendorBaidu), "acct2", mock.NewMockDriver(types.VendorBaidu, mock.MockDriverConfig{}), 2.0, rate.NewLimiter(10, 20), newMockCB(StateClosed))
+	acct2.Concurrent.Store(1)
 
 	pool.AddAccount(acct1)
 	pool.AddAccount(acct2)
 
+	// degraded is informational (no taint): acct1 stays eligible and wins the
+	// score tie-break (0/3.0 < 1/2.0).
 	got, err := pool.SelectForRead(ctx, "hash6")
 	if err != nil {
 		t.Fatalf("SelectForRead: unexpected error: %v", err)
 	}
+	if got.AccountID != "acct1" {
+		t.Errorf("SelectForRead with degraded = %q, want %q (degraded must stay eligible)", got.AccountID, "acct1")
+	}
+
+	// banned is a taint: acct1 is excluded, acct2 wins.
+	acct1.Health.Store(types.HealthState{State: "banned"})
+	got, err = pool.SelectForRead(ctx, "hash6")
+	if err != nil {
+		t.Fatalf("SelectForRead: unexpected error: %v", err)
+	}
 	if got.AccountID != "acct2" {
-		t.Errorf("SelectForRead with degraded = %q, want %q", got.AccountID, "acct2")
+		t.Errorf("SelectForRead with banned = %q, want %q", got.AccountID, "acct2")
 	}
 }
 

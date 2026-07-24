@@ -432,7 +432,7 @@ func Test_HealthCheck_when_429_expect_BanSignalError(t *testing.T) {
 	}
 }
 
-func Test_HealthCheck_when_slow_expect_degraded(t *testing.T) {
+func Test_HealthCheck_when_slow_expect_healthy(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(1200 * time.Millisecond)
 		w.WriteHeader(http.StatusOK)
@@ -442,8 +442,11 @@ func Test_HealthCheck_when_slow_expect_degraded(t *testing.T) {
 	d, ctx := newTestDriver(t, server)
 	state := d.HealthCheck(ctx)
 
-	if state.State != "degraded" {
-		t.Errorf("expected degraded due to high latency, got %s", state.State)
+	if state.State != "healthy" {
+		t.Errorf("expected healthy (latency is informational), got %s", state.State)
+	}
+	if state.Latency < 1200*time.Millisecond {
+		t.Errorf("HealthCheck.Latency = %v, want >= 1.2s recorded", state.Latency)
 	}
 }
 

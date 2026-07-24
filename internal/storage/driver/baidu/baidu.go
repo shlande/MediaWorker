@@ -286,10 +286,8 @@ func (d *BaiduDriver) HealthCheck(ctx context.Context) types.HealthState {
 	if body.Errno != 0 {
 		return degradedState(start, fmt.Sprintf("errno=%d", body.Errno))
 	}
-	if latency < 2*time.Second {
-		return types.HealthState{State: "healthy", LastCheck: start, Latency: latency}
-	}
-	return types.HealthState{State: "degraded", LastCheck: start, Latency: latency, ErrorMsg: fmt.Sprintf("latency %v > threshold 2s", latency)}
+	// 延迟仅作观测值记录，不判降级 —— 网盘类服务延迟不影响可用性
+	return types.HealthState{State: "healthy", LastCheck: start, Latency: latency}
 }
 
 func degradedState(start time.Time, msg string) types.HealthState {

@@ -258,10 +258,16 @@ func TestBuildFromSnapshot_missingClientSecret_degradesOnFirstRefresh(t *testing
 		t.Fatalf("HealthCheck after failed refresh = %q, want degraded (err %q)", h.State, h.ErrorMsg)
 	}
 
-	// Health degradation path: pool applies the probe result → excluded from SelectK.
+	// Degraded is informational (no taint): SelectK still selects the account.
 	pool.UpdateHealth("baidu:bd_bad", h)
+	if _, err := pool.SelectK(context.Background(), 1); err != nil {
+		t.Errorf("SelectK with degraded account must succeed: %v", err)
+	}
+
+	// Banned is a scheduling taint: SelectK excludes the account.
+	pool.UpdateHealth("baidu:bd_bad", types.HealthState{State: "banned"})
 	if _, err := pool.SelectK(context.Background(), 1); err == nil {
-		t.Error("SelectK after degradation must fail (no healthy accounts), got nil error")
+		t.Error("SelectK after ban must fail (all accounts tainted), got nil error")
 	}
 }
 
