@@ -64,7 +64,7 @@ func (d *Dispatcher) handleAccountSnapshot(payload []byte) {
 		return
 	}
 	fresh := accountpool.BuildFromSnapshot(entries, nil)
-	d.pool.ReplaceAll(accountsFromPool(fresh))
+	d.pool.ReplaceAll(accountpool.FlattenAccounts(fresh))
 	d.logger.Info("events: account pool rebuilt from snapshot", "accounts", len(fresh.SnapshotAccounts()))
 }
 
@@ -138,26 +138,4 @@ func (d *Dispatcher) handleCircuit(payload []byte, open bool) {
 // (i.e. the field was absent from the event payload).
 func credentialEmpty(c types.Credential) bool {
 	return c.Cookies == nil && c.AccessToken == "" && c.RefreshToken == "" && c.TokenExpire.IsZero()
-}
-
-// accountsFromPool flattens a freshly built pool into value Accounts for
-// ReplaceAll. Field-wise assignment avoids copying the atomic fields of live
-// Accounts (vet copylocks); Health and Concurrent are re-stored as values.
-func accountsFromPool(p *accountpool.AccountPool) []accountpool.Account {
-	snap := p.SnapshotAccounts()
-	out := make([]accountpool.Account, len(snap))
-	for i, a := range snap {
-		out[i].Vendor = a.Vendor
-		out[i].AccountID = a.AccountID
-		out[i].Credential = a.Credential
-		out[i].Driver = a.Driver
-		out[i].Limiter = a.Limiter
-		out[i].CB = a.CB
-		out[i].VendorWeight = a.VendorWeight
-		out[i].Concurrent.Store(a.Concurrent.Load())
-		if h, ok := a.Health.Load().(types.HealthState); ok {
-			out[i].Health.Store(h)
-		}
-	}
-	return out
 }

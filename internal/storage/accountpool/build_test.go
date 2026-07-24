@@ -276,3 +276,32 @@ func swapSlogHandler(buf *bytes.Buffer) func() {
 	slog.SetDefault(slog.New(slog.NewTextHandler(buf, nil)))
 	return func() { slog.SetDefault(prev) }
 }
+
+// Given a banned snapshot entry, when the pool is built, then the account
+// enters tainted: health banned and circuit forced open.
+func TestBuildFromSnapshot_appliesBanned(t *testing.T) {
+	entries := []types.AccountSnapshotEntry{
+		{
+			Vendor:        types.VendorBaidu,
+			AccountID:     "bd_banned",
+			Credential:    types.Credential{RefreshToken: "rt-baidu"},
+			ClientConfig:  types.ClientConfig{ClientID: "cid-baidu", ClientSecret: "cs-baidu"},
+			RateLimitCfg:  types.RateLimitConfig{QPS: 1, Burst: 2, ConcurrentLimit: 5},
+			VendorProfile: types.VendorProfile{Vendor: types.VendorBaidu, Weight: 2.0},
+			Enabled:       true,
+			Banned:        true,
+		},
+	}
+	pool := buildFromSnapshot(entries, nil, auth.NewTokenManager(nil))
+	accts := pool.SnapshotAccounts()
+	if len(accts) != 1 {
+		t.Fatalf("accounts = %d, want 1", len(accts))
+	}
+	h := accts[0].Health.Load().(types.HealthState)
+	if h.State != "banned" {
+		t.Errorf("state = %s, want banned", h.State)
+	}
+	if accts[0].CB == nil || accts[0].CB.State() != StateOpen {
+		t.Error("circuit = closed/nil, want forced open")
+	}
+}

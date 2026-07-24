@@ -73,9 +73,19 @@ func run(configPath string, onceFlag, dryRunFlag bool) error {
 	}
 	defer func() { _ = mc.Close() }()
 
-	pool := accountpool.BuildFromConfig(cfg.Storage.ToAccountPoolConfig(), nil)
+	// Build the account pool from the CP account snapshot (PG cloud_account
+	// is the source of truth; YAML storage.cloud_accounts is deprecated).
+	if len(cfg.Storage.CloudAccounts) > 0 {
+		slog.Warn("storage.cloud_accounts in YAML is deprecated and ignored — accounts are sourced from the control plane (PG)")
+	}
+	pool := accountpool.NewAccountPool(nil)
+	snap, err := mc.LoadAccountSnapshot(context.Background())
+	if err != nil {
+		return fmt.Errorf("load account snapshot: %w", err)
+	}
+	pool.ReplaceFromSnapshot(snap)
 	if len(pool.SnapshotAccounts()) == 0 {
-		return fmt.Errorf("no enabled cloud accounts in config — at least one is required")
+		return fmt.Errorf("no enabled cloud accounts in control plane — at least one is required")
 	}
 	resolver := newPoolResolver(pool)
 

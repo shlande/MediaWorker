@@ -135,6 +135,10 @@ type AccountSnapshotEntry struct {
 	RateLimitCfg  RateLimitConfig `json:"rate_limit_config"`
 	VendorProfile VendorProfile   `json:"vendor_profile"`
 	Enabled       bool            `json:"enabled"`
+	// Banned marks the account scheduling-tainted (vendor 403 or manual ban);
+	// consumers must exclude it from selection regardless of Enabled. Carried
+	// in the snapshot so bans stay sticky across pool rebuilds.
+	Banned bool `json:"banned,omitempty"`
 }
 
 // DownloadLink represents a temporary download URL for a cloud drive file.

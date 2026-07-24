@@ -37,6 +37,9 @@ type AccountInfo struct {
 	RateLimitCfg  types.RateLimitConfig `json:"rate_limit_config"`
 	VendorProfile types.VendorProfile   `json:"vendor_profile"`
 	Enabled       bool                  `json:"enabled"`
+	// Banned mirrors account_health.state = 'banned' so the snapshot carries
+	// the scheduling taint and nodes keep it across pool rebuilds.
+	Banned bool `json:"banned,omitempty"`
 }
 
 // AccountRegistry is the PG-backed account master database. It exposes CRUD
@@ -340,13 +343,17 @@ func (ar *AccountRegistry) DeleteAccount(ctx context.Context, vendor types.Vendo
 
 // ListByVendor returns all enabled accounts for a given vendor, ordered
 // by account_id. JSONB columns are unmarshalled into the typed structs.
-// client_config may be NULL for rows predating migration 020.
+// client_config may be NULL for rows predating migration 020. The Banned
+// flag is derived from account_health (state = 'banned') so the snapshot
+// carries the scheduling taint.
 func (ar *AccountRegistry) ListByVendor(ctx context.Context, vendor types.Vendor) ([]AccountInfo, error) {
 	const query = `
-		SELECT account_id, credential, client_config, rate_limit_config, vendor_profile, enabled
-		FROM cloud_account
-		WHERE vendor = $1 AND enabled = true
-		ORDER BY account_id`
+		SELECT a.account_id, a.credential, a.client_config, a.rate_limit_config, a.vendor_profile, a.enabled,
+		       COALESCE(h.state = 'banned', false)
+		FROM cloud_account a
+		LEFT JOIN account_health h ON h.vendor = a.vendor AND h.account_id = a.account_id
+		WHERE a.vendor = $1 AND a.enabled = true
+		ORDER BY a.account_id`
 
 	rows, err := ar.db.QueryContext(ctx, query, string(vendor))
 	if err != nil {
@@ -360,7 +367,7 @@ func (ar *AccountRegistry) ListByVendor(ctx context.Context, vendor types.Vendor
 		a.Vendor = vendor
 
 		var credJSON, ccJSON, rlJSON, vpJSON []byte
-		if err := rows.Scan(&a.AccountID, &credJSON, &ccJSON, &rlJSON, &vpJSON, &a.Enabled); err != nil {
+		if err := rows.Scan(&a.AccountID, &credJSON, &ccJSON, &rlJSON, &vpJSON, &a.Enabled, &a.Banned); err != nil {
 			return nil, fmt.Errorf("accountregistry: scan row: %w", err)
 		}
 

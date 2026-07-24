@@ -301,18 +301,59 @@ func (ap *AccountPool) UploadBlob(ctx context.Context, blobHash string, data []b
 	return nil
 }
 
-// ReplaceAll atomically replaces all accounts in the pool.
+// ReplaceAll atomically replaces all accounts in the pool. Accounts that
+// persist across the rebuild (same vendor:account_id key) keep their
+// LastUsed timestamp so idle probing is not reset by periodic snapshots.
 func (ap *AccountPool) ReplaceAll(accounts []Account) {
 	ap.mu.Lock()
 	defer ap.mu.Unlock()
+	lastUsed := make(map[string]int64, len(ap.accounts))
+	for key, a := range ap.accounts {
+		lastUsed[key] = a.LastUsed.Load()
+	}
 	ap.accounts = make(map[string]*Account, len(accounts))
 	ap.vendors = make(map[types.Vendor][]string)
 	for i := range accounts {
 		a := &accounts[i]
 		key := accountKey(a.Vendor, a.AccountID)
+		if ts, ok := lastUsed[key]; ok {
+			a.LastUsed.Store(ts)
+		}
 		ap.accounts[key] = a
 		ap.vendors[a.Vendor] = append(ap.vendors[a.Vendor], key)
 	}
+}
+
+// FlattenAccounts flattens a freshly built pool into value Accounts for
+// ReplaceAll. Field-wise assignment avoids copying the atomic fields of
+// live Accounts (vet copylocks); Health and Concurrent are re-stored.
+func FlattenAccounts(p *AccountPool) []Account {
+	snap := p.SnapshotAccounts()
+	out := make([]Account, len(snap))
+	for i, a := range snap {
+		out[i].Vendor = a.Vendor
+		out[i].AccountID = a.AccountID
+		out[i].Credential = a.Credential
+		out[i].Driver = a.Driver
+		out[i].Limiter = a.Limiter
+		out[i].CB = a.CB
+		out[i].VendorWeight = a.VendorWeight
+		out[i].Concurrent.Store(a.Concurrent.Load())
+		if h, ok := a.Health.Load().(types.HealthState); ok {
+			out[i].Health.Store(h)
+		}
+	}
+	return out
+}
+
+// ReplaceFromSnapshot atomically rebuilds the pool from a CP account
+// snapshot (event payload or PG-loaded rows). entry.Banned taints are
+// applied at build time. It mirrors the event dispatcher's snapshot path
+// so components without a sync client (ingest-worker, janitor) converge
+// identically.
+func (ap *AccountPool) ReplaceFromSnapshot(entries []types.AccountSnapshotEntry) {
+	fresh := BuildFromSnapshot(entries, ap.metadata)
+	ap.ReplaceAll(FlattenAccounts(fresh))
 }
 
 // UpdateCredential updates the credential for an account identified by key.

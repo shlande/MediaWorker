@@ -96,10 +96,10 @@ func TestCreateAccountAndListByVendor(t *testing.T) {
 	}
 
 	// Now ListByVendor and verify the fields round-trip.
-	rows := sqlmock.NewRows([]string{"account_id", "credential", "client_config", "rate_limit_config", "vendor_profile", "enabled"}).
-		AddRow("acct_01", credJSON, ccJSON, rlJSON, vpJSON, true)
+	rows := sqlmock.NewRows([]string{"account_id", "credential", "client_config", "rate_limit_config", "vendor_profile", "enabled", "banned"}).
+		AddRow("acct_01", credJSON, ccJSON, rlJSON, vpJSON, true, false)
 
-	mock.ExpectQuery(`SELECT account_id, credential, client_config, rate_limit_config, vendor_profile, enabled FROM cloud_account WHERE vendor = \$1 AND enabled = true ORDER BY account_id`).
+	mock.ExpectQuery(`SELECT a.account_id, a.credential, a.client_config, a.rate_limit_config, a.vendor_profile, a.enabled, COALESCE\(h.state = 'banned', false\) FROM cloud_account a LEFT JOIN account_health h ON h.vendor = a.vendor AND h.account_id = a.account_id WHERE a.vendor = \$1 AND a.enabled = true ORDER BY a.account_id`).
 		WithArgs(string(types.Vendor115)).
 		WillReturnRows(rows)
 
@@ -153,9 +153,9 @@ func TestListByVendor_NullClientConfig(t *testing.T) {
 	rlJSON, _ := json.Marshal(types.RateLimitConfig{})
 	vpJSON, _ := json.Marshal(types.VendorProfile{})
 
-	rows := sqlmock.NewRows([]string{"account_id", "credential", "client_config", "rate_limit_config", "vendor_profile", "enabled"}).
-		AddRow("acct_old", credJSON, nil, rlJSON, vpJSON, true)
-	mock.ExpectQuery(`SELECT account_id, credential, client_config, rate_limit_config, vendor_profile, enabled FROM cloud_account`).
+	rows := sqlmock.NewRows([]string{"account_id", "credential", "client_config", "rate_limit_config", "vendor_profile", "enabled", "banned"}).
+		AddRow("acct_old", credJSON, nil, rlJSON, vpJSON, true, false)
+	mock.ExpectQuery(`SELECT a.account_id, a.credential, a.client_config, a.rate_limit_config, a.vendor_profile, a.enabled, COALESCE\(h.state = 'banned', false\) FROM cloud_account a LEFT JOIN account_health h ON h.vendor = a.vendor AND h.account_id = a.account_id`).
 		WithArgs(string(types.VendorQuark)).
 		WillReturnRows(rows)
 
@@ -396,14 +396,14 @@ func TestStartSync_EmitsSnapshot(t *testing.T) {
 
 	for _, vendor := range []types.Vendor{types.Vendor115, types.VendorBaidu, types.VendorQuark, types.VendorOneDrive, types.VendorAliyundrive} {
 		if vendor == types.Vendor115 {
-			rows := sqlmock.NewRows([]string{"account_id", "credential", "client_config", "rate_limit_config", "vendor_profile", "enabled"}).
-				AddRow("acct_01", credJSON, nil, rlJSON, vpJSON, true)
-			mock.ExpectQuery(`SELECT account_id, credential, client_config, rate_limit_config, vendor_profile, enabled FROM cloud_account WHERE vendor = \$1 AND enabled = true ORDER BY account_id`).
+			rows := sqlmock.NewRows([]string{"account_id", "credential", "client_config", "rate_limit_config", "vendor_profile", "enabled", "banned"}).
+				AddRow("acct_01", credJSON, nil, rlJSON, vpJSON, true, false)
+			mock.ExpectQuery(`SELECT a.account_id, a.credential, a.client_config, a.rate_limit_config, a.vendor_profile, a.enabled, COALESCE\(h.state = 'banned', false\) FROM cloud_account a LEFT JOIN account_health h ON h.vendor = a.vendor AND h.account_id = a.account_id WHERE a.vendor = \$1 AND a.enabled = true ORDER BY a.account_id`).
 				WithArgs(string(vendor)).
 				WillReturnRows(rows)
 		} else {
-			rows := sqlmock.NewRows([]string{"account_id", "credential", "client_config", "rate_limit_config", "vendor_profile", "enabled"})
-			mock.ExpectQuery(`SELECT account_id, credential, client_config, rate_limit_config, vendor_profile, enabled FROM cloud_account WHERE vendor = \$1 AND enabled = true ORDER BY account_id`).
+			rows := sqlmock.NewRows([]string{"account_id", "credential", "client_config", "rate_limit_config", "vendor_profile", "enabled", "banned"})
+			mock.ExpectQuery(`SELECT a.account_id, a.credential, a.client_config, a.rate_limit_config, a.vendor_profile, a.enabled, COALESCE\(h.state = 'banned', false\) FROM cloud_account a LEFT JOIN account_health h ON h.vendor = a.vendor AND h.account_id = a.account_id WHERE a.vendor = \$1 AND a.enabled = true ORDER BY a.account_id`).
 				WithArgs(string(vendor)).
 				WillReturnRows(rows)
 		}
@@ -472,8 +472,8 @@ func TestStartSync_NoAccounts_NoBroadcast(t *testing.T) {
 	}
 
 	for _, vendor := range []types.Vendor{types.Vendor115, types.VendorBaidu, types.VendorQuark, types.VendorOneDrive, types.VendorAliyundrive} {
-		rows := sqlmock.NewRows([]string{"account_id", "credential", "client_config", "rate_limit_config", "vendor_profile", "enabled"})
-		mock.ExpectQuery(`SELECT account_id, credential, client_config, rate_limit_config, vendor_profile, enabled FROM cloud_account WHERE vendor = \$1 AND enabled = true ORDER BY account_id`).
+		rows := sqlmock.NewRows([]string{"account_id", "credential", "client_config", "rate_limit_config", "vendor_profile", "enabled", "banned"})
+		mock.ExpectQuery(`SELECT a.account_id, a.credential, a.client_config, a.rate_limit_config, a.vendor_profile, a.enabled, COALESCE\(h.state = 'banned', false\) FROM cloud_account a LEFT JOIN account_health h ON h.vendor = a.vendor AND h.account_id = a.account_id WHERE a.vendor = \$1 AND a.enabled = true ORDER BY a.account_id`).
 			WithArgs(string(vendor)).
 			WillReturnRows(rows)
 	}
@@ -506,8 +506,8 @@ func TestListByVendor_Empty(t *testing.T) {
 	ar := NewAccountRegistry(db, b)
 	ctx := context.Background()
 
-	rows := sqlmock.NewRows([]string{"account_id", "credential", "client_config", "rate_limit_config", "vendor_profile", "enabled"})
-	mock.ExpectQuery(`SELECT account_id, credential, client_config, rate_limit_config, vendor_profile, enabled FROM cloud_account WHERE vendor = \$1 AND enabled = true ORDER BY account_id`).
+	rows := sqlmock.NewRows([]string{"account_id", "credential", "client_config", "rate_limit_config", "vendor_profile", "enabled", "banned"})
+	mock.ExpectQuery(`SELECT a.account_id, a.credential, a.client_config, a.rate_limit_config, a.vendor_profile, a.enabled, COALESCE\(h.state = 'banned', false\) FROM cloud_account a LEFT JOIN account_health h ON h.vendor = a.vendor AND h.account_id = a.account_id WHERE a.vendor = \$1 AND a.enabled = true ORDER BY a.account_id`).
 		WithArgs(string(types.Vendor115)).
 		WillReturnRows(rows)
 
@@ -977,6 +977,45 @@ func TestDeleteAccount_NotFound(t *testing.T) {
 
 	if _, err := ar.DeleteAccount(context.Background(), types.VendorBaidu, "ghost", false); !errors.Is(err, ErrAccountNotFound) {
 		t.Fatalf("err = %v, want ErrAccountNotFound", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
+
+// Given account_health marks the account banned, when ListByVendor runs,
+// then AccountInfo.Banned is true so the snapshot carries the taint.
+func TestListByVendor_BannedFlag(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	ar := NewAccountRegistry(db, &mockBroadcaster{})
+
+	credJSON, _ := json.Marshal(types.Credential{RefreshToken: "rt"})
+	rlJSON, _ := json.Marshal(types.RateLimitConfig{QPS: 1, Burst: 2, ConcurrentLimit: 5})
+	vpJSON, _ := json.Marshal(types.VendorProfile{Vendor: types.VendorBaidu, Weight: 2.0})
+
+	rows := sqlmock.NewRows([]string{"account_id", "credential", "client_config", "rate_limit_config", "vendor_profile", "enabled", "banned"}).
+		AddRow("acct_ok", credJSON, nil, rlJSON, vpJSON, true, false).
+		AddRow("acct_banned", credJSON, nil, rlJSON, vpJSON, true, true)
+	mock.ExpectQuery("FROM cloud_account").
+		WithArgs(string(types.VendorBaidu)).
+		WillReturnRows(rows)
+
+	accounts, err := ar.ListByVendor(context.Background(), types.VendorBaidu)
+	if err != nil {
+		t.Fatalf("ListByVendor: %v", err)
+	}
+	if len(accounts) != 2 {
+		t.Fatalf("accounts = %d, want 2", len(accounts))
+	}
+	if accounts[0].Banned {
+		t.Errorf("accounts[0].Banned = true, want false")
+	}
+	if !accounts[1].Banned {
+		t.Errorf("accounts[1].Banned = false, want true")
 	}
 	if err := mock.ExpectationsWereMet(); err != nil {
 		t.Fatalf("expectations: %v", err)

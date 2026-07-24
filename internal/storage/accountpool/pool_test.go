@@ -735,3 +735,90 @@ func TestForceCircuit_nilCB_noop(t *testing.T) {
 	pool.ForceCircuit(string(types.VendorBaidu), "acct1", true)
 	pool.ForceCloseCircuit(string(types.VendorBaidu), "acct1")
 }
+
+// Given an account rebuilt by ReplaceAll, when the key persists, then the
+// LastUsed timestamp carries over so periodic snapshots don't reset idle
+// probing.
+func TestReplaceAll_preservesLastUsed(t *testing.T) {
+	pool := NewAccountPool(nil)
+	old := newAccount(string(types.VendorBaidu), "acct1", mock.NewMockDriver(types.VendorBaidu, mock.MockDriverConfig{}), 2.0, rate.NewLimiter(10, 20), newMockCB(StateClosed))
+	old.LastUsed.Store(1700000000)
+	pool.AddAccount(old)
+
+	fresh := make([]Account, 1)
+	fresh[0].Vendor = types.VendorBaidu
+	fresh[0].AccountID = "acct1"
+	fresh[0].Driver = mock.NewMockDriver(types.VendorBaidu, mock.MockDriverConfig{})
+	fresh[0].Limiter = rate.NewLimiter(10, 20)
+	fresh[0].CB = newMockCB(StateClosed)
+	fresh[0].VendorWeight = 2.0
+	fresh[0].Health.Store(types.HealthState{State: "healthy"})
+	pool.ReplaceAll(fresh)
+
+	got := pool.SnapshotAccounts()
+	if len(got) != 1 {
+		t.Fatalf("accounts = %d, want 1", len(got))
+	}
+	if ts := got[0].LastUsed.Load(); ts != 1700000000 {
+		t.Errorf("LastUsed = %d, want 1700000000 carried over", ts)
+	}
+}
+
+// Given snapshot entries (one banned), when ReplaceFromSnapshot runs, then
+// the pool contains the enabled accounts with the taint applied at build
+// time, and a second call drops removed accounts.
+func TestReplaceFromSnapshot_endToEnd(t *testing.T) {
+	mkEntries := func() []types.AccountSnapshotEntry {
+		return []types.AccountSnapshotEntry{
+			{
+				Vendor:    types.VendorBaidu,
+				AccountID: "bd_01",
+				Credential: types.Credential{
+					RefreshToken: "rt-baidu",
+				},
+				ClientConfig:  types.ClientConfig{ClientID: "cid", ClientSecret: "cs"},
+				VendorProfile: types.VendorProfile{Vendor: types.VendorBaidu, Weight: 2.0},
+				Enabled:       true,
+			},
+			{
+				Vendor:    types.VendorBaidu,
+				AccountID: "bd_02",
+				Credential: types.Credential{
+					RefreshToken: "rt-baidu",
+				},
+				ClientConfig:  types.ClientConfig{ClientID: "cid", ClientSecret: "cs"},
+				VendorProfile: types.VendorProfile{Vendor: types.VendorBaidu, Weight: 2.0},
+				Enabled:       true,
+				Banned:        true,
+			},
+		}
+	}
+
+	pool := NewAccountPool(nil)
+	pool.ReplaceFromSnapshot(mkEntries())
+
+	byKey := map[string]*Account{}
+	for _, a := range pool.SnapshotAccounts() {
+		byKey[string(a.Vendor)+":"+a.AccountID] = a
+	}
+	if len(byKey) != 2 {
+		t.Fatalf("accounts = %d, want 2", len(byKey))
+	}
+	if h := byKey["baidu:bd_01"].Health.Load().(types.HealthState); h.Taint() != nil {
+		t.Errorf("bd_01 tainted, want untainted")
+	}
+	banned := byKey["baidu:bd_02"]
+	if h := banned.Health.Load().(types.HealthState); h.State != "banned" {
+		t.Errorf("bd_02 state = %s, want banned (snapshot taint)", h.State)
+	}
+	if banned.CB == nil || banned.CB.State() != StateOpen {
+		t.Error("bd_02 circuit = closed/nil, want forced open")
+	}
+
+	// 第二次替换：bd_02 从快照消失 → 池中移除
+	entries := mkEntries()[:1]
+	pool.ReplaceFromSnapshot(entries)
+	if got := len(pool.SnapshotAccounts()); got != 1 {
+		t.Errorf("after second replace accounts = %d, want 1", got)
+	}
+}

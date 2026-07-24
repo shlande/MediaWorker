@@ -71,8 +71,18 @@ func run(configPath string) error {
 	}
 	defer func() { _ = mc.Close() }()
 
-	// 3. Build AccountPool from cloud account configs (upload-only, no libp2p/metadata query).
-	pool := accountpool.BuildFromConfig(cfg.Storage.ToAccountPoolConfig(), nil)
+	// 3. Build AccountPool from the CP account snapshot (PG cloud_account is
+	//    the source of truth; YAML storage.cloud_accounts is deprecated).
+	if len(cfg.Storage.CloudAccounts) > 0 {
+		slog.Warn("storage.cloud_accounts in YAML is deprecated and ignored — accounts are sourced from the control plane (PG)")
+	}
+	pool := accountpool.NewAccountPool(nil)
+	snap, err := mc.LoadAccountSnapshot(context.Background())
+	if err != nil {
+		return fmt.Errorf("load account snapshot: %w", err)
+	}
+	pool.ReplaceFromSnapshot(snap)
+	slog.Info("account pool built from CP snapshot", "accounts", len(pool.SnapshotAccounts()))
 
 	// 4. Build BackendPool adapter.
 	selector := &ingestAccountPoolAdapter{pool: pool}
@@ -143,6 +153,27 @@ func run(configPath string) error {
 	// successful use) every 5min; recent traffic itself is the health signal.
 	checker := healthcheck.NewHealthChecker(pool, 5*time.Minute, time.Hour, mc)
 	go checker.Start(ctx)
+
+	// 9b. Refresh the account pool from the CP snapshot every 60s, mirroring
+	//     the ACCOUNT_SNAPSHOT cadence on edge nodes (new/rotated/banned
+	//     accounts converge without a sync client).
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				snap, err := mc.LoadAccountSnapshot(ctx)
+				if err != nil {
+					slog.Warn("account snapshot refresh failed", "err", err)
+					continue
+				}
+				pool.ReplaceFromSnapshot(snap)
+			}
+		}
+	}()
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)

@@ -221,8 +221,14 @@ func buildFromSnapshot(accounts []types.AccountSnapshotEntry, blobLocations Blob
 			VendorWeight: vendorWeight,
 		}
 		acct.Health.Store(types.HealthState{State: "healthy"})
+		if entry.Banned {
+			// 快照携带污点（registry 经 account_health 导出）——封禁在每次
+			// 池重建后保持，不再依赖独立的 BAN 事件先于快照到达。
+			acct.Health.Store(types.HealthState{State: "banned"})
+			acct.CB.ForceOpen()
+		}
 		pool.AddAccount(acct)
-		slog.Info("accountpool: account added from snapshot", "key", key, "vendor", entry.Vendor)
+		slog.Info("accountpool: account added from snapshot", "key", key, "vendor", entry.Vendor, "banned", entry.Banned)
 	}
 	return pool
 }
