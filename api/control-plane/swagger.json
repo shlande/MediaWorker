@@ -315,6 +315,84 @@
                         }
                     }
                 }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "AdminBearer": []
+                    }
+                ],
+                "description": "硬删除账号（单事务），账号仍持有 blob 副本时默认拒绝，?force=true 级联清理",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin-accounts"
+                ],
+                "summary": "删除云盘账号",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "供应商",
+                        "name": "vendor",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "账号 ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "boolean",
+                        "description": "级联删除 blob_location 引用",
+                        "name": "force",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "删除成功，无响应体"
+                    },
+                    "400": {
+                        "description": "路径参数无效",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "账号不存在",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "账号仍被 blob_location 引用（响应体含 blob_count）",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/types.ErrorResponse"
+                        }
+                    }
+                }
             }
         },
         "/v1/admin/accounts/{vendor}/{id}/ban": {

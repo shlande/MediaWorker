@@ -853,3 +853,132 @@ func TestSetVendorProfile(t *testing.T) {
 		t.Fatalf("expectations: %v", err)
 	}
 }
+
+// Given no blob_location references, when DeleteAccount runs without force,
+// then health + account rows are deleted in one committed transaction.
+func TestDeleteAccount_Happy(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	ar := NewAccountRegistry(db, &mockBroadcaster{})
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT count\(\*\) FROM blob_location WHERE backend_id = \$1`).
+		WithArgs("baidu:acct_01").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectExec(`DELETE FROM account_health WHERE vendor = \$1 AND account_id = \$2`).
+		WithArgs("baidu", "acct_01").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`DELETE FROM cloud_account WHERE vendor = \$1 AND account_id = \$2`).
+		WithArgs("baidu", "acct_01").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	n, err := ar.DeleteAccount(context.Background(), types.VendorBaidu, "acct_01", false)
+	if err != nil {
+		t.Fatalf("DeleteAccount: %v", err)
+	}
+	if n != 0 {
+		t.Errorf("blobCount = %d, want 0", n)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
+
+// Given blob_location references, when DeleteAccount runs without force, then
+// it refuses with ErrAccountHasBlobs plus the count and rolls back.
+func TestDeleteAccount_RefusedWithBlobRefs(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	ar := NewAccountRegistry(db, &mockBroadcaster{})
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT count\(\*\) FROM blob_location WHERE backend_id = \$1`).
+		WithArgs("baidu:acct_01").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(3))
+	mock.ExpectRollback()
+
+	n, err := ar.DeleteAccount(context.Background(), types.VendorBaidu, "acct_01", false)
+	if !errors.Is(err, ErrAccountHasBlobs) {
+		t.Fatalf("err = %v, want ErrAccountHasBlobs", err)
+	}
+	if n != 3 {
+		t.Errorf("blobCount = %d, want 3", n)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
+
+// Given blob_location references, when DeleteAccount runs with force, then the
+// references cascade before the account row is deleted, all committed.
+func TestDeleteAccount_ForceCascade(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	ar := NewAccountRegistry(db, &mockBroadcaster{})
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT count\(\*\) FROM blob_location WHERE backend_id = \$1`).
+		WithArgs("baidu:acct_01").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(2))
+	mock.ExpectExec(`DELETE FROM blob_location WHERE backend_id = \$1`).
+		WithArgs("baidu:acct_01").
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	mock.ExpectExec(`DELETE FROM account_health WHERE vendor = \$1 AND account_id = \$2`).
+		WithArgs("baidu", "acct_01").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectExec(`DELETE FROM cloud_account WHERE vendor = \$1 AND account_id = \$2`).
+		WithArgs("baidu", "acct_01").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	n, err := ar.DeleteAccount(context.Background(), types.VendorBaidu, "acct_01", true)
+	if err != nil {
+		t.Fatalf("DeleteAccount: %v", err)
+	}
+	if n != 2 {
+		t.Errorf("blobCount = %d, want 2", n)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}
+
+// Given a missing account, when DeleteAccount runs, then it returns
+// ErrAccountNotFound and rolls back.
+func TestDeleteAccount_NotFound(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	ar := NewAccountRegistry(db, &mockBroadcaster{})
+
+	mock.ExpectBegin()
+	mock.ExpectQuery(`SELECT count\(\*\) FROM blob_location WHERE backend_id = \$1`).
+		WithArgs("baidu:ghost").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectExec(`DELETE FROM account_health WHERE vendor = \$1 AND account_id = \$2`).
+		WithArgs("baidu", "ghost").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`DELETE FROM cloud_account WHERE vendor = \$1 AND account_id = \$2`).
+		WithArgs("baidu", "ghost").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectRollback()
+
+	if _, err := ar.DeleteAccount(context.Background(), types.VendorBaidu, "ghost", false); !errors.Is(err, ErrAccountNotFound) {
+		t.Fatalf("err = %v, want ErrAccountNotFound", err)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("expectations: %v", err)
+	}
+}

@@ -227,6 +227,7 @@ func RegisterAccountsRoutes(srv *Server, mc AdminAccountsReader, vpr VendorProfi
 	srv.Handle("GET /v1/admin/accounts", listAccountsHandler(mc), true)
 	srv.Handle("POST /v1/admin/accounts", createAccountHandler(registry, audit), true)
 	srv.Handle("PUT /v1/admin/accounts/{vendor}/{id}", updateAccountHandler(registry, audit), true)
+	srv.Handle("DELETE /v1/admin/accounts/{vendor}/{id}", deleteAccountHandler(registry, audit), true)
 	srv.Handle("POST /v1/admin/accounts/{vendor}/{id}/rotate", rotateAccountHandler(registry, audit), true)
 	srv.Handle("POST /v1/admin/accounts/{vendor}/{id}/ban", banAccountHandler(registry, audit), true)
 	srv.Handle("POST /v1/admin/accounts/{vendor}/{id}/unban", unbanAccountHandler(registry, audit), true)
@@ -256,6 +257,10 @@ type AdminAccountsWriter interface {
 	// Ban/Unban write account_health and broadcast BAN/UNBAN (todo 6).
 	Ban(ctx context.Context, vendor types.Vendor, accountID, reason string, banUntil time.Time) error
 	Unban(ctx context.Context, vendor types.Vendor, accountID string) error
+	// DeleteAccount hard-deletes in one tx; refuses with ErrAccountHasBlobs
+	// (and the reference count) when blob_location still cites the account
+	// and force is false. Returns the blob reference count for the 409 body.
+	DeleteAccount(ctx context.Context, vendor types.Vendor, accountID string, force bool) (int64, error)
 }
 
 // EventBroadcaster is the event-emit surface the circuit handler needs.
@@ -771,5 +776,65 @@ func circuitAccountHandler(broadcaster EventBroadcaster, audit AuditRecorder) ht
 		WriteJSON(w, http.StatusAccepted, accountOpResponse{
 			Vendor: string(vendor), AccountID: id, Effective: "propagating",
 		})
+	})
+}
+
+// deleteAccountHandler serves DELETE /v1/admin/accounts/{vendor}/{id}.
+// Hard delete in one transaction (registry.DeleteAccount). When the account
+// still owns blob_location rows the delete is refused with 409 {error,
+// blob_count} unless ?force=true cascades them; their blobs become
+// under-replicated and are re-pinned or GC'd by the normal pipelines.
+// Success is 204 with an empty body (same as whitelist delete). Nodes drop
+// the account via the next ACCOUNT_SNAPSHOT (<=60s); no incremental event
+// exists by design — the admin_audit entry is the deletion record.
+//
+//	@Summary		删除云盘账号
+//	@Description	硬删除账号（单事务），账号仍持有 blob 副本时默认拒绝，?force=true 级联清理
+//	@Tags			admin-accounts
+//	@Produce		json
+//	@Param			vendor	path		string	true	"供应商"
+//	@Param			id		path		string	true	"账号 ID"
+//	@Param			force	query		bool	false	"级联删除 blob_location 引用"
+//	@Success		204		"删除成功，无响应体"
+//	@Failure		400		{object}	types.ErrorResponse	"路径参数无效"
+//	@Failure		401		{object}	types.ErrorResponse
+//	@Failure		403		{object}	types.ErrorResponse
+//	@Failure		404		{object}	types.ErrorResponse	"账号不存在"
+//	@Failure		409		{object}	types.ErrorResponse	"账号仍被 blob_location 引用（响应体含 blob_count）"
+//	@Failure		500		{object}	types.ErrorResponse
+//	@Security		AdminBearer
+//	@Router			/v1/admin/accounts/{vendor}/{id} [delete]
+func deleteAccountHandler(registry AdminAccountsWriter, audit AuditRecorder) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		vendor := types.Vendor(r.PathValue("vendor"))
+		id := r.PathValue("id")
+		target := string(vendor) + ":" + id
+		if pathErrors := validateAccountPath(vendor, id); len(pathErrors) > 0 {
+			recordWriteAudit(r, audit, "account", "delete", target, "fail", nil)
+			writeFieldErrors(w, pathErrors)
+			return
+		}
+		force := r.URL.Query().Get("force") == "true"
+		blobCount, err := registry.DeleteAccount(r.Context(), vendor, id, force)
+		if err != nil {
+			recordWriteAudit(r, audit, "account", "delete", target, "fail", map[string]any{"force": force})
+			switch {
+			case errors.Is(err, accountregistry.ErrAccountNotFound):
+				WriteError(w, http.StatusNotFound, "account not found")
+			case errors.Is(err, accountregistry.ErrAccountHasBlobs):
+				WriteJSON(w, http.StatusConflict, map[string]any{
+					"error":      "account still referenced by stored blobs; retry with ?force=true to cascade",
+					"blob_count": blobCount,
+				})
+			default:
+				WriteError(w, http.StatusInternalServerError, fmt.Sprintf("delete account: %v", err))
+			}
+			return
+		}
+		recordWriteAudit(r, audit, "account", "delete", target, "ok", map[string]any{
+			"force":      force,
+			"blob_count": blobCount,
+		})
+		w.WriteHeader(http.StatusNoContent)
 	})
 }

@@ -286,6 +286,58 @@ func (ar *AccountRegistry) Revoke(ctx context.Context, vendor types.Vendor, acco
 	return nil
 }
 
+// DeleteAccount hard-deletes an account in a single transaction. When the
+// account still owns blob_location rows (backend_id = "vendor:account_id")
+// the delete is refused with ErrAccountHasBlobs and the reference count,
+// unless force is set — force cascades those rows first (their blobs become
+// under-replicated and are re-pinned or GC'd by the normal pipelines).
+// account_health is deleted with the account row. No event is broadcast:
+// nodes converge via the next ACCOUNT_SNAPSHOT (<=60s), which no longer
+// lists the account and drops it from every pool. The audit trail lives in
+// admin_audit (recorded by the HTTP handler) — the row itself is gone by
+// design, unlike Revoke.
+func (ar *AccountRegistry) DeleteAccount(ctx context.Context, vendor types.Vendor, accountID string, force bool) (int64, error) {
+	tx, err := ar.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, fmt.Errorf("accountregistry: begin delete tx %s/%s: %w", vendor, accountID, err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	backendID := fmt.Sprintf("%s:%s", vendor, accountID)
+	var blobCount int64
+	if err := tx.QueryRowContext(ctx,
+		`SELECT count(*) FROM blob_location WHERE backend_id = $1`, backendID,
+	).Scan(&blobCount); err != nil {
+		return 0, fmt.Errorf("accountregistry: count blob refs %s: %w", backendID, err)
+	}
+	if blobCount > 0 && !force {
+		return blobCount, fmt.Errorf("%w: %s (%d blob refs)", ErrAccountHasBlobs, backendID, blobCount)
+	}
+	if blobCount > 0 {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM blob_location WHERE backend_id = $1`, backendID); err != nil {
+			return blobCount, fmt.Errorf("accountregistry: cascade blob_location %s: %w", backendID, err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM account_health WHERE vendor = $1 AND account_id = $2`, string(vendor), accountID,
+	); err != nil {
+		return blobCount, fmt.Errorf("accountregistry: delete health %s/%s: %w", vendor, accountID, err)
+	}
+	res, err := tx.ExecContext(ctx,
+		`DELETE FROM cloud_account WHERE vendor = $1 AND account_id = $2`, string(vendor), accountID,
+	)
+	if err != nil {
+		return blobCount, fmt.Errorf("accountregistry: delete account %s/%s: %w", vendor, accountID, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return blobCount, fmt.Errorf("%w: %s/%s", ErrAccountNotFound, vendor, accountID)
+	}
+	if err := tx.Commit(); err != nil {
+		return blobCount, fmt.Errorf("accountregistry: commit delete %s/%s: %w", vendor, accountID, err)
+	}
+	return blobCount, nil
+}
+
 // ListByVendor returns all enabled accounts for a given vendor, ordered
 // by account_id. JSONB columns are unmarshalled into the typed structs.
 // client_config may be NULL for rows predating migration 020.
@@ -419,3 +471,8 @@ func (ar *AccountRegistry) emitSnapshot(ctx context.Context) {
 // ErrAccountNotFound is returned by UpdateCredential when the target account
 // does not exist in the cloud_account table.
 var ErrAccountNotFound = fmt.Errorf("accountregistry: account not found")
+
+// ErrAccountHasBlobs is returned by DeleteAccount when blob_location rows
+// still reference the account and force was not set. The accompanying count
+// tells the caller how many references block the delete.
+var ErrAccountHasBlobs = errors.New("accountregistry: account still referenced by blob_location")

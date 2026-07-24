@@ -943,6 +943,57 @@ paths:
       tags:
       - admin-accounts
   /v1/admin/accounts/{vendor}/{id}:
+    delete:
+      description: 硬删除账号（单事务），账号仍持有 blob 副本时默认拒绝，?force=true 级联清理
+      parameters:
+      - description: 供应商
+        in: path
+        name: vendor
+        required: true
+        type: string
+      - description: 账号 ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: 级联删除 blob_location 引用
+        in: query
+        name: force
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: 删除成功，无响应体
+        "400":
+          description: 路径参数无效
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "404":
+          description: 账号不存在
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "409":
+          description: 账号仍被 blob_location 引用（响应体含 blob_count）
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/types.ErrorResponse'
+      security:
+      - AdminBearer: []
+      summary: 删除云盘账号
+      tags:
+      - admin-accounts
     put:
       consumes:
       - application/json

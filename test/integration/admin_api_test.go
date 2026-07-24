@@ -288,6 +288,16 @@ func (s *cpStore) Unban(_ context.Context, vendor types.Vendor, accountID string
 	return nil
 }
 
+func (s *cpStore) DeleteAccount(_ context.Context, vendor types.Vendor, accountID string, _ bool) (int64, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, err := s.getAccount(vendor, accountID); err != nil {
+		return 0, err
+	}
+	delete(s.accounts, cpAccountKey(vendor, accountID))
+	return 0, nil
+}
+
 // ── Contents readers / deleter ──
 
 func (s *cpStore) ListContents(_ context.Context, q metadata.ListContentsQuery) ([]metadata.AdminContentRow, int, error) {

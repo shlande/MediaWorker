@@ -493,6 +493,9 @@ type fakeAccountRegistry struct {
 	lastCredPayload       types.CredentialChangePayload
 	banCalls              []banCall
 	unbanCalls            []string
+	deleteCalls           []deleteCall
+	deleteErr             error // injected DeleteAccount failure
+	deleteBlobCount       int64 // blob_count returned alongside deleteErr
 }
 
 type banCall struct {
@@ -576,6 +579,25 @@ func (f *fakeAccountRegistry) Ban(_ context.Context, vendor types.Vendor, accoun
 func (f *fakeAccountRegistry) Unban(_ context.Context, vendor types.Vendor, accountID string) error {
 	f.unbanCalls = append(f.unbanCalls, fakeKey(vendor, accountID))
 	return nil
+}
+
+type deleteCall struct {
+	vendor    types.Vendor
+	accountID string
+	force     bool
+}
+
+func (f *fakeAccountRegistry) DeleteAccount(_ context.Context, vendor types.Vendor, accountID string, force bool) (int64, error) {
+	if f.deleteErr != nil {
+		return f.deleteBlobCount, f.deleteErr
+	}
+	k := fakeKey(vendor, accountID)
+	if _, ok := f.accounts[k]; !ok {
+		return 0, fmt.Errorf("%w: %s", accountregistry.ErrAccountNotFound, k)
+	}
+	f.deleteCalls = append(f.deleteCalls, deleteCall{vendor: vendor, accountID: accountID, force: force})
+	delete(f.accounts, k)
+	return 0, nil
 }
 
 // fakeBroadcaster captures Broadcast calls for the circuit handler tests.
@@ -1653,6 +1675,83 @@ func TestAccountOps_CircuitNilBroadcasterIs500(t *testing.T) {
 		jsonBody(t, map[string]any{"action": "force_open"}))
 	if status != http.StatusInternalServerError {
 		t.Fatalf("status = %d, want 500 (body=%s)", status, body)
+	}
+}
+
+// Given a seeded account, when DELETE hits the path, then the registry row is
+// gone, the call records force=false, and the response is 204 with empty body.
+func TestAccountOps_DeleteHappy(t *testing.T) {
+	reg, _, ts, token := makeWriteServer(t)
+	seedAccount(t, reg, accountregistry.AccountInfo{
+		Vendor: types.VendorBaidu, AccountID: "mw_bd_01", Enabled: true,
+	})
+	status, body := doRaw(t, ts, http.MethodDelete, "/v1/admin/accounts/baidu/mw_bd_01", token, nil)
+	if status != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 (body=%s)", status, body)
+	}
+	if body != "" {
+		t.Errorf("body = %q, want empty", body)
+	}
+	if len(reg.deleteCalls) != 1 || reg.deleteCalls[0] != (deleteCall{vendor: types.VendorBaidu, accountID: "mw_bd_01", force: false}) {
+		t.Errorf("deleteCalls = %+v, want one baidu/mw_bd_01 force=false", reg.deleteCalls)
+	}
+	if _, ok := reg.accounts["baidu/mw_bd_01"]; ok {
+		t.Error("account still present in fake registry after delete")
+	}
+}
+
+// Given ?force=true, when DELETE runs, then the force flag reaches the
+// registry untouched.
+func TestAccountOps_DeleteForcePassthrough(t *testing.T) {
+	reg, _, ts, token := makeWriteServer(t)
+	seedAccount(t, reg, accountregistry.AccountInfo{
+		Vendor: types.VendorBaidu, AccountID: "mw_bd_01", Enabled: true,
+	})
+	status, body := doRaw(t, ts, http.MethodDelete, "/v1/admin/accounts/baidu/mw_bd_01?force=true", token, nil)
+	if status != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 (body=%s)", status, body)
+	}
+	if len(reg.deleteCalls) != 1 || !reg.deleteCalls[0].force {
+		t.Errorf("deleteCalls = %+v, want force=true", reg.deleteCalls)
+	}
+}
+
+// Given blob_location references, when DELETE runs without force, then 409
+// carries the blob_count and the account survives.
+func TestAccountOps_DeleteConflictBlobRefs(t *testing.T) {
+	reg, _, ts, token := makeWriteServer(t)
+	seedAccount(t, reg, accountregistry.AccountInfo{
+		Vendor: types.VendorBaidu, AccountID: "mw_bd_01", Enabled: true,
+	})
+	reg.deleteErr = accountregistry.ErrAccountHasBlobs
+	reg.deleteBlobCount = 7
+	status, body := doRaw(t, ts, http.MethodDelete, "/v1/admin/accounts/baidu/mw_bd_01", token, nil)
+	if status != http.StatusConflict {
+		t.Fatalf("status = %d, want 409 (body=%s)", status, body)
+	}
+	if !strings.Contains(body, `"blob_count":7`) {
+		t.Errorf("body = %s, want blob_count:7", body)
+	}
+	if len(reg.deleteCalls) != 0 {
+		t.Errorf("deleteCalls = %+v, want none on conflict", reg.deleteCalls)
+	}
+}
+
+// Given delete misuse, when the account is missing, the vendor is unknown, or
+// no token is presented, then 404/400/401 hold respectively.
+func TestAccountOps_DeleteEdgeCases(t *testing.T) {
+	_, _, ts, token := makeWriteServer(t)
+	status, body := doRaw(t, ts, http.MethodDelete, "/v1/admin/accounts/baidu/ghost", token, nil)
+	if status != http.StatusNotFound {
+		t.Fatalf("missing account: status = %d, want 404 (body=%s)", status, body)
+	}
+	status, body = doRaw(t, ts, http.MethodDelete, "/v1/admin/accounts/novendor/x", token, nil)
+	if status != http.StatusBadRequest {
+		t.Fatalf("unknown vendor: status = %d, want 400 (body=%s)", status, body)
+	}
+	status, _ = doRaw(t, ts, http.MethodDelete, "/v1/admin/accounts/baidu/x", "", nil)
+	if status != http.StatusUnauthorized {
+		t.Fatalf("no token: status = %d, want 401", status)
 	}
 }
 
